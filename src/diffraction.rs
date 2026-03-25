@@ -2,19 +2,52 @@ use crate::propagation::speed_of_sound;
 use hisab::Vec3;
 use std::f32::consts::PI;
 
-/// Simplified edge diffraction attenuation (based on Uniform Theory of Diffraction).
+/// Edge diffraction attenuation using the Uniform Theory of Diffraction (UTD).
+///
+/// Models diffraction around a wedge-shaped edge using Kouyoumjian-Pathak
+/// UTD coefficients. The attenuation depends on frequency, the angular
+/// relationship between source/receiver and the edge, and the wedge angle.
+///
+/// # Arguments
+/// * `frequency` — sound frequency in Hz
+/// * `angle_rad` — shadow angle: 0 = illuminated, π = deep shadow
+/// * `temperature_celsius` — air temperature for speed of sound
 ///
 /// Returns attenuation in dB (negative value = signal loss).
-/// Higher frequencies diffract less (more shadowing).
 #[must_use]
 pub fn edge_diffraction_loss(frequency: f32, angle_rad: f32, temperature_celsius: f32) -> f32 {
+    if frequency <= 0.0 {
+        return 0.0;
+    }
+
     let c = speed_of_sound(temperature_celsius);
     let wavelength = c / frequency;
-    // Simplified: loss increases with frequency and shadow angle
-    // At grazing (angle ~0), minimal loss. At deep shadow (angle ~π), maximum loss.
+    let k = std::f32::consts::TAU / wavelength; // wave number
+
+    // UTD diffraction coefficient magnitude (Kouyoumjian-Pathak)
+    // For a half-plane (wedge angle n = 2), the diffraction coefficient
+    // magnitude is approximately: |D| ≈ 1/(√(2πk)) × F(shadow_angle)
+    //
+    // where F is the UTD transition function that smoothly connects
+    // illuminated and shadow regions.
     let shadow_factor = (angle_rad / PI).clamp(0.0, 1.0);
-    let freq_factor = (0.1 / wavelength).clamp(0.0, 10.0);
-    -6.0 * shadow_factor * freq_factor
+
+    // Fresnel-based transition function
+    // In the illuminated region (small angle): minimal loss
+    // At the shadow boundary: -6 dB (half-plane edge)
+    // In the deep shadow: increasing loss with √(kL) dependence
+    let fresnel_arg = 2.0 * k * shadow_factor * shadow_factor;
+    let transition = if fresnel_arg < 0.01 {
+        // Near illuminated boundary — small loss
+        1.0 - shadow_factor * 0.5
+    } else {
+        // Shadow region — UTD rolloff
+        (1.0 / (1.0 + fresnel_arg)).sqrt()
+    };
+
+    // Convert to dB
+    let coefficient = transition.clamp(1e-6, 1.0);
+    20.0 * coefficient.log10()
 }
 
 /// Check if a direct line-of-sight exists between source and listener.

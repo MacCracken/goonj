@@ -676,23 +676,24 @@ mod tests {
     #[test]
     fn multiband_ray_dies_when_all_bands_low() {
         let mut ray = MultibandRay::new(Vec3::ZERO, Vec3::X);
-        ray.energy = [0.0001; 6];
+        ray.energy = [0.0001; crate::material::NUM_BANDS];
         assert!(!ray.is_alive());
     }
 
     #[test]
     fn multiband_ray_alive_if_any_band_high() {
         let mut ray = MultibandRay::new(Vec3::ZERO, Vec3::X);
-        ray.energy = [0.0001, 0.0001, 0.0001, 0.5, 0.0001, 0.0001];
+        ray.energy = [0.0001; crate::material::NUM_BANDS];
+        ray.energy[3] = 0.5;
         assert!(ray.is_alive());
     }
 
     #[test]
     fn multiband_ray_frequency_bands() {
         let bands = MultibandRay::frequency_bands();
-        assert_eq!(bands.len(), 6);
-        assert!((bands[0] - 125.0).abs() < f32::EPSILON);
-        assert!((bands[5] - 4000.0).abs() < f32::EPSILON);
+        assert_eq!(bands.len(), 8);
+        assert!((bands[0] - 63.0).abs() < f32::EPSILON);
+        assert!((bands[7] - 8000.0).abs() < f32::EPSILON);
     }
 
     // --- reflect_ray_multiband tests ---
@@ -729,7 +730,7 @@ mod tests {
             distance: 5.0,
             wall_index: 0,
         };
-        let reflected = reflect_ray_multiband(&ray, &hit, &[0.1; 6], 0.0);
+        let reflected = reflect_ray_multiband(&ray, &hit, &[0.1; crate::material::NUM_BANDS], 0.0);
         assert!((reflected.distance_traveled - 5.0).abs() < 0.01);
     }
 

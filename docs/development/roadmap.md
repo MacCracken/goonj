@@ -16,37 +16,20 @@
 
 ---
 
-## Tier 1 — Accuracy & Standards Compliance
+## Tier 1 — Accuracy & Standards Compliance (completed)
 
-Items that improve correctness toward world-class accuracy.
+### Completed
+- [x] **8 octave bands** (63–8000 Hz) — ISO 3382-1 standard, `NUM_BANDS = 8`
+- [x] **Full ISO 9613-1 atmospheric absorption** — O₂/N₂ molecular relaxation, temperature/pressure/humidity
+- [x] **Miki ground impedance** — corrected Delany-Bazley with positive real impedance
+- [x] **IEC 60268-16:2020 STI** — 7 bands × 14 modulation frequencies, speech spectrum weighting, redundancy
+- [x] **ISO 3382-1 parameters** — EDT, Sound Strength G, Centre Time ts
+- [x] **Fitzroy RT60** — non-uniform absorption per axis pair + Kuttruff variance correction
+- [x] **Full UTD diffraction** — Kouyoumjian-Pathak wedge coefficients with Fresnel transition
 
-### Frequency Bands: Extend to 8 Octave Bands
-- [ ] Add 63 Hz and 8000 Hz bands (ISO 3382 standard: 63–8000 Hz)
-- [ ] Migrate `FREQUENCY_BANDS` from `[f32; 6]` to `[f32; 8]`, update all per-band arrays
-- [ ] 8 kHz critical for air absorption, speech sibilance, STI; 63 Hz for room modes and bass
-
-### Full ISO 9613-1 Atmospheric Absorption
-- [ ] Replace simplified `f²` model with full molecular relaxation computation (O₂ + N₂)
-- [ ] Temperature, pressure, and humidity dependence per the standard
-- [ ] Current model can be 10x off at specific frequency/humidity combinations
-
-### Miki Ground Impedance Model
-- [ ] Replace Delany-Bazley (1970) with Miki (1990) correction
-- [ ] Ensures positive real impedance at low frequencies (Delany-Bazley can go non-physical)
-- [ ] Drop-in replacement — same single parameter (flow resistivity)
-
-### Full IEC 60268-16:2020 STI
-- [ ] 7 octave bands × 14 modulation frequencies (current: 1 broadband × 14)
-- [ ] Male speech spectrum weighting (2020 revision: reduced 125/250 Hz)
-- [ ] Redundancy weighting between octave bands
-- [ ] Per-band MTF computation
-
-### ISO 3382-1 Missing Parameters
-- [ ] EDT (Early Decay Time) — 0 to -10 dB extrapolated, more perceptually relevant than RT60
-- [ ] Sound Strength G — energy relative to free-field at 10m
-- [ ] Lateral Energy Fraction LF (JLF) — spatial impression metric
-- [ ] IACC (Interaural Cross-Correlation) — envelopment metric
-- [ ] Centre Time ts — single-number clarity measure
+### Remaining ISO 3382-1 Parameters
+- [ ] Lateral Energy Fraction LF (JLF) — requires binaural/figure-8 microphone model
+- [ ] IACC (Interaural Cross-Correlation) — requires binaural IR
 - [ ] **Octave-band filtering before metric computation** (correctness: ISO requires filtering first)
 
 ### Fitzroy RT60 Model

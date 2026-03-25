@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 pub const NUM_BANDS: usize = 8;
 
 /// Octave-band centre frequencies in Hz (ISO 3382-1).
-pub const FREQUENCY_BANDS: [f32; NUM_BANDS] = [63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0];
+pub const FREQUENCY_BANDS: [f32; NUM_BANDS] =
+    [63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0];
 
 /// Acoustic material with frequency-dependent absorption and scattering.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -53,11 +54,15 @@ impl AcousticMaterial {
         self.absorption.iter().sum::<f32>() / self.absorption.len() as f32
     }
 
-    /// Absorption at a specific band index (0–5).
+    /// Absorption at a specific band index (0–7). Returns 0.0 if out of range.
     #[must_use]
     #[inline]
     pub fn absorption_at_band(&self, band: usize) -> f32 {
-        if band < NUM_BANDS { self.absorption[band] } else { 0.0 }
+        if band < NUM_BANDS {
+            self.absorption[band]
+        } else {
+            0.0
+        }
     }
 
     /// Concrete: hard, highly reflective.
@@ -188,8 +193,9 @@ mod tests {
     #[test]
     fn absorption_at_band_valid() {
         let w = AcousticMaterial::wood();
-        assert!((w.absorption_at_band(0) - 0.15).abs() < f32::EPSILON);
-        assert!((w.absorption_at_band(6)).abs() < f32::EPSILON); // out of range
+        assert!((w.absorption_at_band(0) - 0.15).abs() < f32::EPSILON); // 63 Hz
+        assert!((w.absorption_at_band(7) - 0.07).abs() < f32::EPSILON); // 8000 Hz
+        assert!((w.absorption_at_band(8)).abs() < f32::EPSILON); // out of range
     }
 
     #[test]

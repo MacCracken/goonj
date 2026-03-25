@@ -64,8 +64,7 @@ impl OcclusionEngine {
             )
         });
 
-        let avg_atten =
-            frequency_dependent.iter().sum::<f32>() / frequency_dependent.len() as f32;
+        let avg_atten = frequency_dependent.iter().sum::<f32>() / frequency_dependent.len() as f32;
 
         OcclusionResult {
             is_occluded: true,

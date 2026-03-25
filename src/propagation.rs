@@ -35,26 +35,62 @@ pub fn spl_drop_with_distance(distance_ref: f32, distance: f32) -> f32 {
     20.0 * (distance / distance_ref).log10()
 }
 
-/// Simplified atmospheric absorption coefficient (dB/m) at a given frequency and humidity.
+/// Atmospheric absorption coefficient per ISO 9613-1 / ANSI S1.26.
 ///
-/// Loosely based on ISO 9613-1 but heavily simplified: models absorption as
-/// proportional to f² with an inverse humidity factor. Accuracy is within an
-/// order of magnitude for 125 Hz–4 kHz at 20–80% RH. For precision work
-/// (outdoor propagation >100 m, ultrasonic frequencies), use a full ISO 9613-1
-/// implementation instead.
+/// Computes the pure-tone absorption coefficient in dB/m as a function of
+/// frequency, temperature, humidity, and atmospheric pressure. Models the
+/// molecular relaxation of O₂ and N₂ that causes frequency-dependent
+/// absorption peaks.
 ///
-/// Returns absorption in dB per meter.
+/// Valid for: 50 Hz – 10 kHz, −20°C – +50°C, 10% – 100% RH.
+///
+/// # Arguments
+/// * `frequency_hz` — pure-tone frequency in Hz
+/// * `humidity_percent` — relative humidity (0–100%)
+/// * `temperature_celsius` — air temperature in °C
+/// * `pressure_atm` — atmospheric pressure in atmospheres (1.0 = standard)
 #[must_use]
-pub fn atmospheric_absorption(frequency_hz: f32, humidity_percent: f32) -> f32 {
-    // Simplified model: absorption increases with f² and decreases with humidity
-    let f_khz = frequency_hz / 1000.0;
-    let humidity_factor = if humidity_percent > 0.0 {
-        50.0 / humidity_percent
-    } else {
-        10.0
-    };
-    // Approximate: ~0.001 dB/m at 1kHz, 50% humidity
-    0.001 * f_khz * f_khz * humidity_factor / 50.0
+pub fn atmospheric_absorption(
+    frequency_hz: f32,
+    humidity_percent: f32,
+    temperature_celsius: f32,
+    pressure_atm: f32,
+) -> f32 {
+    if frequency_hz <= 0.0 || humidity_percent <= 0.0 || pressure_atm <= 0.0 {
+        return 0.0;
+    }
+
+    let t_kelvin = temperature_celsius + 273.15;
+    let t_ref = 293.15_f32; // reference temperature (20°C)
+    let t_01 = 273.16_f32; // triple point of water
+
+    let f = frequency_hz;
+    let p_rel = pressure_atm; // p / p_ref where p_ref = 1 atm
+
+    // Molar concentration of water vapour (from relative humidity)
+    let c_sat = -6.8346 * (t_01 / t_kelvin).powf(1.261) + 4.6151;
+    let h = humidity_percent * 10.0_f32.powf(c_sat) / p_rel;
+
+    // Oxygen relaxation frequency (Hz)
+    let fr_o2 = p_rel * (24.0 + 4.04e4 * h * (0.02 + h) / (0.391 + h));
+
+    // Nitrogen relaxation frequency (Hz)
+    let fr_n2 = p_rel
+        * (t_ref / t_kelvin).sqrt()
+        * (9.0 + 280.0 * h * (-4.17 * ((t_ref / t_kelvin).powf(1.0 / 3.0) - 1.0)).exp());
+
+    let f2 = f * f;
+    let t_ratio = t_kelvin / t_ref;
+
+    // Absorption coefficient in Nepers/m, then convert to dB/m
+    let alpha = f2
+        * (1.84e-11 * p_rel.recip() * t_ratio.sqrt()
+            + t_ratio.powf(-2.5)
+                * (0.01275 * (-2239.1 / t_kelvin).exp() * fr_o2 / (fr_o2 * fr_o2 + f2)
+                    + 0.10680 * (-3352.0 / t_kelvin).exp() * fr_n2 / (fr_n2 * fr_n2 + f2)));
+
+    // Convert from Nepers/m to dB/m: 1 Np = 8.686 dB
+    (alpha * 8.686).max(0.0)
 }
 
 /// Doppler-shifted frequency.
@@ -298,11 +334,11 @@ pub fn trace_ray_atmospheric(
     path
 }
 
-/// Ground reflection coefficient magnitude using the Delany-Bazley model.
+/// Ground reflection coefficient magnitude using the Miki model (1990).
 ///
-/// Models the ground surface impedance based on flow resistivity and computes
-/// the reflection coefficient for a plane wave at a given frequency and
-/// grazing angle (angle from the surface, not from normal).
+/// Corrects the Delany-Bazley (1970) model to ensure positive real impedance
+/// at low frequencies. Uses the same single parameter (flow resistivity) but
+/// with corrected power-law coefficients.
 ///
 /// Returns the magnitude of the reflection coefficient (0.0–1.0).
 #[must_use]
@@ -316,12 +352,12 @@ pub fn ground_reflection_coefficient(
         return 1.0;
     }
 
-    // Delany-Bazley normalized impedance (real and imaginary parts)
+    // Miki (1990) corrected impedance model
     let x = frequency_hz / impedance.flow_resistivity;
 
-    // Normalized specific acoustic impedance Z/ρc
-    let z_real = 1.0 + 9.08 * x.powf(-0.75);
-    let z_imag = -11.9 * x.powf(-0.73);
+    // Normalized specific acoustic impedance Z/ρc (Miki coefficients)
+    let z_real = 1.0 + 5.50 * x.powf(-0.632);
+    let z_imag = -8.43 * x.powf(-0.632);
 
     // Reflection coefficient for grazing angle θ (angle from surface)
     // R = (Z sinθ - 1) / (Z sinθ + 1)
@@ -390,8 +426,8 @@ mod tests {
 
     #[test]
     fn atmospheric_absorption_increases_with_frequency() {
-        let a1k = atmospheric_absorption(1000.0, 50.0);
-        let a4k = atmospheric_absorption(4000.0, 50.0);
+        let a1k = atmospheric_absorption(1000.0, 50.0, 20.0, 1.0);
+        let a4k = atmospheric_absorption(4000.0, 50.0, 20.0, 1.0);
         assert!(a4k > a1k, "absorption should increase with frequency");
     }
 
@@ -445,15 +481,34 @@ mod tests {
 
     #[test]
     fn atmospheric_absorption_zero_humidity() {
-        let a = atmospheric_absorption(1000.0, 0.0);
-        assert!(a > 0.0, "should still produce absorption at zero humidity");
+        let a = atmospheric_absorption(1000.0, 0.0, 20.0, 1.0);
+        assert_eq!(a, 0.0, "zero humidity should return 0");
     }
 
     #[test]
     fn atmospheric_absorption_negative_frequency() {
-        let a = atmospheric_absorption(-100.0, 50.0);
-        // f² is always positive, so result is positive regardless of sign
-        assert!(a >= 0.0);
+        let a = atmospheric_absorption(-100.0, 50.0, 20.0, 1.0);
+        assert_eq!(a, 0.0, "negative frequency should return 0");
+    }
+
+    #[test]
+    fn atmospheric_absorption_iso9613_1khz_20c_50rh() {
+        // At 1kHz, 20°C, 50% RH, 1 atm → approximately 0.005 dB/m (ISO 9613-1 reference)
+        let a = atmospheric_absorption(1000.0, 50.0, 20.0, 1.0);
+        assert!(
+            a > 0.001 && a < 0.02,
+            "1kHz absorption should be ~0.005 dB/m, got {a}"
+        );
+    }
+
+    #[test]
+    fn atmospheric_absorption_8khz_much_higher() {
+        let a1k = atmospheric_absorption(1000.0, 50.0, 20.0, 1.0);
+        let a8k = atmospheric_absorption(8000.0, 50.0, 20.0, 1.0);
+        assert!(
+            a8k > a1k * 5.0,
+            "8kHz should be much higher than 1kHz: {a8k} vs {a1k}"
+        );
     }
 
     #[test]

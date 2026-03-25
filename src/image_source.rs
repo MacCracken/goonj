@@ -365,7 +365,7 @@ mod tests {
             }
             let total: f32 = refs
                 .iter()
-                .map(|r| r.amplitude.iter().sum::<f32>() / 6.0)
+                .map(|r| r.amplitude.iter().sum::<f32>() / r.amplitude.len() as f32)
                 .sum();
             total / refs.len() as f32
         };

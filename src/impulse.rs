@@ -96,6 +96,55 @@ pub fn estimate_rt60_shoebox(length: f32, width: f32, height: f32, avg_absorptio
     sabine_rt60(volume, total_absorption)
 }
 
+/// Axis-pair absorption data for Fitzroy RT60.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AxisAbsorption {
+    /// Average absorption coefficient for this axis pair.
+    pub alpha: f32,
+    /// Combined surface area of the two walls in m².
+    pub area: f32,
+}
+
+/// Fitzroy reverberation time for rooms with non-uniform absorption.
+///
+/// Computes RT60 separately for each pair of opposing walls (x, y, z axis)
+/// and combines them. More accurate than Sabine/Eyring when absorption
+/// differs significantly between surfaces.
+#[must_use]
+#[tracing::instrument]
+pub fn fitzroy_rt60(volume: f32, surface_area: f32, axes: &[AxisAbsorption; 3]) -> f32 {
+    if volume <= 0.0 || surface_area <= 0.0 {
+        return f32::INFINITY;
+    }
+
+    let term = |ax: &AxisAbsorption| -> f32 {
+        if ax.alpha <= 0.0 || ax.alpha >= 1.0 || ax.area <= 0.0 {
+            return 0.0;
+        }
+        ax.area / surface_area * (-(1.0 - ax.alpha).ln())
+    };
+
+    let sum: f32 = axes.iter().map(term).sum();
+    if sum <= 0.0 {
+        return f32::INFINITY;
+    }
+
+    0.161 * volume / (surface_area * sum)
+}
+
+/// Kuttruff correction factor for Eyring RT60 based on absorption variance.
+///
+/// Applies when absorption varies significantly across surfaces:
+/// `RT60_corrected = RT60_eyring × (1 + variance / (2 × mean_alpha²))`
+#[must_use]
+#[inline]
+pub fn kuttruff_correction(eyring_rt60: f32, mean_alpha: f32, alpha_variance: f32) -> f32 {
+    if mean_alpha.abs() < f32::EPSILON {
+        return eyring_rt60;
+    }
+    eyring_rt60 * (1.0 + alpha_variance / (2.0 * mean_alpha * mean_alpha))
+}
+
 /// Configuration for full impulse response generation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IrConfig {
@@ -299,7 +348,7 @@ mod tests {
             &room,
             &config,
         );
-        assert_eq!(ir.bands.len(), 6);
+        assert_eq!(ir.bands.len(), crate::material::NUM_BANDS);
     }
 
     #[test]
@@ -497,5 +546,88 @@ mod tests {
         // Negative absorption is physically nonsensical but shouldn't panic
         let rt60 = sabine_rt60(100.0, -10.0);
         assert!(rt60 < 0.0 || rt60.is_infinite());
+    }
+
+    #[test]
+    fn fitzroy_uniform_absorption_matches_eyring() {
+        // With uniform absorption, Fitzroy should approximate Eyring
+        let volume = 240.0;
+        let surface = 268.0;
+        let alpha = 0.3;
+        let axes = [
+            AxisAbsorption {
+                alpha,
+                area: 2.0 * 10.0 * 3.0,
+            }, // x-walls
+            AxisAbsorption {
+                alpha,
+                area: 2.0 * 10.0 * 8.0,
+            }, // y-walls (floor/ceil)
+            AxisAbsorption {
+                alpha,
+                area: 2.0 * 8.0 * 3.0,
+            }, // z-walls
+        ];
+        let fitz = fitzroy_rt60(volume, surface, &axes);
+        let eyr = eyring_rt60(volume, surface, alpha);
+        let diff = (fitz - eyr).abs() / eyr;
+        assert!(
+            diff < 0.3,
+            "Fitzroy should be within 30% of Eyring for uniform absorption: fitz={fitz}, eyr={eyr}"
+        );
+    }
+
+    #[test]
+    fn fitzroy_non_uniform_differs_from_sabine() {
+        let volume = 240.0;
+        let surface = 268.0;
+        let axes = [
+            AxisAbsorption {
+                alpha: 0.05,
+                area: 60.0,
+            },
+            AxisAbsorption {
+                alpha: 0.60,
+                area: 160.0,
+            }, // floor carpet, ceiling tile
+            AxisAbsorption {
+                alpha: 0.05,
+                area: 48.0,
+            },
+        ];
+        let fitz = fitzroy_rt60(volume, surface, &axes);
+        let avg_alpha = (0.05 * 60.0 + 0.60 * 160.0 + 0.05 * 48.0) / surface;
+        let sab = sabine_rt60(volume, surface * avg_alpha);
+        // Fitzroy should differ from Sabine for non-uniform absorption
+        assert!(
+            (fitz - sab).abs() / sab > 0.05,
+            "Fitzroy should differ from Sabine for non-uniform rooms"
+        );
+    }
+
+    #[test]
+    fn kuttruff_no_variance_no_change() {
+        let rt60 = 1.0;
+        let corrected = kuttruff_correction(rt60, 0.3, 0.0);
+        assert!((corrected - rt60).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn kuttruff_variance_increases_rt60() {
+        let rt60 = 1.0;
+        let corrected = kuttruff_correction(rt60, 0.3, 0.04);
+        assert!(
+            corrected > rt60,
+            "variance should increase RT60: corrected={corrected}"
+        );
+    }
+
+    #[test]
+    fn eyring_absorption_one_returns_zero() {
+        let rt60 = eyring_rt60(100.0, 150.0, 1.0);
+        assert!(
+            (rt60).abs() < f32::EPSILON,
+            "total absorption should give RT60=0, got {rt60}"
+        );
     }
 }
