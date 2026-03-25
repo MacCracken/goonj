@@ -35,52 +35,17 @@
 
 ---
 
-## Tier 2 — Major Feature Additions
+## Tier 2 — Major Feature Additions (completed)
 
-### Sound Transmission Through Walls
-- [ ] Frequency-dependent transmission loss (Sound Reduction Index Rw)
-- [ ] Mass law and Davy partition theory
-- [ ] Essential for multi-room simulation (shruti, kiran)
-
-### Source Directivity Patterns
-- [ ] Frequency-dependent balloon data (CLF/CF1/CF2 format)
-- [ ] Directivity applied to ray/image-source energy computations
-- [ ] Critical for realistic speaker and instrument simulation
-
-### Portal-Based Propagation
-- [ ] Sound through doorways, windows, openings between rooms
-- [ ] Aperture diffraction modeling
-- [ ] Coupled-room energy exchange
-- [ ] High priority for kiran/joshua game audio
-
-### 1st-Order Ambisonics (B-Format) Output
-- [ ] W, X, Y, Z channel encoding of reflections
-- [ ] Source/receiver orientation-independent sound field
-- [ ] Essential for VR/AR (aethersafha) and flexible playback decoding
-
-### Coupled Room Acoustics
-- [ ] Multi-room energy exchange producing double-slope decay
-- [ ] Statistical coupling model or diffusion equation approach
-- [ ] Concert halls with coupled volumes, office spaces, game environments
-
-### Biot-Tolstoy-Medwin (BTM) Diffraction
-- [ ] Finite-edge diffraction with multiple virtual sources along edge
-- [ ] Most accurate geometric diffraction model available
-- [ ] Quality option alongside UTD for architectural verification
-
-### Vector-Based Scattering Model
-- [ ] Replace normal-blending with proper hemisphere sampling
-- [ ] Frequency-dependent, size-dependent scattering coefficients
-- [ ] ODEON-style `(1-s)*specular + s*random_hemisphere` model
-
-### FDN/SDN Late Reverberation
-- [ ] Feedback Delay Network alternative to diffuse rain
-- [ ] Scattering Delay Network (geometry-aware reverb, wall-tied nodes)
-- [ ] Industry standard for efficient late reverb
-
-### 3rd-Order Higher-Order Ambisonics
-- [ ] 16-channel HOA encoding for spatial precision
-- [ ] Spherical harmonic coefficients per reflection
+- [x] **Wall transmission** — `WallConstruction` with mass law + Davy model, TL in dB, τ coefficient
+- [x] **Source directivity** — `DirectivityPattern` enum (omni, cardioid, sub/supercardioid, figure-8, tabulated balloon)
+- [x] **Portal propagation** — `Portal` with aperture diffraction model, `portal_energy_transfer()`
+- [x] **1st-order Ambisonics** — `BFormatIr` with W/X/Y/Z encoding, `encode_bformat()`
+- [x] **Coupled rooms** — `CoupledRooms` + `coupled_room_decay()` with double-slope eigenvalue analysis
+- [x] **UTD wedge diffraction** — `utd_wedge_diffraction()` with K-P coefficients and geometry params
+- [x] **Vector scattering** — `cosine_hemisphere_sample()` + `scatter_direction()` (ODEON-style)
+- [x] **FDN reverb** — 8-delay Householder FDN with room-derived delay lengths
+- [x] **3rd-order HOA** — `HoaIr` with 16-channel ACN/SN3D spherical harmonic encoding
 
 ---
 

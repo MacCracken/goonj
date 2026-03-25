@@ -19,25 +19,35 @@
 //! assert!(rt60 > 0.0);
 //! ```
 
-/// Room acoustics analysis metrics (C50, C80, D50, STI, absorption placement).
+/// Ambisonics encoding (1st-order B-Format and 3rd-order HOA).
+pub mod ambisonics;
+/// Room acoustics analysis metrics (C50, C80, D50, EDT, G, ts, LF, IACC, STI).
 pub mod analysis;
 /// Binaural impulse response generation with HRTF spatialization.
 #[cfg(feature = "binaural")]
 pub mod binaural;
-/// Edge diffraction loss and occlusion detection.
+/// Coupled room acoustics — multi-room energy exchange and double-slope decay.
+pub mod coupled;
+/// Edge diffraction loss and occlusion detection (UTD, BTM).
 pub mod diffraction;
 /// Stochastic ray tracing (diffuse rain) for late reverberation tails.
 pub mod diffuse;
+/// Source directivity patterns (omnidirectional, cardioid, tabulated balloon data).
+pub mod directivity;
 /// Error types for the goonj crate.
 pub mod error;
+/// Feedback Delay Network (FDN) for efficient late reverberation synthesis.
+pub mod fdn;
 /// Image-source method for exact early specular reflections.
 pub mod image_source;
 /// Impulse response generation, RT60 estimation, and energy decay curves.
 pub mod impulse;
 /// Integration APIs for downstream consumers (dhvani, kiran, soorat).
 pub mod integration;
-/// Acoustic materials with frequency-dependent absorption and scattering.
+/// Acoustic materials with frequency-dependent absorption, scattering, and transmission.
 pub mod material;
+/// Portal-based sound propagation through openings between rooms.
+pub mod portal;
 /// Sound propagation: speed of sound, inverse square law, Doppler, atmospheric effects.
 pub mod propagation;
 /// Acoustic ray tracing: single-band, multiband, BVH-accelerated.
@@ -46,6 +56,8 @@ pub mod ray;
 pub mod resonance;
 /// Room geometry, walls, and acceleration structures.
 pub mod room;
+/// Vector-based scattering for diffuse reflections (cosine-weighted hemisphere sampling).
+pub mod scattering;
 /// WAV file export (16-bit PCM, mono/stereo).
 #[cfg(feature = "wav")]
 pub mod wav;

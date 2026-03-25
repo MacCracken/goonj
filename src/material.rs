@@ -143,6 +143,105 @@ impl AcousticMaterial {
     }
 }
 
+/// Wall construction properties for sound transmission loss calculation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WallConstruction {
+    /// Surface mass density in kg/m² (e.g. 12mm drywall ≈ 10 kg/m²).
+    pub surface_density: f32,
+    /// Critical (coincidence) frequency in Hz. Below this, mass law dominates.
+    /// For common materials: drywall ~2500 Hz, glass ~1250 Hz, concrete ~150 Hz.
+    pub critical_frequency: f32,
+    /// Internal loss factor (damping). Typical: 0.01–0.03 for stiff materials, 0.1+ for damped.
+    pub loss_factor: f32,
+}
+
+impl WallConstruction {
+    /// Single-leaf drywall (12.5 mm gypsum board).
+    #[must_use]
+    pub fn drywall_single() -> Self {
+        Self {
+            surface_density: 10.0,
+            critical_frequency: 2500.0,
+            loss_factor: 0.014,
+        }
+    }
+
+    /// Double-leaf drywall (2 × 12.5 mm with air gap).
+    #[must_use]
+    pub fn drywall_double() -> Self {
+        Self {
+            surface_density: 20.0,
+            critical_frequency: 2500.0,
+            loss_factor: 0.02,
+        }
+    }
+
+    /// 150 mm concrete wall.
+    #[must_use]
+    pub fn concrete_150mm() -> Self {
+        Self {
+            surface_density: 350.0,
+            critical_frequency: 130.0,
+            loss_factor: 0.01,
+        }
+    }
+
+    /// 6 mm glass pane.
+    #[must_use]
+    pub fn glass_6mm() -> Self {
+        Self {
+            surface_density: 15.0,
+            critical_frequency: 2000.0,
+            loss_factor: 0.02,
+        }
+    }
+
+    /// Sound Reduction Index (transmission loss) in dB at a given frequency.
+    ///
+    /// Uses the mass law below the critical frequency and Davy's model
+    /// (simplified) above it. Returns TL in dB (higher = more isolation).
+    ///
+    /// Reference: J.L. Davy, "Predicting the sound insulation of single leaf
+    /// walls — extension of Cremer's model," JASA 2009.
+    #[must_use]
+    #[inline]
+    pub fn transmission_loss_db(&self, frequency: f32) -> f32 {
+        if frequency <= 0.0 || self.surface_density <= 0.0 {
+            return 0.0;
+        }
+
+        // Mass law: TL = 20 × log10(π × f × m / (ρ₀ × c₀)) - 3
+        // where m = surface density, ρ₀c₀ ≈ 415 (air impedance at 20°C)
+        let rho_c = 415.0_f32;
+        let mass_law =
+            20.0 * (std::f32::consts::PI * frequency * self.surface_density / rho_c).log10() - 3.0;
+
+        if frequency < self.critical_frequency * 0.5 {
+            // Below coincidence: pure mass law
+            mass_law.max(0.0)
+        } else if frequency < self.critical_frequency * 2.0 {
+            // Near coincidence: mass law with coincidence dip (reduced by loss factor)
+            let coincidence_dip = 10.0
+                * (self.loss_factor + self.surface_density / (485.0 * frequency.sqrt())).log10();
+            (mass_law + coincidence_dip).max(0.0)
+        } else {
+            // Above coincidence: mass law + damping controlled increase
+            let above = mass_law + 10.0 * self.loss_factor.max(0.001).log10() + 5.0;
+            above.max(0.0)
+        }
+    }
+
+    /// Transmission coefficient (energy ratio 0.0–1.0) at a given frequency.
+    ///
+    /// τ = 10^(-TL/10), where TL is the transmission loss in dB.
+    #[must_use]
+    #[inline]
+    pub fn transmission_coefficient(&self, frequency: f32) -> f32 {
+        let tl = self.transmission_loss_db(frequency);
+        10.0_f32.powf(-tl / 10.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +332,80 @@ mod tests {
     fn new_rejects_scattering_out_of_range() {
         let m = AcousticMaterial::new("bad", [0.1; NUM_BANDS], 1.5);
         assert!(m.is_err());
+    }
+
+    // --- Wall transmission tests ---
+
+    #[test]
+    fn concrete_high_transmission_loss() {
+        let wall = WallConstruction::concrete_150mm();
+        let tl_1k = wall.transmission_loss_db(1000.0);
+        assert!(
+            tl_1k > 40.0,
+            "concrete should have >40 dB TL at 1kHz, got {tl_1k}"
+        );
+    }
+
+    #[test]
+    fn drywall_lower_than_concrete() {
+        let drywall = WallConstruction::drywall_single();
+        let concrete = WallConstruction::concrete_150mm();
+        let tl_drywall = drywall.transmission_loss_db(1000.0);
+        let tl_concrete = concrete.transmission_loss_db(1000.0);
+        assert!(
+            tl_concrete > tl_drywall,
+            "concrete ({tl_concrete}) should isolate more than drywall ({tl_drywall})"
+        );
+    }
+
+    #[test]
+    fn transmission_loss_increases_with_frequency_below_coincidence() {
+        // Test mass law regime (well below critical frequency of 2500 Hz)
+        let wall = WallConstruction::concrete_150mm(); // fc ≈ 130 Hz → mass law above that
+        let tl_250 = wall.transmission_loss_db(250.0);
+        let tl_1k = wall.transmission_loss_db(1000.0);
+        assert!(
+            tl_1k > tl_250,
+            "higher freq should have more TL: 1kHz={tl_1k} vs 250Hz={tl_250}"
+        );
+    }
+
+    #[test]
+    fn transmission_coefficient_in_range() {
+        let wall = WallConstruction::glass_6mm();
+        for &f in &FREQUENCY_BANDS {
+            let tau = wall.transmission_coefficient(f);
+            assert!(
+                (0.0..=1.0).contains(&tau),
+                "τ should be in [0,1] at {f} Hz, got {tau}"
+            );
+        }
+    }
+
+    #[test]
+    fn transmission_loss_non_negative() {
+        let wall = WallConstruction::drywall_single();
+        for &f in &FREQUENCY_BANDS {
+            let tl = wall.transmission_loss_db(f);
+            assert!(tl >= 0.0, "TL should be non-negative at {f} Hz, got {tl}");
+        }
+    }
+
+    #[test]
+    fn double_drywall_better_than_single() {
+        let single = WallConstruction::drywall_single();
+        let double = WallConstruction::drywall_double();
+        let tl_s = single.transmission_loss_db(500.0);
+        let tl_d = double.transmission_loss_db(500.0);
+        assert!(
+            tl_d > tl_s,
+            "double ({tl_d}) should isolate more than single ({tl_s})"
+        );
+    }
+
+    #[test]
+    fn transmission_loss_zero_frequency() {
+        let wall = WallConstruction::concrete_150mm();
+        assert_eq!(wall.transmission_loss_db(0.0), 0.0);
     }
 }
