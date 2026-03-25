@@ -50,10 +50,8 @@ pub fn encode_bformat(amplitude: f32, direction: Vec3, delay_samples: usize, ir:
         return;
     }
 
-    // SN3D normalization for 1st order: W has √2 gain
-    let w_gain = std::f32::consts::SQRT_2;
-
-    ir.w[delay_samples] += amplitude * w_gain;
+    // SN3D/ACN (AmbiX) normalization: W = 1.0, X/Y/Z = direction cosines
+    ir.w[delay_samples] += amplitude;
     ir.x[delay_samples] += amplitude * direction.x;
     ir.y[delay_samples] += amplitude * direction.y;
     ir.z[delay_samples] += amplitude * direction.z;
@@ -89,50 +87,62 @@ pub fn encode_hoa(amplitude: f32, direction: Vec3, delay_samples: usize, ir: &mu
     }
 }
 
+/// Maximum supported Ambisonics order.
+const MAX_HOA_ORDER: u32 = 3;
+/// Maximum number of HOA channels: (3+1)² = 16.
+const MAX_HOA_CHANNELS: usize = 16;
+
 /// Compute real spherical harmonics up to given order (ACN ordering, SN3D normalization).
 ///
-/// Returns coefficients for (order+1)² channels.
+/// Returns a fixed-size array of coefficients (zero-allocation).
+/// SN3D normalization factors from: Nachbar et al., "AmbiX — A Suggested
+/// Ambisonics Format," AES 2011.
 #[must_use]
-fn spherical_harmonics(order: u32, theta: f32, phi: f32) -> Vec<f32> {
-    let num = ((order + 1) * (order + 1)) as usize;
-    let mut sh = Vec::with_capacity(num);
+fn spherical_harmonics(order: u32, theta: f32, phi: f32) -> [f32; MAX_HOA_CHANNELS] {
+    let mut sh = [0.0_f32; MAX_HOA_CHANNELS];
+    let order = order.min(MAX_HOA_ORDER);
 
-    let cos_theta = theta.cos();
-    let sin_theta = theta.sin();
+    let cos_t = theta.cos();
+    let sin_t = theta.sin();
 
-    // Order 0: Y_0^0 = 1
-    sh.push(1.0);
+    // Order 0: Y_0^0 = 1 (SN3D factor = 1)
+    sh[0] = 1.0;
 
     if order >= 1 {
-        // Order 1 (ACN 1,2,3): Y_1^{-1}, Y_1^0, Y_1^1
-        sh.push(sin_theta * phi.sin()); // ACN 1: Y_1^{-1}
-        sh.push(cos_theta); // ACN 2: Y_1^0
-        sh.push(sin_theta * phi.cos()); // ACN 3: Y_1^1
+        // SN3D normalization: order-1 factors are all 1.0
+        sh[1] = sin_t * phi.sin(); // ACN 1: Y_1^{-1}
+        sh[2] = cos_t; // ACN 2: Y_1^0
+        sh[3] = sin_t * phi.cos(); // ACN 3: Y_1^1
     }
 
     if order >= 2 {
-        // Order 2 (ACN 4..8)
-        let sin2 = sin_theta * sin_theta;
-        let cos2 = cos_theta * cos_theta;
-        sh.push(sin2 * (2.0 * phi).sin()); // ACN 4: Y_2^{-2}
-        sh.push(sin_theta * cos_theta * phi.sin()); // ACN 5: Y_2^{-1}
-        sh.push(1.5 * cos2 - 0.5); // ACN 6: Y_2^0
-        sh.push(sin_theta * cos_theta * phi.cos()); // ACN 7: Y_2^1
-        sh.push(sin2 * (2.0 * phi).cos()); // ACN 8: Y_2^2
+        let sin2 = sin_t * sin_t;
+        let cos2 = cos_t * cos_t;
+        // SN3D factors for order 2: m=±2 → √(3)/2, m=±1 → √(3), m=0 → 1
+        let n2_2 = 3.0_f32.sqrt() / 2.0; // 0.866
+        let n2_1 = 3.0_f32.sqrt(); // 1.732
+        sh[4] = n2_2 * sin2 * (2.0 * phi).sin(); // ACN 4: Y_2^{-2}
+        sh[5] = n2_1 * sin_t * cos_t * phi.sin(); // ACN 5: Y_2^{-1}
+        sh[6] = 1.5 * cos2 - 0.5; // ACN 6: Y_2^0 (factor = 1)
+        sh[7] = n2_1 * sin_t * cos_t * phi.cos(); // ACN 7: Y_2^1
+        sh[8] = n2_2 * sin2 * (2.0 * phi).cos(); // ACN 8: Y_2^2
     }
 
     if order >= 3 {
-        // Order 3 (ACN 9..15)
-        let sin2 = sin_theta * sin_theta;
-        let sin3 = sin2 * sin_theta;
-        let cos2 = cos_theta * cos_theta;
-        sh.push(sin3 * (3.0 * phi).sin()); // ACN 9
-        sh.push(sin2 * cos_theta * (2.0 * phi).sin()); // ACN 10
-        sh.push(sin_theta * (5.0 * cos2 - 1.0) * phi.sin()); // ACN 11
-        sh.push(2.5 * cos2 * cos_theta - 1.5 * cos_theta); // ACN 12
-        sh.push(sin_theta * (5.0 * cos2 - 1.0) * phi.cos()); // ACN 13
-        sh.push(sin2 * cos_theta * (2.0 * phi).cos()); // ACN 14
-        sh.push(sin3 * (3.0 * phi).cos()); // ACN 15
+        let sin2 = sin_t * sin_t;
+        let sin3 = sin2 * sin_t;
+        let cos2 = cos_t * cos_t;
+        // SN3D factors for order 3
+        let n3_3 = (5.0 / 8.0_f32).sqrt(); // m=±3
+        let n3_2 = (15.0 / 2.0_f32).sqrt() / 2.0; // m=±2
+        let n3_1 = (3.0 / 8.0_f32).sqrt(); // m=±1
+        sh[9] = n3_3 * sin3 * (3.0 * phi).sin(); // ACN 9: Y_3^{-3}
+        sh[10] = n3_2 * sin2 * cos_t * (2.0 * phi).sin(); // ACN 10: Y_3^{-2}
+        sh[11] = n3_1 * sin_t * (5.0 * cos2 - 1.0) * phi.sin(); // ACN 11: Y_3^{-1}
+        sh[12] = 2.5 * cos2 * cos_t - 1.5 * cos_t; // ACN 12: Y_3^0 (factor = 1)
+        sh[13] = n3_1 * sin_t * (5.0 * cos2 - 1.0) * phi.cos(); // ACN 13: Y_3^1
+        sh[14] = n3_2 * sin2 * cos_t * (2.0 * phi).cos(); // ACN 14: Y_3^2
+        sh[15] = n3_3 * sin3 * (3.0 * phi).cos(); // ACN 15: Y_3^3
     }
 
     sh
@@ -169,8 +179,12 @@ mod tests {
     fn bformat_front_direction() {
         let mut ir = new_bformat_ir(100, 48000);
         encode_bformat(1.0, Vec3::X, 0, &mut ir);
-        // W should have √2 gain, X should have 1.0, Y and Z should be 0
-        assert!(ir.w[0] > 1.0, "W should have √2 scaling");
+        // SN3D: W = 1.0, X = direction.x = 1.0
+        assert!(
+            (ir.w[0] - 1.0).abs() < 0.01,
+            "W should be 1.0, got {}",
+            ir.w[0]
+        );
         assert!((ir.x[0] - 1.0).abs() < 0.01);
         assert!(ir.y[0].abs() < 0.01);
         assert!(ir.z[0].abs() < 0.01);
@@ -180,7 +194,7 @@ mod tests {
     fn bformat_up_direction() {
         let mut ir = new_bformat_ir(100, 48000);
         encode_bformat(1.0, Vec3::Y, 0, &mut ir);
-        assert!(ir.w[0] > 1.0);
+        assert!((ir.w[0] - 1.0).abs() < 0.01);
         assert!(ir.x[0].abs() < 0.01);
         assert!((ir.y[0] - 1.0).abs() < 0.01);
         assert!(ir.z[0].abs() < 0.01);
@@ -217,18 +231,20 @@ mod tests {
     #[test]
     fn spherical_harmonics_order_0() {
         let sh = spherical_harmonics(0, 0.0, 0.0);
-        assert_eq!(sh.len(), 1);
+        assert_eq!(sh.len(), MAX_HOA_CHANNELS);
         assert!((sh[0] - 1.0).abs() < 0.01);
+        // Higher orders should be zero for order=0 input
     }
 
     #[test]
-    fn spherical_harmonics_order_1_count() {
+    fn spherical_harmonics_order_1_has_values() {
         let sh = spherical_harmonics(1, 0.5, 0.3);
-        assert_eq!(sh.len(), 4);
+        assert_eq!(sh.len(), MAX_HOA_CHANNELS);
+        assert!(sh[0].abs() > 0.0, "W should be nonzero");
     }
 
     #[test]
-    fn spherical_harmonics_order_3_count() {
+    fn spherical_harmonics_order_3_all_populated() {
         let sh = spherical_harmonics(3, 0.5, 0.3);
         assert_eq!(sh.len(), 16);
     }

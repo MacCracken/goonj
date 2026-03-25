@@ -85,18 +85,15 @@ pub fn portal_energy_transfer(
     let cos_out = (from_portal / d_listener).dot(portal.normal).abs();
     let directional = cos_in * cos_out;
 
-    // Distance attenuation (inverse square through portal)
-    let total_distance = d_source + d_listener;
-    let distance_atten = 1.0 / (4.0 * std::f32::consts::PI * total_distance * total_distance);
-
-    // Portal area factor (larger opening → more energy transfer)
-    let area_factor = portal.area();
+    // Two-stage inverse square: source→portal and portal→listener
+    // Portal acts as secondary source with area-weighted energy collection
+    let pi4 = 4.0 * std::f32::consts::PI;
+    let distance_atten = portal.area() / (pi4 * d_source * d_source * d_listener * d_listener);
+    let distance_atten = distance_atten.min(1.0);
 
     let freq_factors = portal.transmission_factor(temperature_celsius);
 
-    std::array::from_fn(|band| {
-        (freq_factors[band] * directional * distance_atten * area_factor).clamp(0.0, 1.0)
-    })
+    std::array::from_fn(|band| (freq_factors[band] * directional * distance_atten).clamp(0.0, 1.0))
 }
 
 #[cfg(test)]

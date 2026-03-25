@@ -28,6 +28,8 @@ pub struct Fdn {
     delay_lines: Vec<Vec<f32>>,
     write_positions: Vec<usize>,
     feedback_gains: Vec<f32>,
+    /// Scratch buffer for delay line outputs (avoids per-sample allocation).
+    scratch: Vec<f32>,
     _sample_rate: u32,
 }
 
@@ -67,6 +69,7 @@ impl Fdn {
 
         Self {
             write_positions: vec![0; n],
+            scratch: vec![0.0; n],
             delay_lines,
             feedback_gains,
             _sample_rate: config.sample_rate,
@@ -76,6 +79,7 @@ impl Fdn {
     /// Process a single input sample through the FDN, returning the mixed output.
     ///
     /// The feedback matrix is a Householder matrix (all-pass, energy preserving).
+    /// Zero heap allocations — uses pre-allocated scratch buffer.
     #[inline]
     pub fn process_sample(&mut self, input: f32) -> f32 {
         let n = self.delay_lines.len();
@@ -83,29 +87,29 @@ impl Fdn {
             return input;
         }
 
-        // Read from delay lines
-        let mut outputs = Vec::with_capacity(n);
+        // Read from delay lines into scratch buffer (zero allocation)
+        let mut output_sum = 0.0_f32;
         for i in 0..n {
             let len = self.delay_lines[i].len();
             let read_pos = (self.write_positions[i] + 1) % len;
-            outputs.push(self.delay_lines[i][read_pos]);
+            self.scratch[i] = self.delay_lines[i][read_pos];
+            output_sum += self.scratch[i];
         }
 
-        // Householder feedback matrix: H = I - (2/N) × ones
-        // H × v = v - (2/N) × sum(v) × ones
-        let sum: f32 = outputs.iter().sum();
+        // Householder feedback + write to delay lines (single pass, zero allocation)
         let factor = 2.0 / n as f32;
-        let feedback: Vec<f32> = outputs.iter().map(|&o| o - factor * sum).collect();
+        let correction = factor * output_sum;
+        let input_per_line = input / n as f32;
 
-        // Write input + feedback to delay lines (with absorption)
-        for (i, (&fb, &gain)) in feedback.iter().zip(self.feedback_gains.iter()).enumerate() {
+        for i in 0..n {
+            let fb = self.scratch[i] - correction;
             let len = self.delay_lines[i].len();
-            self.delay_lines[i][self.write_positions[i]] = input / n as f32 + fb * gain;
+            self.delay_lines[i][self.write_positions[i]] =
+                input_per_line + fb * self.feedback_gains[i];
             self.write_positions[i] = (self.write_positions[i] + 1) % len;
         }
 
-        // Output: sum of delay line outputs
-        outputs.iter().sum::<f32>() / (n as f32).sqrt()
+        output_sum / (n as f32).sqrt()
     }
 
     /// Process a buffer of input samples, returning the reverb output.
