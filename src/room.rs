@@ -1,5 +1,6 @@
 use crate::material::AcousticMaterial;
 use hisab::Vec3;
+use hisab::geo::{Aabb, Bvh};
 use serde::{Deserialize, Serialize};
 
 /// A wall in a room, defined by vertices with an associated material.
@@ -35,6 +36,23 @@ impl Wall {
     pub fn absorption_area(&self) -> f32 {
         self.area() * self.material.average_absorption()
     }
+
+    /// Compute the axis-aligned bounding box for this wall's vertices.
+    #[must_use]
+    pub fn aabb(&self) -> Aabb {
+        if self.vertices.is_empty() {
+            return Aabb::new(Vec3::ZERO, Vec3::ZERO);
+        }
+        let mut min = self.vertices[0];
+        let mut max = self.vertices[0];
+        for &v in &self.vertices[1..] {
+            min = min.min(v);
+            max = max.max(v);
+        }
+        // Slightly pad flat AABBs to avoid zero-thickness slabs
+        let pad = Vec3::splat(0.001);
+        Aabb::new(min - pad, max + pad)
+    }
 }
 
 /// Room geometry defined by a collection of walls.
@@ -54,6 +72,17 @@ impl RoomGeometry {
     #[must_use]
     pub fn total_absorption(&self) -> f32 {
         self.walls.iter().map(|w| w.absorption_area()).sum()
+    }
+
+    /// Build a BVH acceleration structure from this geometry's walls.
+    pub fn build_bvh(&self) -> Bvh {
+        let mut items: Vec<(Aabb, usize)> = self
+            .walls
+            .iter()
+            .enumerate()
+            .map(|(i, wall)| (wall.aabb(), i))
+            .collect();
+        Bvh::build(&mut items)
     }
 
     /// Create a shoebox (rectangular) room with uniform material on all surfaces.
@@ -150,6 +179,29 @@ impl RoomGeometry {
             return 0.0;
         }
         extents.x * extents.y * extents.z
+    }
+}
+
+/// Pre-computed acceleration structure for fast ray-wall queries.
+///
+/// Wraps an [`AcousticRoom`] with a BVH built from wall bounding boxes.
+/// Use this for rooms with many walls (>20); for shoebox rooms (6 walls)
+/// the linear scan is faster due to BVH overhead.
+#[derive(Debug, Clone)]
+pub struct AcceleratedRoom {
+    /// The underlying acoustic room.
+    pub room: AcousticRoom,
+    /// BVH built from wall AABBs.
+    pub bvh: Bvh,
+}
+
+impl AcceleratedRoom {
+    /// Build an accelerated room from an existing acoustic room.
+    #[must_use]
+    #[tracing::instrument(skip(room), fields(wall_count = room.geometry.walls.len()))]
+    pub fn new(room: AcousticRoom) -> Self {
+        let bvh = room.geometry.build_bvh();
+        Self { room, bvh }
     }
 }
 

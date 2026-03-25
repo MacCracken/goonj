@@ -16,6 +16,11 @@ exclude = [".claude/", ".github/", "docs/", "scripts/"]
 [features]
 default = []
 logging = ["dep:tracing-subscriber"]
+wav = []
+binaural = []
+dhvani-compat = []
+kiran-compat = []
+soorat-compat = []
 
 [dependencies]
 hisab = "0.24"

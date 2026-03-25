@@ -1,3 +1,8 @@
+use crate::diffuse::{DiffuseRainConfig, generate_diffuse_rain};
+use crate::image_source::compute_early_reflections;
+use crate::propagation::speed_of_sound;
+use crate::room::AcousticRoom;
+use hisab::Vec3;
 use serde::{Deserialize, Serialize};
 
 /// An impulse response — the acoustic fingerprint of a room.
@@ -87,9 +92,216 @@ pub fn estimate_rt60_shoebox(length: f32, width: f32, height: f32, avg_absorptio
     sabine_rt60(volume, total_absorption)
 }
 
+/// Configuration for full impulse response generation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IrConfig {
+    /// Sample rate in Hz (e.g. 48000).
+    pub sample_rate: u32,
+    /// Maximum image-source reflection order for early reflections.
+    pub max_order: u32,
+    /// Number of diffuse rain rays for late reverb.
+    pub num_diffuse_rays: u32,
+    /// Maximum diffuse rain bounces per ray.
+    pub max_bounces: u32,
+    /// Maximum IR length in seconds.
+    pub max_time_seconds: f32,
+    /// Random seed for diffuse rain reproducibility.
+    pub seed: u64,
+}
+
+impl Default for IrConfig {
+    fn default() -> Self {
+        Self {
+            sample_rate: 48000,
+            max_order: 3,
+            num_diffuse_rays: 5000,
+            max_bounces: 50,
+            max_time_seconds: 2.0,
+            seed: 42,
+        }
+    }
+}
+
+/// A multiband impulse response with one IR per frequency band.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MultibandIr {
+    /// One IR buffer per frequency band (125, 250, 500, 1000, 2000, 4000 Hz).
+    pub bands: [Vec<f32>; 6],
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// Estimated RT60 in seconds.
+    pub rt60: f32,
+}
+
+impl MultibandIr {
+    /// Convert to a broadband (mono) impulse response by summing all bands.
+    #[must_use]
+    pub fn to_broadband(&self) -> ImpulseResponse {
+        let len = self.bands[0].len();
+        let mut samples = vec![0.0_f32; len];
+        for band in &self.bands {
+            for (i, &s) in band.iter().enumerate() {
+                samples[i] += s;
+            }
+        }
+        // Normalize
+        let max_abs = samples
+            .iter()
+            .copied()
+            .map(f32::abs)
+            .fold(0.0_f32, f32::max);
+        if max_abs > f32::EPSILON {
+            for s in &mut samples {
+                *s /= max_abs;
+            }
+        }
+        ImpulseResponse {
+            samples,
+            sample_rate: self.sample_rate,
+            rt60: self.rt60,
+        }
+    }
+}
+
+/// Generate a full impulse response for a room by combining image-source
+/// early reflections with diffuse rain late reverb.
+///
+/// Returns a multiband IR with per-frequency-band data.
+#[must_use]
+#[tracing::instrument(skip(room, config), fields(
+    sample_rate = config.sample_rate,
+    max_order = config.max_order,
+    num_diffuse_rays = config.num_diffuse_rays,
+))]
+pub fn generate_ir(
+    source: Vec3,
+    listener: Vec3,
+    room: &AcousticRoom,
+    config: &IrConfig,
+) -> MultibandIr {
+    let c = speed_of_sound(room.temperature_celsius);
+    let num_samples = (config.max_time_seconds * config.sample_rate as f32) as usize;
+    let mut bands = std::array::from_fn(|_| vec![0.0_f32; num_samples]);
+
+    // --- Early reflections (image-source method) ---
+    let early = compute_early_reflections(source, listener, room, config.max_order, c);
+    for refl in &early {
+        let sample_idx = (refl.delay_seconds * config.sample_rate as f32) as usize;
+        if sample_idx < num_samples {
+            for (band, buf) in bands.iter_mut().enumerate() {
+                buf[sample_idx] += refl.amplitude[band];
+            }
+        }
+    }
+
+    // --- Late reverb (diffuse rain) ---
+    let diffuse_config = DiffuseRainConfig {
+        num_rays: config.num_diffuse_rays,
+        max_bounces: config.max_bounces,
+        max_time_seconds: config.max_time_seconds,
+        collection_radius: 0.0, // auto
+        speed_of_sound: c,
+        seed: config.seed,
+    };
+    let diffuse = generate_diffuse_rain(source, listener, room, &diffuse_config);
+    for contrib in &diffuse.contributions {
+        let sample_idx = (contrib.time_seconds * config.sample_rate as f32) as usize;
+        if sample_idx < num_samples {
+            for (band, buf) in bands.iter_mut().enumerate() {
+                buf[sample_idx] += contrib.energy[band];
+            }
+        }
+    }
+
+    // Estimate RT60 from broadband energy
+    let volume = room.geometry.volume_shoebox();
+    let absorption = room.geometry.total_absorption();
+    let rt60 = sabine_rt60(volume, absorption);
+
+    MultibandIr {
+        bands,
+        sample_rate: config.sample_rate,
+        rt60,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::material::AcousticMaterial;
+
+    #[test]
+    fn generate_ir_produces_nonzero_samples() {
+        let room = AcousticRoom::shoebox(10.0, 8.0, 3.0, AcousticMaterial::concrete());
+        let source = Vec3::new(3.0, 1.5, 4.0);
+        let listener = Vec3::new(7.0, 1.5, 4.0);
+        let config = IrConfig {
+            num_diffuse_rays: 500,
+            max_time_seconds: 0.5,
+            ..IrConfig::default()
+        };
+
+        let ir = generate_ir(source, listener, &room, &config);
+        assert_eq!(ir.bands[0].len(), (0.5 * 48000.0) as usize);
+
+        // At least some bands should have nonzero content (from early reflections)
+        let has_content = ir
+            .bands
+            .iter()
+            .any(|b| b.iter().any(|&s| s.abs() > f32::EPSILON));
+        assert!(has_content, "generated IR should have nonzero content");
+    }
+
+    #[test]
+    fn generate_ir_broadband_has_content() {
+        let room = AcousticRoom::shoebox(10.0, 8.0, 3.0, AcousticMaterial::concrete());
+        let source = Vec3::new(3.0, 1.5, 4.0);
+        let listener = Vec3::new(7.0, 1.5, 4.0);
+        let config = IrConfig {
+            num_diffuse_rays: 500,
+            max_time_seconds: 0.5,
+            ..IrConfig::default()
+        };
+
+        let ir = generate_ir(source, listener, &room, &config);
+        let broadband = ir.to_broadband();
+        assert!(!broadband.samples.is_empty());
+        let max_abs = broadband
+            .samples
+            .iter()
+            .copied()
+            .map(f32::abs)
+            .fold(0.0_f32, f32::max);
+        assert!(
+            (max_abs - 1.0).abs() < f32::EPSILON || max_abs < f32::EPSILON,
+            "broadband should be normalized"
+        );
+    }
+
+    #[test]
+    fn multiband_ir_band_count() {
+        let room = AcousticRoom::shoebox(10.0, 8.0, 3.0, AcousticMaterial::concrete());
+        let config = IrConfig {
+            num_diffuse_rays: 100,
+            max_time_seconds: 0.2,
+            ..IrConfig::default()
+        };
+        let ir = generate_ir(
+            Vec3::new(5.0, 1.5, 4.0),
+            Vec3::new(5.0, 1.5, 4.0 + 0.5),
+            &room,
+            &config,
+        );
+        assert_eq!(ir.bands.len(), 6);
+    }
+
+    #[test]
+    fn ir_config_default() {
+        let config = IrConfig::default();
+        assert_eq!(config.sample_rate, 48000);
+        assert_eq!(config.max_order, 3);
+        assert_eq!(config.num_diffuse_rays, 5000);
+    }
 
     #[test]
     fn sabine_basic() {
