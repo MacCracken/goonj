@@ -19,7 +19,7 @@ pub struct ImageSource {
     /// Reflection order (0 = direct path, 1 = first reflection, etc.).
     pub order: u32,
     /// Per-band attenuation factor (product of `(1 - absorption)` for each reflection).
-    pub attenuation: [f32; 6],
+    pub attenuation: [f32; crate::material::NUM_BANDS],
 }
 
 /// An early reflection computed from an image source.
@@ -28,7 +28,7 @@ pub struct EarlyReflection {
     /// Delay from source to listener via this reflection path, in seconds.
     pub delay_seconds: f32,
     /// Per-band amplitude (attenuation × inverse distance law).
-    pub amplitude: [f32; 6],
+    pub amplitude: [f32; crate::material::NUM_BANDS],
     /// Direction of arrival at the listener (normalized).
     pub direction: Vec3,
     /// Reflection order (0 = direct).
@@ -61,14 +61,17 @@ pub fn compute_image_sources_shoebox(
     materials: &[AcousticMaterial; 6],
     max_order: u32,
 ) -> Vec<ImageSource> {
+    // Cap max_order to prevent O(n³) explosion (order 20 → 68k sources)
+    let max_order = max_order.min(20);
     let max_n = max_order as i32;
-    let mut sources = Vec::new();
+    let side = (2 * max_n + 1) as usize;
+    let mut sources = Vec::with_capacity(side * side * side);
 
     // Order 0 = direct path (the source itself)
     sources.push(ImageSource {
         position: source,
         order: 0,
-        attenuation: [1.0; 6],
+        attenuation: [1.0; crate::material::NUM_BANDS],
     });
 
     // For each combination of reflection counts (nx, ny, nz) where |nx|+|ny|+|nz| <= max_order
@@ -86,7 +89,7 @@ pub fn compute_image_sources_shoebox(
                 let z = image_coordinate(source.z, width, nz);
 
                 // Per-band attenuation: product of (1 - absorption) for each wall bounce
-                let mut atten = [1.0_f32; 6];
+                let mut atten = [1.0_f32; crate::material::NUM_BANDS];
                 apply_axis_attenuation(&mut atten, materials, 4, 5, nx); // left(4)/right(5) = x-axis
                 apply_axis_attenuation(&mut atten, materials, 0, 1, ny); // floor(0)/ceiling(1) = y-axis
                 apply_axis_attenuation(&mut atten, materials, 2, 3, nz); // front(2)/back(3) = z-axis
@@ -126,7 +129,7 @@ fn image_coordinate(source_coord: f32, dimension: f32, n: i32) -> f32 {
 /// `n` reflection bounces alternate between the two walls.
 #[inline]
 fn apply_axis_attenuation(
-    atten: &mut [f32; 6],
+    atten: &mut [f32; crate::material::NUM_BANDS],
     materials: &[AcousticMaterial; 6],
     neg_wall: usize,
     pos_wall: usize,
@@ -162,10 +165,12 @@ pub fn compute_image_sources_general(
     walls: &[Wall],
     max_order: u32,
 ) -> Vec<ImageSource> {
+    // Cap max_order to prevent O(W^N) explosion
+    let max_order = max_order.min(6);
     let mut sources = vec![ImageSource {
         position: source,
         order: 0,
-        attenuation: [1.0; 6],
+        attenuation: [1.0; crate::material::NUM_BANDS],
     }];
 
     // Working set: sources at the current order to be reflected
@@ -251,7 +256,7 @@ pub fn compute_early_reflections(
 
             // Per-band amplitude: attenuation / distance (inverse distance law)
             let inv_dist = 1.0 / distance;
-            let mut amplitude = [0.0_f32; 6];
+            let mut amplitude = [0.0_f32; crate::material::NUM_BANDS];
             for (band, amp) in amplitude.iter_mut().enumerate() {
                 *amp = img.attenuation[band] * inv_dist;
             }

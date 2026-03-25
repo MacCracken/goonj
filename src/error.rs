@@ -16,7 +16,7 @@ pub enum GoonjError {
     #[error("invalid frequency: {0}")]
     InvalidFrequency(String),
 
-    /// Sound propagation computation failed.
+    /// Sound propagation computation failed (reserved for future use).
     #[error("propagation failed: {0}")]
     PropagationFailed(String),
 

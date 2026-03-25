@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.0.0] - 2026-03-25
+
+Security hardening, correctness fixes, and documentation pass for v1.0.0 freeze.
+
+### Security
+- Capped `max_order` to 20 (shoebox) / 6 (general) to prevent O(n³) / O(W^N) DoS
+- Added overflow-safe WAV data size calculation (`checked_mul` + `try_from`)
+- Capped IR generation to 10min @ 192kHz max to prevent OOM
+- Capped atmospheric trace to 1M iterations to prevent infinite loops
+
+### Correctness
+- Fixed `eyring_rt60` at absorption=1.0 → returns 0 (anechoic), not infinity
+- Added module-level docs on `ray.rs`
+- Documented shoebox normal convention (outward-facing)
+- Added capacity hints for image source, atmospheric trace Vecs
+
+### Documentation
+- Zero `missing_docs` warnings — all public types, functions, fields documented
+- Architecture overview updated with data flow diagram and feature flag table
+- Roadmap expanded with 30 research-backed future items across 4 tiers
+
+### Stats
+- 240 tests, 28 benchmarks, 97.58% coverage
+- All v1.0.0 criteria met
+
 ## [0.2.0] - 2026-03-25
 
 Full roadmap implementation: frequency-dependent ray tracing, IR generation, room analysis, and downstream integration.

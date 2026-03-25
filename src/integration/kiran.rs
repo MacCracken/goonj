@@ -17,7 +17,7 @@ pub struct OcclusionResult {
     /// Overall attenuation in dB (0.0 = no attenuation, negative = attenuated).
     pub attenuation_db: f32,
     /// Per-frequency-band attenuation in dB.
-    pub frequency_dependent: [f32; 6],
+    pub frequency_dependent: [f32; crate::material::NUM_BANDS],
 }
 
 /// Pre-built occlusion query engine with cached BVH.
@@ -49,7 +49,7 @@ impl OcclusionEngine {
             return OcclusionResult {
                 is_occluded: false,
                 attenuation_db: 0.0,
-                frequency_dependent: [0.0; 6],
+                frequency_dependent: [0.0; crate::material::NUM_BANDS],
             };
         }
 
@@ -64,7 +64,8 @@ impl OcclusionEngine {
             )
         });
 
-        let avg_atten = frequency_dependent.iter().sum::<f32>() / 6.0;
+        let avg_atten =
+            frequency_dependent.iter().sum::<f32>() / frequency_dependent.len() as f32;
 
         OcclusionResult {
             is_occluded: true,
@@ -153,7 +154,7 @@ mod tests {
         let result = OcclusionResult {
             is_occluded: true,
             attenuation_db: -6.0,
-            frequency_dependent: [-3.0, -4.0, -5.0, -6.0, -7.0, -8.0],
+            frequency_dependent: [-2.0, -3.0, -4.0, -5.0, -6.0, -7.0, -8.0, -9.0],
         };
         let json = serde_json::to_string(&result);
         assert!(json.is_ok());

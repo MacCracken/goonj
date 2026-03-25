@@ -18,7 +18,7 @@ pub struct DhvaniIr {
     /// Room volume in m³.
     pub room_volume: f32,
     /// Per-band RT60 estimates in seconds.
-    pub rt60_bands: [f32; 6],
+    pub rt60_bands: [f32; crate::material::NUM_BANDS],
 }
 
 /// Generate an IR ready for dhvani consumption.
@@ -108,7 +108,8 @@ mod tests {
     #[test]
     fn dhvani_ir_zero_absorption_band_infinite_rt60() {
         // Material with zero absorption at band 0 → RT60 infinite for that band
-        let mat = AcousticMaterial::new("zero_low", [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], 0.1).unwrap();
+        let mat = AcousticMaterial::new("zero_low", [0.0, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6], 0.1)
+            .unwrap();
         let room = AcousticRoom::shoebox(5.0, 4.0, 3.0, mat);
         let config = IrConfig {
             num_diffuse_rays: 10,

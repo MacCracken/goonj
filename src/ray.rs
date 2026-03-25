@@ -1,3 +1,10 @@
+//! Acoustic ray tracing — intersection, reflection, and scene-level multiband tracing.
+//!
+//! Provides single-band [`AcousticRay`] and multiband [`MultibandRay`] types with
+//! per-frequency-band energy tracking. The `trace_ray` function traces a multiband
+//! ray through room geometry with per-bounce absorption, and `trace_ray_bvh` adds
+//! BVH acceleration for large scenes.
+
 use crate::material::FREQUENCY_BANDS;
 use crate::room::{AcceleratedRoom, Wall};
 use hisab::Vec3;
@@ -33,7 +40,7 @@ pub struct MultibandRay {
     /// Normalized ray direction.
     pub direction: Vec3,
     /// Per-band remaining energy (0.0–1.0 each), indexed by [`FREQUENCY_BANDS`].
-    pub energy: [f32; 6],
+    pub energy: [f32; crate::material::NUM_BANDS],
     /// Total distance traveled.
     pub distance_traveled: f32,
 }
@@ -50,7 +57,7 @@ pub struct RayBounce {
     /// Distance from the previous origin (or ray source for the first bounce).
     pub distance_from_previous: f32,
     /// Per-band energy remaining after this bounce's absorption.
-    pub energy_after: [f32; 6],
+    pub energy_after: [f32; crate::material::NUM_BANDS],
 }
 
 /// Complete path of a traced multiband ray through a scene.
@@ -61,7 +68,7 @@ pub struct RayPath {
     /// Total distance traveled across all bounces.
     pub total_distance: f32,
     /// Per-band energy remaining at end of trace.
-    pub final_energy: [f32; 6],
+    pub final_energy: [f32; crate::material::NUM_BANDS],
 }
 
 /// Result of a ray hitting a surface.
@@ -117,7 +124,7 @@ impl MultibandRay {
         Self {
             origin,
             direction: norm,
-            energy: [1.0; 6],
+            energy: [1.0; crate::material::NUM_BANDS],
             distance_traveled: 0.0,
         }
     }
@@ -139,7 +146,7 @@ impl MultibandRay {
     /// The frequency bands corresponding to each energy index.
     #[must_use]
     #[inline]
-    pub fn frequency_bands() -> &'static [f32; 6] {
+    pub fn frequency_bands() -> &'static [f32; crate::material::NUM_BANDS] {
         &FREQUENCY_BANDS
     }
 }
@@ -234,7 +241,7 @@ pub fn reflect_ray(
 pub fn reflect_ray_multiband(
     ray: &MultibandRay,
     hit: &RayHit,
-    absorption: &[f32; 6],
+    absorption: &[f32; crate::material::NUM_BANDS],
     scattering: f32,
 ) -> MultibandRay {
     let n = hit.normal;
@@ -256,8 +263,8 @@ pub fn reflect_ray_multiband(
         specular
     };
 
-    let mut energy = [0.0_f32; 6];
-    for i in 0..6 {
+    let mut energy = [0.0_f32; crate::material::NUM_BANDS];
+    for i in 0..crate::material::NUM_BANDS {
         energy[i] = ray.energy[i] * (1.0 - absorption[i]);
     }
 
@@ -700,15 +707,17 @@ mod tests {
             wall_index: 0,
         };
         // High absorption at low freq, low at high
-        let absorption = [0.8, 0.6, 0.4, 0.2, 0.1, 0.05];
+        let absorption = [0.9, 0.8, 0.6, 0.4, 0.2, 0.1, 0.05, 0.02];
         let reflected = reflect_ray_multiband(&ray, &hit, &absorption, 0.0);
 
-        assert!((reflected.energy[0] - 0.2).abs() < 0.001);
-        assert!((reflected.energy[1] - 0.4).abs() < 0.001);
-        assert!((reflected.energy[2] - 0.6).abs() < 0.001);
-        assert!((reflected.energy[3] - 0.8).abs() < 0.001);
-        assert!((reflected.energy[4] - 0.9).abs() < 0.001);
-        assert!((reflected.energy[5] - 0.95).abs() < 0.001);
+        assert!((reflected.energy[0] - 0.1).abs() < 0.001);
+        assert!((reflected.energy[1] - 0.2).abs() < 0.001);
+        assert!((reflected.energy[2] - 0.4).abs() < 0.001);
+        assert!((reflected.energy[3] - 0.6).abs() < 0.001);
+        assert!((reflected.energy[4] - 0.8).abs() < 0.001);
+        assert!((reflected.energy[5] - 0.9).abs() < 0.001);
+        assert!((reflected.energy[6] - 0.95).abs() < 0.001);
+        assert!((reflected.energy[7] - 0.98).abs() < 0.001);
     }
 
     #[test]
@@ -733,7 +742,7 @@ mod tests {
             distance: 5.0,
             wall_index: 0,
         };
-        let reflected = reflect_ray_multiband(&ray, &hit, &[0.0; 6], 0.0);
+        let reflected = reflect_ray_multiband(&ray, &hit, &[0.0; crate::material::NUM_BANDS], 0.0);
         assert!((reflected.direction.z - (-1.0)).abs() < 0.01);
     }
 
@@ -871,7 +880,7 @@ mod tests {
         let path = trace_ray(&ray, &geom.walls, 20);
 
         // Energy should never increase between bounces
-        let mut prev = [1.0_f32; 6];
+        let mut prev = [1.0_f32; crate::material::NUM_BANDS];
         for bounce in &path.bounces {
             for (band, &prev_e) in prev.iter().enumerate() {
                 assert!(
@@ -918,7 +927,7 @@ mod tests {
         let linear = trace_ray(&ray, &room.geometry.walls, 30);
         let bvh_result = trace_ray_bvh(&ray, &accel, 30);
 
-        for band in 0..6 {
+        for band in 0..crate::material::NUM_BANDS {
             assert!(
                 (linear.final_energy[band] - bvh_result.final_energy[band]).abs() < 0.001,
                 "band {band} energy mismatch"
@@ -1038,7 +1047,7 @@ mod tests {
             distance: 5.0,
             wall_index: 0,
         };
-        let reflected = reflect_ray_multiband(&ray, &hit, &[0.0; 6], 0.0);
+        let reflected = reflect_ray_multiband(&ray, &hit, &[0.0; crate::material::NUM_BANDS], 0.0);
         for &e in &reflected.energy {
             assert!(
                 (e - 1.0).abs() < f32::EPSILON,
@@ -1056,7 +1065,7 @@ mod tests {
             distance: 5.0,
             wall_index: 0,
         };
-        let reflected = reflect_ray_multiband(&ray, &hit, &[1.0; 6], 0.0);
+        let reflected = reflect_ray_multiband(&ray, &hit, &[1.0; crate::material::NUM_BANDS], 0.0);
         for &e in &reflected.energy {
             assert!(e.abs() < f32::EPSILON, "full absorption should kill energy");
         }
@@ -1098,7 +1107,7 @@ mod tests {
             distance: 5.0,
             wall_index: 0,
         };
-        let reflected = reflect_ray_multiband(&ray, &hit, &[0.0; 6], 0.5);
+        let reflected = reflect_ray_multiband(&ray, &hit, &[0.0; crate::material::NUM_BANDS], 0.5);
         assert!(reflected.direction.length() > 0.5);
     }
 

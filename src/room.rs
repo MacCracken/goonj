@@ -87,6 +87,9 @@ impl RoomGeometry {
     }
 
     /// Create a shoebox (rectangular) room with uniform material on all surfaces.
+    ///
+    /// Wall normals point **outward** from the room (away from the interior).
+    /// Wall order: floor, ceiling, front (z=0), back (z=width), left (x=0), right (x=length).
     #[must_use]
     #[tracing::instrument(skip(material), fields(material = %material.name))]
     pub fn shoebox(length: f32, width: f32, height: f32, material: AcousticMaterial) -> Self {

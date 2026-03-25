@@ -72,8 +72,12 @@ pub fn sabine_rt60(volume: f32, total_absorption: f32) -> f32 {
 #[must_use]
 #[tracing::instrument]
 pub fn eyring_rt60(volume: f32, surface_area: f32, average_absorption: f32) -> f32 {
-    if average_absorption <= 0.0 || average_absorption >= 1.0 || surface_area <= 0.0 {
+    if average_absorption <= 0.0 || surface_area <= 0.0 {
         return f32::INFINITY;
+    }
+    // Total absorption (α = 1.0) means anechoic — RT60 approaches 0
+    if average_absorption >= 1.0 {
+        return 0.0;
     }
     let denominator = -surface_area * (1.0 - average_absorption).ln();
     if denominator <= 0.0 {
@@ -125,8 +129,8 @@ impl Default for IrConfig {
 /// A multiband impulse response with one IR per frequency band.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MultibandIr {
-    /// One IR buffer per frequency band (125, 250, 500, 1000, 2000, 4000 Hz).
-    pub bands: [Vec<f32>; 6],
+    /// One IR buffer per octave frequency band (63–8000 Hz, ISO 3382-1).
+    pub bands: [Vec<f32>; crate::material::NUM_BANDS],
     /// Sample rate in Hz.
     pub sample_rate: u32,
     /// Estimated RT60 in seconds.
@@ -180,7 +184,10 @@ pub fn generate_ir(
     config: &IrConfig,
 ) -> MultibandIr {
     let c = speed_of_sound(room.temperature_celsius);
-    let num_samples = (config.max_time_seconds * config.sample_rate as f32) as usize;
+    // Cap to 10 minutes at 192kHz (~115M samples) to prevent OOM
+    let max_samples = 192_000 * 600;
+    let num_samples =
+        ((config.max_time_seconds * config.sample_rate as f32) as usize).min(max_samples);
     let mut bands = std::array::from_fn(|_| vec![0.0_f32; num_samples]);
 
     // --- Early reflections (image-source method) ---

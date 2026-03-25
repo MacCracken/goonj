@@ -13,7 +13,12 @@ pub fn write_wav_mono(samples: &[f32], sample_rate: u32, writer: &mut impl Write
     let bits_per_sample: u16 = 16;
     let byte_rate = sample_rate * u32::from(num_channels) * u32::from(bits_per_sample) / 8;
     let block_align = num_channels * bits_per_sample / 8;
-    let data_size = samples.len() as u32 * u32::from(block_align);
+    let data_size = u32::try_from(samples.len())
+        .ok()
+        .and_then(|n| n.checked_mul(u32::from(block_align)))
+        .ok_or_else(|| {
+            GoonjError::ComputationError("WAV data too large for 32-bit header".into())
+        })?;
     let file_size = 36 + data_size;
 
     write_wav_header(
@@ -60,7 +65,12 @@ pub fn write_wav_stereo(
     let bits_per_sample: u16 = 16;
     let byte_rate = sample_rate * u32::from(num_channels) * u32::from(bits_per_sample) / 8;
     let block_align = num_channels * bits_per_sample / 8;
-    let data_size = left.len() as u32 * u32::from(block_align);
+    let data_size = u32::try_from(left.len())
+        .ok()
+        .and_then(|n| n.checked_mul(u32::from(block_align)))
+        .ok_or_else(|| {
+            GoonjError::ComputationError("WAV data too large for 32-bit header".into())
+        })?;
     let file_size = 36 + data_size;
 
     write_wav_header(

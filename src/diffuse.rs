@@ -38,7 +38,7 @@ pub struct LateReverbContribution {
     /// Time of arrival in seconds (from source emission).
     pub time_seconds: f32,
     /// Per-band energy at this arrival.
-    pub energy: [f32; 6],
+    pub energy: [f32; crate::material::NUM_BANDS],
     /// Direction of arrival at the listener (normalized).
     pub direction: Vec3,
 }

@@ -263,10 +263,13 @@ pub fn trace_ray_atmospheric(
         return vec![source];
     };
     let mut pos = source;
-    let mut path = vec![pos];
+    let max_iterations = ((max_distance / step_size.max(0.001)) as u32).min(1_000_000);
+    let mut path = Vec::with_capacity((max_iterations.min(10_000) + 1) as usize);
+    path.push(pos);
     let mut total_distance = 0.0_f32;
-
-    while total_distance < max_distance {
+    let mut iteration = 0_u32;
+    while total_distance < max_distance && iteration < max_iterations {
+        iteration += 1;
         let step = step_size.min(max_distance - total_distance);
         let current_dir = dir;
         let speed_fn = |h: f32| -> f32 {
