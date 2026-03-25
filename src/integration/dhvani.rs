@@ -104,4 +104,26 @@ mod tests {
         let json = serde_json::to_string(&ir);
         assert!(json.is_ok(), "should serialize to JSON");
     }
+
+    #[test]
+    fn dhvani_ir_zero_absorption_band_infinite_rt60() {
+        // Material with zero absorption at band 0 → RT60 infinite for that band
+        let mat = AcousticMaterial::new("zero_low", [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], 0.1).unwrap();
+        let room = AcousticRoom::shoebox(5.0, 4.0, 3.0, mat);
+        let config = IrConfig {
+            num_diffuse_rays: 10,
+            max_time_seconds: 0.05,
+            ..IrConfig::default()
+        };
+        let ir = generate_dhvani_ir(
+            Vec3::new(2.5, 1.5, 2.0),
+            Vec3::new(2.5, 1.5, 2.0 + 0.5),
+            &room,
+            &config,
+        );
+        assert!(
+            ir.rt60_bands[0].is_infinite(),
+            "zero absorption band should give infinite RT60"
+        );
+    }
 }

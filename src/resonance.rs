@@ -176,4 +176,19 @@ mod tests {
             "modal density should increase with volume"
         );
     }
+
+    #[test]
+    fn schroeder_zero_volume() {
+        assert_eq!(schroeder_frequency(1.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn schroeder_zero_rt60() {
+        assert_eq!(schroeder_frequency(0.0, 100.0), 0.0);
+    }
+
+    #[test]
+    fn modal_density_zero_speed() {
+        assert_eq!(modal_density(500.0, 100.0, 0.0), 0.0);
+    }
 }

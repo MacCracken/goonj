@@ -442,4 +442,40 @@ mod tests {
         let suggestions = suggest_absorption_placement(&room, current_rt60);
         assert!(!suggestions.is_empty());
     }
+
+    #[test]
+    fn clarity_zero_total_energy() {
+        let ir = ImpulseResponse {
+            samples: vec![0.0; 48000],
+            sample_rate: 48000,
+            rt60: 1.0,
+        };
+        // Both early and late energy are zero → late < EPSILON → returns infinity
+        // but definition_d50 returns 0 for zero total
+        assert_eq!(definition_d50(&ir), 0.0);
+    }
+
+    #[test]
+    fn sti_mtf_saturation_branches() {
+        // Delta impulse → MTF should saturate near 1.0 for all mod freqs
+        let mut samples = vec![0.0_f32; 48000];
+        samples[0] = 1.0;
+        let ir = ImpulseResponse {
+            samples,
+            sample_rate: 48000,
+            rt60: 0.001,
+        };
+        let sti = sti_estimate(&ir);
+        assert!(
+            sti > 0.9,
+            "delta impulse should give near-perfect STI, got {sti}"
+        );
+    }
+
+    #[test]
+    fn suggest_absorption_zero_target() {
+        let room = AcousticRoom::shoebox(10.0, 8.0, 3.0, AcousticMaterial::concrete());
+        let suggestions = suggest_absorption_placement(&room, 0.0);
+        assert!(!suggestions.is_empty());
+    }
 }

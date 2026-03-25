@@ -699,4 +699,74 @@ mod tests {
         let c = speed_at_height(&profile, 0.0);
         assert!((c - speed_of_sound(20.0)).abs() < f32::EPSILON);
     }
+
+    #[test]
+    fn spl_drop_zero_distance_ref() {
+        assert_eq!(spl_drop_with_distance(0.0, 5.0), 0.0);
+    }
+
+    #[test]
+    fn spl_drop_zero_distance() {
+        assert_eq!(spl_drop_with_distance(5.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn doppler_denominator_near_zero() {
+        // source velocity = -speed_of_sound → denominator ≈ 0
+        let c = speed_of_sound(20.0);
+        let f = doppler_shift(440.0, -c, 0.0, c);
+        assert!((f - 440.0).abs() < 0.01, "should return source frequency");
+    }
+
+    #[test]
+    fn refract_ray_step_zero_speed() {
+        let origin = Vec3::new(0.0, 100.0, 0.0);
+        let dir = Vec3::new(0.6, -0.8, 0.0);
+        let (_, new_dir) = refract_ray_step(origin, dir, |_| 0.0, 10.0);
+        // Should return original direction when c_current ≈ 0
+        assert!((new_dir.length() - 1.0).abs() < 0.1 || new_dir == dir);
+    }
+
+    #[test]
+    fn refract_ray_step_zero_length_result() {
+        // Extreme speed ratio causing near-zero refracted direction
+        let origin = Vec3::new(0.0, 100.0, 0.0);
+        let dir = Vec3::new(0.99, -0.01, 0.0);
+        let (_, new_dir) =
+            refract_ray_step(origin, dir, |h| if h > 99.0 { 1000.0 } else { 1.0 }, 10.0);
+        let len = new_dir.length();
+        assert!(len > 0.5, "direction should remain valid, got length {len}");
+    }
+
+    #[test]
+    fn atmospheric_trace_zero_direction() {
+        let wind = WindProfile {
+            direction: Vec3::X,
+            speed_ground: 0.0,
+            gradient: 0.0,
+        };
+        let temp = TemperatureProfile {
+            ground_temp_celsius: 20.0,
+            lapse_rate: 0.0,
+        };
+        let path = trace_ray_atmospheric(
+            Vec3::new(0.0, 10.0, 0.0),
+            Vec3::ZERO,
+            &wind,
+            &temp,
+            100.0,
+            1.0,
+        );
+        assert_eq!(path.len(), 1, "zero direction should return source only");
+    }
+
+    #[test]
+    fn ground_reflection_denominator_near_zero() {
+        // Very low frequency + high impedance → denominator can be small
+        let g = GroundImpedance {
+            flow_resistivity: 1e12,
+        };
+        let r = ground_reflection_coefficient(0.001, 0.01, &g);
+        assert!((0.0..=1.0).contains(&r));
+    }
 }

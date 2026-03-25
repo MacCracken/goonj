@@ -1061,4 +1061,76 @@ mod tests {
             assert!(e.abs() < f32::EPSILON, "full absorption should kill energy");
         }
     }
+
+    #[test]
+    fn point_in_polygon_fewer_than_3_vertices() {
+        let normal = Vec3::Z;
+        assert!(!point_in_convex_polygon(
+            Vec3::ZERO,
+            &[Vec3::ZERO, Vec3::X],
+            normal
+        ));
+        assert!(!point_in_convex_polygon(Vec3::ZERO, &[], normal));
+    }
+
+    #[test]
+    fn reflect_ray_scattering_zero_length_blend() {
+        // When specular and normal cancel out, blend length → 0, should fall back to specular
+        let ray = AcousticRay::new(Vec3::ZERO, Vec3::Z, 1000.0);
+        let hit = RayHit {
+            point: Vec3::new(0.0, 0.0, 5.0),
+            normal: Vec3::Z, // Normal same direction as specular (head-on reversed + normal = cancel)
+            distance: 5.0,
+            wall_index: 0,
+        };
+        // Specular = Z - 2*(Z·Z)*Z = Z - 2Z = -Z, blended with Z at scattering=0.5 → (-Z*0.5 + Z*0.5) = 0
+        let reflected = reflect_ray(&ray, &hit, 0.0, 0.5);
+        // Should still produce a valid direction (fallback to specular)
+        assert!(reflected.direction.length() > 0.5);
+    }
+
+    #[test]
+    fn reflect_ray_multiband_scattering_zero_length_blend() {
+        let ray = MultibandRay::new(Vec3::ZERO, Vec3::Z);
+        let hit = RayHit {
+            point: Vec3::new(0.0, 0.0, 5.0),
+            normal: Vec3::Z,
+            distance: 5.0,
+            wall_index: 0,
+        };
+        let reflected = reflect_ray_multiband(&ray, &hit, &[0.0; 6], 0.5);
+        assert!(reflected.direction.length() > 0.5);
+    }
+
+    #[test]
+    fn bvh_find_nearest_wall_zero_direction() {
+        let room = AcousticRoom::shoebox(10.0, 8.0, 3.0, AcousticMaterial::concrete());
+        let accel = AcceleratedRoom::new(room);
+        let ray = MultibandRay::new(Vec3::new(5.0, 1.5, 4.0), Vec3::ZERO);
+        // Zero direction → Ray::new fails → find_nearest_wall_bvh returns None → no bounces
+        let path = trace_ray_bvh(&ray, &accel, 10);
+        // Z fallback direction should still work, but let's verify no panic
+        assert!(path.bounces.len() <= 10);
+    }
+
+    #[test]
+    fn wall_aabb_empty_vertices() {
+        let wall = Wall {
+            vertices: vec![],
+            material: AcousticMaterial::concrete(),
+            normal: Vec3::Z,
+        };
+        let aabb = wall.aabb();
+        assert_eq!(aabb.min, Vec3::ZERO);
+    }
+
+    #[test]
+    fn wall_area_fewer_than_3_vertices() {
+        let wall = Wall {
+            vertices: vec![Vec3::ZERO, Vec3::X],
+            material: AcousticMaterial::concrete(),
+            normal: Vec3::Z,
+        };
+        assert_eq!(wall.area(), 0.0);
+    }
 }

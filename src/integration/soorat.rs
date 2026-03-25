@@ -156,4 +156,10 @@ mod tests {
         let json = serde_json::to_string(&mode);
         assert!(json.is_ok());
     }
+
+    #[test]
+    fn mode_visualization_zero_dimensions() {
+        let mode = ModeVisualization::for_shoebox(1, 1, 0.0, 0.0, 343.0, 5);
+        assert_eq!(mode.frequency_hz, 0.0);
+    }
 }

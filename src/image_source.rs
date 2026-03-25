@@ -562,4 +562,68 @@ mod tests {
         assert_eq!(sources.len(), 1, "should have only direct source");
         assert_eq!(sources[0].order, 0);
     }
+
+    #[test]
+    fn early_reflections_non_shoebox_room() {
+        // Room with 4 walls (not 6) → falls back to cloning first wall material
+        let mat = AcousticMaterial::concrete();
+        let room = AcousticRoom {
+            geometry: crate::room::RoomGeometry {
+                walls: vec![
+                    crate::room::Wall {
+                        vertices: vec![
+                            Vec3::new(0.0, 0.0, 0.0),
+                            Vec3::new(10.0, 0.0, 0.0),
+                            Vec3::new(10.0, 3.0, 0.0),
+                            Vec3::new(0.0, 3.0, 0.0),
+                        ],
+                        material: mat.clone(),
+                        normal: Vec3::new(0.0, 0.0, -1.0),
+                    },
+                    crate::room::Wall {
+                        vertices: vec![
+                            Vec3::new(0.0, 0.0, 8.0),
+                            Vec3::new(10.0, 0.0, 8.0),
+                            Vec3::new(10.0, 3.0, 8.0),
+                            Vec3::new(0.0, 3.0, 8.0),
+                        ],
+                        material: mat.clone(),
+                        normal: Vec3::new(0.0, 0.0, 1.0),
+                    },
+                    crate::room::Wall {
+                        vertices: vec![
+                            Vec3::new(0.0, 0.0, 0.0),
+                            Vec3::new(0.0, 0.0, 8.0),
+                            Vec3::new(0.0, 3.0, 8.0),
+                            Vec3::new(0.0, 3.0, 0.0),
+                        ],
+                        material: mat.clone(),
+                        normal: Vec3::new(-1.0, 0.0, 0.0),
+                    },
+                    crate::room::Wall {
+                        vertices: vec![
+                            Vec3::new(10.0, 0.0, 0.0),
+                            Vec3::new(10.0, 0.0, 8.0),
+                            Vec3::new(10.0, 3.0, 8.0),
+                            Vec3::new(10.0, 3.0, 0.0),
+                        ],
+                        material: mat,
+                        normal: Vec3::new(1.0, 0.0, 0.0),
+                    },
+                ],
+            },
+            temperature_celsius: 20.0,
+            humidity_percent: 50.0,
+        };
+        let c = speed_of_sound(20.0);
+        let reflections = compute_early_reflections(
+            Vec3::new(5.0, 1.5, 4.0),
+            Vec3::new(5.0, 1.5, 4.0 + 0.5),
+            &room,
+            2,
+            c,
+        );
+        // Should produce reflections even with non-shoebox geometry
+        assert!(!reflections.is_empty());
+    }
 }

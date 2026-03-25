@@ -113,4 +113,20 @@ mod tests {
             "collinear points should have ~0 extra path"
         );
     }
+
+    #[test]
+    fn is_occluded_collocated_source_listener() {
+        let wall = crate::room::Wall {
+            vertices: vec![
+                Vec3::new(5.0, -5.0, 5.0),
+                Vec3::new(5.0, 5.0, 5.0),
+                Vec3::new(5.0, 5.0, -5.0),
+                Vec3::new(5.0, -5.0, -5.0),
+            ],
+            material: crate::material::AcousticMaterial::concrete(),
+            normal: Vec3::new(-1.0, 0.0, 0.0),
+        };
+        // Same position → max_dist ≈ 0 → not occluded
+        assert!(!is_occluded(Vec3::ZERO, Vec3::ZERO, &[wall]));
+    }
 }

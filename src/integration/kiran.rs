@@ -158,4 +158,11 @@ mod tests {
         let json = serde_json::to_string(&result);
         assert!(json.is_ok());
     }
+
+    #[test]
+    fn occlusion_engine_room_accessor() {
+        let room = AcousticRoom::shoebox(10.0, 8.0, 3.0, AcousticMaterial::concrete());
+        let engine = OcclusionEngine::new(room);
+        assert_eq!(engine.room().geometry.walls.len(), 6);
+    }
 }
