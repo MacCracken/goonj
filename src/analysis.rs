@@ -32,6 +32,7 @@ pub fn clarity_c80(ir: &ImpulseResponse) -> f32 {
 
 /// Generic clarity metric at a given time boundary.
 #[must_use]
+#[inline]
 fn clarity(ir: &ImpulseResponse, boundary_seconds: f32) -> f32 {
     if ir.samples.is_empty() || ir.sample_rate == 0 {
         return 0.0;
@@ -54,6 +55,7 @@ fn clarity(ir: &ImpulseResponse, boundary_seconds: f32) -> f32 {
 /// D50 = E_early / E_total (linear, 0.0–1.0).
 /// Higher values indicate better speech intelligibility.
 #[must_use]
+#[inline]
 pub fn definition_d50(ir: &ImpulseResponse) -> f32 {
     if ir.samples.is_empty() || ir.sample_rate == 0 {
         return 0.0;
@@ -91,9 +93,8 @@ pub fn sti_estimate(ir: &ImpulseResponse) -> f32 {
         0.63, 0.8, 1.0, 1.25, 1.6, 2.0, 2.5, 3.15, 4.0, 5.0, 6.3, 8.0, 10.0, 12.5,
     ];
 
-    // Compute squared IR (energy)
-    let h2: Vec<f32> = ir.samples.iter().map(|&s| s * s).collect();
-    let total_energy: f32 = h2.iter().sum();
+    // Compute total energy without allocation
+    let total_energy: f32 = ir.samples.iter().map(|&s| s * s).sum();
     if total_energy < f32::EPSILON {
         return 0.0;
     }
@@ -108,7 +109,8 @@ pub fn sti_estimate(ir: &ImpulseResponse) -> f32 {
         let omega = std::f32::consts::TAU * fm;
         let mut real = 0.0_f32;
         let mut imag = 0.0_f32;
-        for (i, &h2_i) in h2.iter().enumerate() {
+        for (i, &s) in ir.samples.iter().enumerate() {
+            let h2_i = s * s;
             let t = i as f32 * dt;
             let angle = omega * t;
             real += h2_i * angle.cos();
@@ -153,16 +155,25 @@ pub struct AbsorptionSuggestion {
 
 /// Suggest which walls would have the most impact on RT60 if treated.
 ///
+/// Computes how much absorption increase each wall needs to approach `target_rt60`.
 /// Returns suggestions sorted by sensitivity (most impactful first).
 #[must_use]
 #[tracing::instrument(skip(room), fields(target_rt60))]
 pub fn suggest_absorption_placement(
     room: &AcousticRoom,
-    _target_rt60: f32,
+    target_rt60: f32,
 ) -> Vec<AbsorptionSuggestion> {
     let volume = room.geometry.volume_shoebox();
     let current_total_abs = room.geometry.total_absorption();
     let current_rt60 = sabine_rt60(volume, current_total_abs);
+
+    // Scale the test absorption bump based on how far we are from target
+    let rt60_ratio = if target_rt60 > f32::EPSILON && current_rt60 > f32::EPSILON {
+        (current_rt60 / target_rt60).clamp(0.1, 10.0)
+    } else {
+        1.0
+    };
+    let bump = (0.2 * rt60_ratio).min(0.5);
 
     let mut suggestions: Vec<AbsorptionSuggestion> = room
         .geometry
@@ -173,8 +184,8 @@ pub fn suggest_absorption_placement(
             let wall_area = wall.area();
             let current_abs = wall.material.average_absorption();
 
-            // Simulate increasing this wall's absorption by 0.2 (or to 1.0)
-            let new_abs = (current_abs + 0.2).min(1.0);
+            // Simulate increasing this wall's absorption
+            let new_abs = (current_abs + bump).min(1.0);
             let delta_abs = (new_abs - current_abs) * wall_area;
             let new_total_abs = current_total_abs + delta_abs;
             let new_rt60 = sabine_rt60(volume, new_total_abs);
@@ -358,5 +369,77 @@ mod tests {
             floor_sens.abs() > side_sens.abs(),
             "floor ({floor_sens}) should be more sensitive than side wall ({side_sens})"
         );
+    }
+
+    // --- Audit edge-case tests ---
+
+    #[test]
+    fn clarity_zero_sample_rate() {
+        let ir = ImpulseResponse {
+            samples: vec![1.0; 100],
+            sample_rate: 0,
+            rt60: 1.0,
+        };
+        assert_eq!(clarity_c50(&ir), 0.0);
+        assert_eq!(clarity_c80(&ir), 0.0);
+    }
+
+    #[test]
+    fn clarity_all_energy_early() {
+        // IR with energy only in first 10ms → C50 should be +∞
+        let mut samples = vec![0.0_f32; 48000];
+        samples[0] = 1.0;
+        let ir = ImpulseResponse {
+            samples,
+            sample_rate: 48000,
+            rt60: 0.01,
+        };
+        assert!(clarity_c50(&ir).is_infinite(), "all-early should be +∞");
+    }
+
+    #[test]
+    fn definition_d50_all_early() {
+        let mut samples = vec![0.0_f32; 48000];
+        samples[0] = 1.0;
+        let ir = ImpulseResponse {
+            samples,
+            sample_rate: 48000,
+            rt60: 0.01,
+        };
+        assert!((definition_d50(&ir) - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn sti_silent_ir_returns_zero() {
+        let ir = ImpulseResponse {
+            samples: vec![0.0; 48000],
+            sample_rate: 48000,
+            rt60: 1.0,
+        };
+        assert_eq!(sti_estimate(&ir), 0.0);
+    }
+
+    #[test]
+    fn sti_impulse_response_range() {
+        // Any valid IR should produce STI in [0, 1]
+        for rt60 in [0.1, 0.5, 1.0, 2.0, 5.0] {
+            let ir = make_exponential_ir(rt60, 48000, 3.0);
+            let sti = sti_estimate(&ir);
+            assert!(
+                (0.0..=1.0).contains(&sti),
+                "STI {sti} out of range for RT60={rt60}"
+            );
+        }
+    }
+
+    #[test]
+    fn suggest_absorption_already_at_target() {
+        // Room already at target RT60 → suggestions should still work
+        let room = AcousticRoom::shoebox(10.0, 8.0, 3.0, AcousticMaterial::carpet());
+        let vol = room.geometry.volume_shoebox();
+        let abs = room.geometry.total_absorption();
+        let current_rt60 = crate::impulse::sabine_rt60(vol, abs);
+        let suggestions = suggest_absorption_placement(&room, current_rt60);
+        assert!(!suggestions.is_empty());
     }
 }

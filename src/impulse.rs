@@ -414,4 +414,81 @@ mod tests {
         };
         assert_eq!(ir.duration_seconds(), 0.0);
     }
+
+    // --- Audit edge-case tests ---
+
+    #[test]
+    fn generate_ir_zero_diffuse_rays() {
+        let room = AcousticRoom::shoebox(10.0, 8.0, 3.0, AcousticMaterial::concrete());
+        let config = IrConfig {
+            num_diffuse_rays: 0,
+            max_time_seconds: 0.1,
+            ..IrConfig::default()
+        };
+        let ir = generate_ir(
+            Vec3::new(3.0, 1.5, 4.0),
+            Vec3::new(7.0, 1.5, 4.0),
+            &room,
+            &config,
+        );
+        // Should still have early reflections from image-source
+        let has_content = ir
+            .bands
+            .iter()
+            .any(|b| b.iter().any(|&s| s.abs() > f32::EPSILON));
+        assert!(
+            has_content,
+            "zero diffuse rays should still have early reflections"
+        );
+    }
+
+    #[test]
+    fn multiband_ir_to_broadband_normalized() {
+        let room = AcousticRoom::shoebox(10.0, 8.0, 3.0, AcousticMaterial::concrete());
+        let config = IrConfig {
+            num_diffuse_rays: 100,
+            max_time_seconds: 0.1,
+            ..IrConfig::default()
+        };
+        let ir = generate_ir(
+            Vec3::new(3.0, 1.5, 4.0),
+            Vec3::new(7.0, 1.5, 4.0),
+            &room,
+            &config,
+        );
+        let broadband = ir.to_broadband();
+        let max_abs = broadband
+            .samples
+            .iter()
+            .copied()
+            .map(f32::abs)
+            .fold(0.0_f32, f32::max);
+        assert!(
+            max_abs <= 1.0 + f32::EPSILON,
+            "broadband should be normalized, max={max_abs}"
+        );
+    }
+
+    #[test]
+    fn multiband_ir_empty_to_broadband() {
+        let ir = MultibandIr {
+            bands: std::array::from_fn(|_| vec![]),
+            sample_rate: 48000,
+            rt60: 1.0,
+        };
+        let broadband = ir.to_broadband();
+        assert!(broadband.samples.is_empty());
+    }
+
+    #[test]
+    fn eyring_zero_surface_area() {
+        assert!(eyring_rt60(100.0, 0.0, 0.5).is_infinite());
+    }
+
+    #[test]
+    fn sabine_negative_absorption() {
+        // Negative absorption is physically nonsensical but shouldn't panic
+        let rt60 = sabine_rt60(100.0, -10.0);
+        assert!(rt60 < 0.0 || rt60.is_infinite());
+    }
 }

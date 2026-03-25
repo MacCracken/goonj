@@ -140,6 +140,7 @@ impl MultibandRay {
 ///
 /// Returns the closest intersection distance, or None.
 #[must_use]
+#[inline]
 pub fn ray_wall_intersection(ray: &AcousticRay, wall: &Wall) -> Option<f32> {
     if wall.vertices.len() < 3 {
         return None;
@@ -179,6 +180,7 @@ pub fn ray_wall_intersection(ray: &AcousticRay, wall: &Wall) -> Option<f32> {
 /// The diffuse component is approximated by perturbing the specular direction toward
 /// the surface normal.
 #[must_use]
+#[inline]
 pub fn reflect_ray(
     ray: &AcousticRay,
     hit: &RayHit,
@@ -220,6 +222,7 @@ pub fn reflect_ray(
 /// Each frequency band's energy is independently reduced by that band's absorption coefficient.
 /// Scattering blends between specular and diffuse reflection direction (same as [`reflect_ray`]).
 #[must_use]
+#[inline]
 pub fn reflect_ray_multiband(
     ray: &MultibandRay,
     hit: &RayHit,
@@ -284,7 +287,7 @@ fn find_nearest_wall(
             continue;
         }
         if let Some(t) = ray_wall_intersection(&probe, wall)
-            && (closest.is_none() || t < closest.unwrap().0)
+            && closest.is_none_or(|(best, _)| t < best)
         {
             closest = Some((t, i));
         }
@@ -300,7 +303,7 @@ fn find_nearest_wall(
 #[tracing::instrument(skip(walls), fields(wall_count = walls.len(), max_bounces))]
 pub fn trace_ray(ray: &MultibandRay, walls: &[Wall], max_bounces: u32) -> RayPath {
     let mut current = ray.clone();
-    let mut bounces = Vec::new();
+    let mut bounces = Vec::with_capacity(max_bounces.min(64) as usize);
     let mut last_wall: Option<usize> = None;
 
     for _ in 0..max_bounces {
@@ -378,7 +381,7 @@ fn find_nearest_wall_bvh(
             continue;
         }
         if let Some(t) = ray_wall_intersection(&probe, &walls[idx])
-            && (closest.is_none() || t < closest.unwrap().0)
+            && closest.is_none_or(|(best, _)| t < best)
         {
             closest = Some((t, idx));
         }
@@ -401,7 +404,7 @@ pub fn trace_ray_bvh(
     let walls = &accel_room.room.geometry.walls;
     let bvh = &accel_room.bvh;
     let mut current = ray.clone();
-    let mut bounces = Vec::new();
+    let mut bounces = Vec::with_capacity(max_bounces.min(64) as usize);
     let mut last_wall: Option<usize> = None;
 
     for _ in 0..max_bounces {
@@ -942,6 +945,112 @@ mod tests {
         let aabb = wall.aabb();
         for &v in &wall.vertices {
             assert!(aabb.contains(v), "AABB should contain vertex {v:?}");
+        }
+    }
+
+    // --- Audit edge-case tests ---
+
+    #[test]
+    fn multiband_ray_zero_direction_falls_back_to_z() {
+        let ray = MultibandRay::new(Vec3::ZERO, Vec3::ZERO);
+        assert!((ray.direction.z - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn acoustic_ray_zero_direction_falls_back_to_z() {
+        let ray = AcousticRay::new(Vec3::ZERO, Vec3::ZERO, 1000.0);
+        assert!((ray.direction.z - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn trace_ray_single_wall_room() {
+        // Degenerate: only one wall, ray should bounce off it once then escape
+        // Vertices wound CW from +Z so winding matches -Z normal
+        let wall = Wall {
+            vertices: vec![
+                Vec3::new(-5.0, -5.0, 5.0),
+                Vec3::new(-5.0, 5.0, 5.0),
+                Vec3::new(5.0, 5.0, 5.0),
+                Vec3::new(5.0, -5.0, 5.0),
+            ],
+            material: AcousticMaterial::concrete(),
+            normal: Vec3::new(0.0, 0.0, -1.0),
+        };
+        let ray = MultibandRay::new(Vec3::ZERO, Vec3::Z);
+        let path = trace_ray(&ray, &[wall], 50);
+        assert_eq!(path.bounces.len(), 1, "should bounce once off single wall");
+    }
+
+    #[test]
+    fn trace_ray_max_bounces_zero() {
+        let geom = concrete_shoebox();
+        let ray = MultibandRay::new(Vec3::new(5.0, 1.5, 4.0), Vec3::Z);
+        let path = trace_ray(&ray, &geom.walls, 0);
+        assert!(
+            path.bounces.is_empty(),
+            "zero max_bounces should produce no bounces"
+        );
+    }
+
+    #[test]
+    fn ray_wall_intersection_degenerate_wall() {
+        // Wall with fewer than 3 vertices
+        let wall = Wall {
+            vertices: vec![Vec3::ZERO, Vec3::X],
+            material: AcousticMaterial::concrete(),
+            normal: Vec3::Z,
+        };
+        let ray = AcousticRay::new(Vec3::ZERO, Vec3::Z, 1000.0);
+        assert!(ray_wall_intersection(&ray, &wall).is_none());
+    }
+
+    #[test]
+    fn ray_parallel_to_wall_misses() {
+        let wall = Wall {
+            vertices: vec![
+                Vec3::new(0.0, 0.0, 5.0),
+                Vec3::new(5.0, 0.0, 5.0),
+                Vec3::new(5.0, 5.0, 5.0),
+                Vec3::new(0.0, 5.0, 5.0),
+            ],
+            material: AcousticMaterial::concrete(),
+            normal: Vec3::new(0.0, 0.0, -1.0),
+        };
+        // Ray parallel to wall (in XY plane)
+        let ray = AcousticRay::new(Vec3::new(0.0, 0.0, 5.0), Vec3::X, 1000.0);
+        assert!(ray_wall_intersection(&ray, &wall).is_none());
+    }
+
+    #[test]
+    fn reflect_ray_multiband_zero_absorption_preserves_energy() {
+        let ray = MultibandRay::new(Vec3::ZERO, Vec3::Z);
+        let hit = RayHit {
+            point: Vec3::new(0.0, 0.0, 5.0),
+            normal: Vec3::new(0.0, 0.0, -1.0),
+            distance: 5.0,
+            wall_index: 0,
+        };
+        let reflected = reflect_ray_multiband(&ray, &hit, &[0.0; 6], 0.0);
+        for &e in &reflected.energy {
+            assert!(
+                (e - 1.0).abs() < f32::EPSILON,
+                "zero absorption should preserve energy"
+            );
+        }
+    }
+
+    #[test]
+    fn reflect_ray_multiband_full_absorption_kills_energy() {
+        let ray = MultibandRay::new(Vec3::ZERO, Vec3::Z);
+        let hit = RayHit {
+            point: Vec3::new(0.0, 0.0, 5.0),
+            normal: Vec3::new(0.0, 0.0, -1.0),
+            distance: 5.0,
+            wall_index: 0,
+        };
+        let reflected = reflect_ray_multiband(&ray, &hit, &[1.0; 6], 0.0);
+        for &e in &reflected.energy {
+            assert!(e.abs() < f32::EPSILON, "full absorption should kill energy");
         }
     }
 }

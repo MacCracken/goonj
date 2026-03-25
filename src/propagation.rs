@@ -624,4 +624,79 @@ mod tests {
             "direction should stay normalized, got length {len}"
         );
     }
+
+    // --- Audit edge-case tests ---
+
+    #[test]
+    fn ground_reflection_zero_frequency() {
+        let soil = GroundImpedance::hard_soil();
+        let r = ground_reflection_coefficient(0.0, 0.5, &soil);
+        assert!((r - 1.0).abs() < f32::EPSILON, "zero freq should give R=1");
+    }
+
+    #[test]
+    fn ground_reflection_zero_resistivity() {
+        let g = GroundImpedance {
+            flow_resistivity: 0.0,
+        };
+        let r = ground_reflection_coefficient(1000.0, 0.5, &g);
+        assert!(
+            (r - 1.0).abs() < f32::EPSILON,
+            "zero resistivity should give R=1"
+        );
+    }
+
+    #[test]
+    fn refract_ray_step_vertical_ray() {
+        // Purely vertical ray should not refract
+        let origin = Vec3::new(0.0, 100.0, 0.0);
+        let dir = Vec3::new(0.0, -1.0, 0.0);
+        let (new_pos, new_dir) = refract_ray_step(origin, dir, |_| 343.0, 10.0);
+        assert!(
+            (new_dir.y - (-1.0)).abs() < 0.01,
+            "vertical ray should stay vertical"
+        );
+        assert!((new_pos.y - 90.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn atmospheric_trace_zero_max_distance() {
+        let wind = WindProfile {
+            direction: Vec3::X,
+            speed_ground: 0.0,
+            gradient: 0.0,
+        };
+        let temp = TemperatureProfile {
+            ground_temp_celsius: 20.0,
+            lapse_rate: 0.0,
+        };
+        let path =
+            trace_ray_atmospheric(Vec3::new(0.0, 10.0, 0.0), Vec3::X, &wind, &temp, 0.0, 1.0);
+        assert_eq!(path.len(), 1, "zero distance should produce source only");
+    }
+
+    #[test]
+    fn refracted_speed_no_wind() {
+        let wind = WindProfile {
+            direction: Vec3::X,
+            speed_ground: 0.0,
+            gradient: 0.0,
+        };
+        let base = speed_of_sound(20.0);
+        let eff = refracted_speed(base, &wind, Vec3::X, 0.0);
+        assert!(
+            (eff - base).abs() < f32::EPSILON,
+            "no wind should give base speed"
+        );
+    }
+
+    #[test]
+    fn speed_at_height_zero() {
+        let profile = TemperatureProfile {
+            ground_temp_celsius: 20.0,
+            lapse_rate: -0.01,
+        };
+        let c = speed_at_height(&profile, 0.0);
+        assert!((c - speed_of_sound(20.0)).abs() < f32::EPSILON);
+    }
 }

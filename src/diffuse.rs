@@ -67,6 +67,7 @@ impl Xorshift64 {
         })
     }
 
+    #[inline]
     fn next_u64(&mut self) -> u64 {
         let mut x = self.0;
         x ^= x << 13;
@@ -77,6 +78,7 @@ impl Xorshift64 {
     }
 
     /// Returns a float in [0, 1).
+    #[inline]
     fn next_f32(&mut self) -> f32 {
         (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
     }
@@ -123,6 +125,14 @@ pub fn generate_diffuse_rain(
     room: &AcousticRoom,
     config: &DiffuseRainConfig,
 ) -> DiffuseRainResult {
+    if config.num_rays == 0 || config.speed_of_sound <= 0.0 {
+        return DiffuseRainResult {
+            contributions: Vec::new(),
+            rays_traced: 0,
+            total_bounces: 0,
+        };
+    }
+
     let volume = room.geometry.volume_shoebox();
     let collection_r = if config.collection_radius > f32::EPSILON {
         config.collection_radius
@@ -135,7 +145,7 @@ pub fn generate_diffuse_rain(
     let mut rng = Xorshift64::new(config.seed);
     let max_time = config.max_time_seconds;
 
-    let mut contributions = Vec::new();
+    let mut contributions = Vec::with_capacity(config.num_rays as usize);
     let mut total_bounces = 0_u32;
 
     for base_dir in &directions {
@@ -425,5 +435,79 @@ mod tests {
             early_avg >= late_avg,
             "early energy ({early_avg}) should be >= late energy ({late_avg})"
         );
+    }
+
+    // --- Audit edge-case tests ---
+
+    #[test]
+    fn zero_rays_returns_empty() {
+        let room = concrete_room();
+        let mut config = test_config(0);
+        config.num_rays = 0;
+        let result = generate_diffuse_rain(
+            Vec3::new(3.0, 1.5, 4.0),
+            Vec3::new(7.0, 1.5, 4.0),
+            &room,
+            &config,
+        );
+        assert!(result.contributions.is_empty());
+        assert_eq!(result.rays_traced, 0);
+    }
+
+    #[test]
+    fn zero_speed_of_sound_returns_empty() {
+        let room = concrete_room();
+        let config = DiffuseRainConfig {
+            num_rays: 100,
+            max_bounces: 50,
+            max_time_seconds: 2.0,
+            collection_radius: 2.0,
+            speed_of_sound: 0.0,
+            seed: 42,
+        };
+        let result = generate_diffuse_rain(
+            Vec3::new(3.0, 1.5, 4.0),
+            Vec3::new(7.0, 1.5, 4.0),
+            &room,
+            &config,
+        );
+        assert!(result.contributions.is_empty());
+    }
+
+    #[test]
+    fn zero_max_time_no_contributions() {
+        let room = concrete_room();
+        let config = DiffuseRainConfig {
+            num_rays: 100,
+            max_bounces: 50,
+            max_time_seconds: 0.0,
+            collection_radius: 2.0,
+            speed_of_sound: speed_of_sound(20.0),
+            seed: 42,
+        };
+        let result = generate_diffuse_rain(
+            Vec3::new(3.0, 1.5, 4.0),
+            Vec3::new(7.0, 1.5, 4.0),
+            &room,
+            &config,
+        );
+        // With max_time=0, no contributions should pass the time filter
+        for c in &result.contributions {
+            assert!(c.time_seconds <= f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn fibonacci_sphere_single_ray() {
+        let dirs = fibonacci_sphere(1);
+        assert_eq!(dirs.len(), 1);
+        assert!((dirs[0].length() - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn xorshift64_zero_seed_nonzero() {
+        let mut rng = Xorshift64::new(0);
+        let v = rng.next_u64();
+        assert_ne!(v, 0, "zero seed should produce non-zero output");
     }
 }

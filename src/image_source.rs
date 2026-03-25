@@ -124,6 +124,7 @@ fn image_coordinate(source_coord: f32, dimension: f32, n: i32) -> f32 {
 ///
 /// `neg_wall` is the wall at coordinate 0, `pos_wall` is the wall at coordinate = dimension.
 /// `n` reflection bounces alternate between the two walls.
+#[inline]
 fn apply_axis_attenuation(
     atten: &mut [f32; 6],
     materials: &[AcousticMaterial; 6],
@@ -211,6 +212,10 @@ pub fn compute_early_reflections(
 ) -> Vec<EarlyReflection> {
     let geom = &room.geometry;
 
+    if geom.walls.is_empty() || speed_of_sound <= 0.0 {
+        return Vec::new();
+    }
+
     // Determine room dimensions from bounding box
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
@@ -224,19 +229,10 @@ pub fn compute_early_reflections(
 
     // Build materials array [floor, ceiling, front, back, left, right]
     // Assumes shoebox wall ordering from RoomGeometry::shoebox
-    let materials: [AcousticMaterial; 6] = if geom.walls.len() == 6 {
-        [
-            geom.walls[0].material.clone(),
-            geom.walls[1].material.clone(),
-            geom.walls[2].material.clone(),
-            geom.walls[3].material.clone(),
-            geom.walls[4].material.clone(),
-            geom.walls[5].material.clone(),
-        ]
+    let materials: [AcousticMaterial; 6] = if geom.walls.len() >= 6 {
+        std::array::from_fn(|i| geom.walls[i].material.clone())
     } else {
-        // Fallback: use first wall material for all
-        let m = geom.walls[0].material.clone();
-        [m.clone(), m.clone(), m.clone(), m.clone(), m.clone(), m]
+        std::array::from_fn(|_| geom.walls[0].material.clone())
     };
 
     let image_sources =
@@ -493,5 +489,77 @@ mod tests {
                 "direct path should have unit attenuation"
             );
         }
+    }
+
+    // --- Audit edge-case tests ---
+
+    #[test]
+    fn empty_geometry_returns_empty() {
+        let room = AcousticRoom {
+            geometry: crate::room::RoomGeometry { walls: vec![] },
+            temperature_celsius: 20.0,
+            humidity_percent: 50.0,
+        };
+        let reflections = compute_early_reflections(
+            Vec3::new(1.0, 1.0, 1.0),
+            Vec3::new(2.0, 1.0, 1.0),
+            &room,
+            3,
+            343.0,
+        );
+        assert!(
+            reflections.is_empty(),
+            "empty geometry should produce no reflections"
+        );
+    }
+
+    #[test]
+    fn zero_speed_of_sound_returns_empty() {
+        let room = AcousticRoom::shoebox(10.0, 8.0, 3.0, AcousticMaterial::concrete());
+        let reflections = compute_early_reflections(
+            Vec3::new(3.0, 1.5, 4.0),
+            Vec3::new(7.0, 1.5, 4.0),
+            &room,
+            3,
+            0.0,
+        );
+        assert!(reflections.is_empty());
+    }
+
+    #[test]
+    fn max_order_zero_direct_only() {
+        let room = test_room();
+        let c = speed_of_sound(20.0);
+        let reflections = compute_early_reflections(
+            Vec3::new(3.0, 1.5, 4.0),
+            Vec3::new(7.0, 1.5, 4.0),
+            &room,
+            0,
+            c,
+        );
+        assert_eq!(reflections.len(), 1, "order 0 should only have direct path");
+        assert_eq!(reflections[0].order, 0);
+    }
+
+    #[test]
+    fn collocated_source_listener() {
+        let room = test_room();
+        let c = speed_of_sound(20.0);
+        let pos = Vec3::new(5.0, 1.5, 4.0);
+        let reflections = compute_early_reflections(pos, pos, &room, 2, c);
+        // Direct path distance ≈ 0, should be filtered out (distance < EPSILON)
+        // But reflections should still exist
+        let has_higher_order = reflections.iter().any(|r| r.order > 0);
+        assert!(
+            has_higher_order,
+            "collocated should still produce reflections"
+        );
+    }
+
+    #[test]
+    fn general_method_empty_walls() {
+        let sources = compute_image_sources_general(Vec3::ZERO, &[], 3);
+        assert_eq!(sources.len(), 1, "should have only direct source");
+        assert_eq!(sources[0].order, 0);
     }
 }

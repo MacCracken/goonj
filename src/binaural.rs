@@ -127,7 +127,7 @@ pub fn generate_binaural_ir(
         }
 
         // Average amplitude across bands for broadband HRTF application
-        let amp: f32 = refl.amplitude.iter().sum::<f32>() / 6.0;
+        let amp: f32 = refl.amplitude.iter().sum::<f32>() / refl.amplitude.len() as f32;
         if amp < f32::EPSILON {
             continue;
         }

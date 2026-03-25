@@ -60,3 +60,45 @@ test ray/trace_bvh_100_walls ... bench:       80061 ns/iter (+/- 2108)
 
 test ray/trace_linear_100_walls ... bench:       51288 ns/iter (+/- 1470)
 
+test propagation/speed_of_sound ... bench:           0 ns/iter (+/- 0)
+
+test impulse/sabine_rt60 ... bench:           0 ns/iter (+/- 0)
+
+test resonance/room_mode ... bench:           1 ns/iter (+/- 0)
+
+test resonance/schroeder_frequency ... bench:           2 ns/iter (+/- 0)
+
+test propagation/doppler_shift ... bench:           1 ns/iter (+/- 0)
+
+test propagation/inverse_square_law ... bench:           1 ns/iter (+/- 0)
+
+test ray/wall_intersection ... bench:           9 ns/iter (+/- 3)
+
+test resonance/all_axial_modes_200hz ... bench:         438 ns/iter (+/- 147)
+
+test ray/trace_single_shoebox ... bench:        2274 ns/iter (+/- 616)
+
+test ray/trace_100_rays_shoebox ... bench:      215453 ns/iter (+/- 40729)
+
+test image_source/shoebox_order_3 ... bench:        5502 ns/iter (+/- 1299)
+
+test image_source/shoebox_order_5 ... bench:       19182 ns/iter (+/- 1366)
+
+test diffuse/1000_rays_shoebox ... bench:     2417988 ns/iter (+/- 73865)
+
+test impulse/generate_ir_shoebox ... bench:     2429732 ns/iter (+/- 54760)
+
+test analysis/c80 ... bench:       37701 ns/iter (+/- 451)
+
+test analysis/sti ... bench:     4057889 ns/iter (+/- 108751)
+
+test propagation/atmospheric_ray_1000_steps ... bench:       17500 ns/iter (+/- 141)
+
+test wav/export_48k_2s ... bench:      110884 ns/iter (+/- 2387)
+
+test binaural/generate_ir_shoebox ... bench:       13322 ns/iter (+/- 2003)
+
+test ray/trace_bvh_100_walls ... bench:       93514 ns/iter (+/- 27294)
+
+test ray/trace_linear_100_walls ... bench:       50173 ns/iter (+/- 1379)
+

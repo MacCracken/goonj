@@ -20,8 +20,16 @@ Full roadmap implementation: frequency-dependent ray tracing, IR generation, roo
 - **impulse** — IrConfig, MultibandIr, generate_ir() combining image-source + diffuse rain
 - **propagation** — WindProfile, TemperatureProfile, GroundImpedance, atmospheric ray tracing with Snell's law refraction, Delany-Bazley ground reflection
 
+### Audit Hardening
+- Removed all `unwrap()` from library code (replaced with `is_none_or`)
+- Added `#[inline]` on hot-path functions: ray intersection, reflection, PRNG — 9–18% speedup
+- Eliminated 384KB allocation in STI estimation (compute h² on-the-fly)
+- Added Vec pre-allocation with capacity hints
+- Added edge-case guards: zero rays, zero speed_of_sound, empty geometry
+- Fixed `suggest_absorption_placement` to use `target_rt60` parameter
+
 ### Stats
-- 181 tests (174 unit + 6 integration + 1 doc)
+- 216 tests (209 unit + 6 integration + 1 doc)
 - 21 criterion benchmarks with history tracking
 - All cleanliness checks passing (fmt, clippy, audit, deny)
 
