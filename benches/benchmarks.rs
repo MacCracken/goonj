@@ -368,6 +368,93 @@ fn bench_trace_linear_100_walls(c: &mut Criterion) {
     });
 }
 
+fn bench_eyring_rt60(c: &mut Criterion) {
+    c.bench_function("impulse/eyring_rt60", |b| {
+        b.iter(|| goonj::impulse::eyring_rt60(black_box(240.0), black_box(268.0), black_box(0.5)));
+    });
+}
+
+fn bench_energy_decay_curve(c: &mut Criterion) {
+    let ir = goonj::impulse::ImpulseResponse {
+        samples: (0..48000)
+            .map(|i| (-0.005 * i as f32 / 48.0).exp() * 0.5)
+            .collect(),
+        sample_rate: 48000,
+        rt60: 1.0,
+    };
+    c.bench_function("impulse/energy_decay_curve", |b| {
+        b.iter(|| black_box(&ir).energy_decay_curve());
+    });
+}
+
+fn bench_ground_reflection(c: &mut Criterion) {
+    let impedance = goonj::propagation::GroundImpedance::grass();
+    c.bench_function("propagation/ground_reflection", |b| {
+        b.iter(|| {
+            goonj::propagation::ground_reflection_coefficient(
+                black_box(1000.0),
+                black_box(0.5),
+                black_box(&impedance),
+            )
+        });
+    });
+}
+
+fn bench_diffraction_loss(c: &mut Criterion) {
+    c.bench_function("diffraction/edge_loss", |b| {
+        b.iter(|| {
+            goonj::diffraction::edge_diffraction_loss(
+                black_box(1000.0),
+                black_box(0.5),
+                black_box(20.0),
+            )
+        });
+    });
+}
+
+fn bench_is_occluded(c: &mut Criterion) {
+    let room = goonj::room::RoomGeometry::shoebox(
+        10.0,
+        8.0,
+        3.0,
+        goonj::material::AcousticMaterial::concrete(),
+    );
+    c.bench_function("diffraction/is_occluded_shoebox", |b| {
+        b.iter(|| {
+            goonj::diffraction::is_occluded(
+                black_box(Vec3::new(3.0, 1.5, 4.0)),
+                black_box(Vec3::new(7.0, 1.5, 4.0)),
+                black_box(&room.walls),
+            )
+        });
+    });
+}
+
+fn bench_analysis_d50(c: &mut Criterion) {
+    let ir = goonj::impulse::ImpulseResponse {
+        samples: (0..48000)
+            .map(|i| (-0.005 * i as f32 / 48.0).exp() * 0.5)
+            .collect(),
+        sample_rate: 48000,
+        rt60: 1.0,
+    };
+    c.bench_function("analysis/d50", |b| {
+        b.iter(|| goonj::analysis::definition_d50(black_box(&ir)));
+    });
+}
+
+fn bench_suggest_absorption(c: &mut Criterion) {
+    let room = goonj::room::AcousticRoom::shoebox(
+        10.0,
+        8.0,
+        3.0,
+        goonj::material::AcousticMaterial::concrete(),
+    );
+    c.bench_function("analysis/suggest_absorption", |b| {
+        b.iter(|| goonj::analysis::suggest_absorption_placement(black_box(&room), black_box(0.5)));
+    });
+}
+
 criterion_group!(
     benches,
     bench_speed_of_sound,
@@ -391,5 +478,12 @@ criterion_group!(
     bench_binaural_ir,
     bench_trace_bvh_100_walls,
     bench_trace_linear_100_walls,
+    bench_eyring_rt60,
+    bench_energy_decay_curve,
+    bench_ground_reflection,
+    bench_diffraction_loss,
+    bench_is_occluded,
+    bench_analysis_d50,
+    bench_suggest_absorption,
 );
 criterion_main!(benches);

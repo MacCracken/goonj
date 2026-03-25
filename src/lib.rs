@@ -19,23 +19,38 @@
 //! assert!(rt60 > 0.0);
 //! ```
 
+/// Room acoustics analysis metrics (C50, C80, D50, STI, absorption placement).
 pub mod analysis;
+/// Binaural impulse response generation with HRTF spatialization.
 #[cfg(feature = "binaural")]
 pub mod binaural;
+/// Edge diffraction loss and occlusion detection.
 pub mod diffraction;
+/// Stochastic ray tracing (diffuse rain) for late reverberation tails.
 pub mod diffuse;
+/// Error types for the goonj crate.
 pub mod error;
+/// Image-source method for exact early specular reflections.
 pub mod image_source;
+/// Impulse response generation, RT60 estimation, and energy decay curves.
 pub mod impulse;
+/// Integration APIs for downstream consumers (dhvani, kiran, soorat).
 pub mod integration;
+/// Acoustic materials with frequency-dependent absorption and scattering.
 pub mod material;
+/// Sound propagation: speed of sound, inverse square law, Doppler, atmospheric effects.
 pub mod propagation;
+/// Acoustic ray tracing: single-band, multiband, BVH-accelerated.
 pub mod ray;
+/// Room resonance modes, Schroeder frequency, and modal density.
 pub mod resonance;
+/// Room geometry, walls, and acceleration structures.
 pub mod room;
+/// WAV file export (16-bit PCM, mono/stereo).
 #[cfg(feature = "wav")]
 pub mod wav;
 
+/// Tracing subscriber initialization.
 #[cfg(feature = "logging")]
 pub mod logging;
 

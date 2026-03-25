@@ -10,7 +10,9 @@ const ENERGY_THRESHOLD: f32 = 0.001;
 /// An acoustic ray traveling through space.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AcousticRay {
+    /// Ray origin position.
     pub origin: Vec3,
+    /// Normalized ray direction.
     pub direction: Vec3,
     /// Remaining energy (0.0–1.0).
     pub energy: f32,
@@ -26,7 +28,9 @@ pub struct AcousticRay {
 /// (125, 250, 500, 1000, 2000, 4000 Hz).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MultibandRay {
+    /// Ray origin position.
     pub origin: Vec3,
+    /// Normalized ray direction.
     pub direction: Vec3,
     /// Per-band remaining energy (0.0–1.0 each), indexed by [`FREQUENCY_BANDS`].
     pub energy: [f32; 6],
@@ -63,9 +67,13 @@ pub struct RayPath {
 /// Result of a ray hitting a surface.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RayHit {
+    /// Point of intersection on the surface.
     pub point: Vec3,
+    /// Surface normal at the intersection point.
     pub normal: Vec3,
+    /// Distance from ray origin to intersection.
     pub distance: f32,
+    /// Index of the wall that was hit.
     pub wall_index: usize,
 }
 

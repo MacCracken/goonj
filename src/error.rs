@@ -4,18 +4,23 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum GoonjError {
+    /// Invalid room or wall geometry (e.g. too few vertices).
     #[error("invalid geometry: {0}")]
     InvalidGeometry(String),
 
+    /// Invalid material parameters (e.g. absorption outside 0.0–1.0).
     #[error("invalid material: {0}")]
     InvalidMaterial(String),
 
+    /// Invalid frequency value (e.g. negative Hz).
     #[error("invalid frequency: {0}")]
     InvalidFrequency(String),
 
+    /// Sound propagation computation failed.
     #[error("propagation failed: {0}")]
     PropagationFailed(String),
 
+    /// General computation error (e.g. I/O failure during WAV export).
     #[error("computation error: {0}")]
     ComputationError(String),
 }

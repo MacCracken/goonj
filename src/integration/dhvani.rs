@@ -1,6 +1,6 @@
 //! dhvani integration — IR handoff for convolution reverb.
 //!
-//! Provides [`DhvaniIr`], a wrapper around [`ImpulseResponse`](crate::impulse::ImpulseResponse)
+//! Provides [`DhvaniIr`], a wrapper around [`ImpulseResponse`]
 //! with additional metadata that dhvani needs for convolution reverb processing.
 
 use crate::impulse::{ImpulseResponse, IrConfig, MultibandIr, generate_ir, sabine_rt60};

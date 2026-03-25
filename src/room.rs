@@ -58,6 +58,7 @@ impl Wall {
 /// Room geometry defined by a collection of walls.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoomGeometry {
+    /// The walls that define this room's boundary.
     pub walls: Vec<Wall>,
 }
 
@@ -208,6 +209,7 @@ impl AcceleratedRoom {
 /// An acoustic room: geometry + environmental conditions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AcousticRoom {
+    /// Room geometry (walls, surfaces).
     pub geometry: RoomGeometry,
     /// Air temperature in Celsius (affects speed of sound).
     pub temperature_celsius: f32,
