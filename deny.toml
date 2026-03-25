@@ -1,9 +1,19 @@
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+ignore = []
 
 [licenses]
-allow = ["GPL-3.0", "MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib"]
+allow = [
+    "GPL-3.0",
+    "GPL-3.0-only",
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
 
 [bans]
 multiple-versions = "warn"
@@ -11,3 +21,4 @@ multiple-versions = "warn"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

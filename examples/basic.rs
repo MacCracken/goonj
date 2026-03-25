@@ -1,4 +1,4 @@
-use goonj::{impulse, propagation, resonance, material::AcousticMaterial, room::AcousticRoom};
+use goonj::{impulse, material::AcousticMaterial, propagation, resonance, room::AcousticRoom};
 
 fn main() {
     // Speed of sound at room temperature

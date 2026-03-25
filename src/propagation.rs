@@ -35,7 +35,12 @@ pub fn spl_drop_with_distance(distance_ref: f32, distance: f32) -> f32 {
 
 /// Simplified atmospheric absorption coefficient (dB/m) at a given frequency and humidity.
 ///
-/// Based on ISO 9613-1 simplified model for standard conditions.
+/// Loosely based on ISO 9613-1 but heavily simplified: models absorption as
+/// proportional to f² with an inverse humidity factor. Accuracy is within an
+/// order of magnitude for 125 Hz–4 kHz at 20–80% RH. For precision work
+/// (outdoor propagation >100 m, ultrasonic frequencies), use a full ISO 9613-1
+/// implementation instead.
+///
 /// Returns absorption in dB per meter.
 #[must_use]
 pub fn atmospheric_absorption(frequency_hz: f32, humidity_percent: f32) -> f32 {
@@ -102,13 +107,19 @@ mod tests {
     #[test]
     fn speed_at_20c() {
         let c = speed_of_sound(20.0);
-        assert!((c - 343.42).abs() < 0.1, "speed at 20°C should be ~343.4 m/s, got {c}");
+        assert!(
+            (c - 343.42).abs() < 0.1,
+            "speed at 20°C should be ~343.4 m/s, got {c}"
+        );
     }
 
     #[test]
     fn speed_at_0c() {
         let c = speed_of_sound(0.0);
-        assert!((c - 331.3).abs() < 0.1, "speed at 0°C should be ~331.3 m/s, got {c}");
+        assert!(
+            (c - 331.3).abs() < 0.1,
+            "speed at 0°C should be ~331.3 m/s, got {c}"
+        );
     }
 
     #[test]
@@ -116,7 +127,10 @@ mod tests {
         let i1 = inverse_square_law(100.0, 1.0);
         let i2 = inverse_square_law(100.0, 2.0);
         let ratio = i1 / i2;
-        assert!((ratio - 4.0).abs() < 0.01, "intensity should drop 4x at 2x distance, got {ratio}");
+        assert!(
+            (ratio - 4.0).abs() < 0.01,
+            "intensity should drop 4x at 2x distance, got {ratio}"
+        );
     }
 
     #[test]
@@ -127,7 +141,10 @@ mod tests {
     #[test]
     fn spl_drop_doubling_distance() {
         let drop = spl_drop_with_distance(1.0, 2.0);
-        assert!((drop - 6.02).abs() < 0.1, "SPL drops ~6 dB per distance doubling, got {drop}");
+        assert!(
+            (drop - 6.02).abs() < 0.1,
+            "SPL drops ~6 dB per distance doubling, got {drop}"
+        );
     }
 
     #[test]
@@ -141,14 +158,20 @@ mod tests {
     fn doppler_approaching_increases_frequency() {
         let c = speed_of_sound(20.0);
         let shifted = doppler_shift(440.0, -30.0, 0.0, c);
-        assert!(shifted > 440.0, "approaching source should increase frequency, got {shifted}");
+        assert!(
+            shifted > 440.0,
+            "approaching source should increase frequency, got {shifted}"
+        );
     }
 
     #[test]
     fn doppler_receding_decreases_frequency() {
         let c = speed_of_sound(20.0);
         let shifted = doppler_shift(440.0, 30.0, 0.0, c);
-        assert!(shifted < 440.0, "receding source should decrease frequency, got {shifted}");
+        assert!(
+            shifted < 440.0,
+            "receding source should decrease frequency, got {shifted}"
+        );
     }
 
     #[test]
@@ -162,8 +185,44 @@ mod tests {
     fn db_spl_roundtrip() {
         let db = 94.0; // 1 Pa
         let pressure = db_spl_to_pressure(db);
-        assert!((pressure - 1.0).abs() < 0.01, "94 dB SPL should be ~1 Pa, got {pressure}");
+        assert!(
+            (pressure - 1.0).abs() < 0.01,
+            "94 dB SPL should be ~1 Pa, got {pressure}"
+        );
         let back = pressure_to_db_spl(pressure);
         assert!((back - db).abs() < 0.1);
+    }
+
+    #[test]
+    fn spl_drop_equal_distance_is_zero() {
+        let drop = spl_drop_with_distance(5.0, 5.0);
+        assert!(
+            drop.abs() < 0.001,
+            "equal distances should give 0 dB drop, got {drop}"
+        );
+    }
+
+    #[test]
+    fn atmospheric_absorption_zero_humidity() {
+        let a = atmospheric_absorption(1000.0, 0.0);
+        assert!(a > 0.0, "should still produce absorption at zero humidity");
+    }
+
+    #[test]
+    fn atmospheric_absorption_negative_frequency() {
+        let a = atmospheric_absorption(-100.0, 50.0);
+        // f² is always positive, so result is positive regardless of sign
+        assert!(a >= 0.0);
+    }
+
+    #[test]
+    fn pressure_to_db_spl_zero_pressure() {
+        let db = pressure_to_db_spl(0.0);
+        assert!(db.is_infinite() && db < 0.0);
+    }
+
+    #[test]
+    fn inverse_square_negative_distance() {
+        assert_eq!(inverse_square_law(100.0, -5.0), 0.0);
     }
 }

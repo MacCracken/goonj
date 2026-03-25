@@ -84,14 +84,20 @@ mod tests {
     fn first_mode_5m_room() {
         // c ≈ 343 m/s, L = 5m → f1 = 343 / 10 = 34.3 Hz
         let f = room_mode(5.0, 1, 343.0);
-        assert!((f - 34.3).abs() < 0.1, "first mode of 5m room should be ~34.3 Hz, got {f}");
+        assert!(
+            (f - 34.3).abs() < 0.1,
+            "first mode of 5m room should be ~34.3 Hz, got {f}"
+        );
     }
 
     #[test]
     fn second_mode_double_first() {
         let f1 = room_mode(5.0, 1, 343.0);
         let f2 = room_mode(5.0, 2, 343.0);
-        assert!((f2 / f1 - 2.0).abs() < 0.01, "second mode should be 2× first");
+        assert!(
+            (f2 / f1 - 2.0).abs() < 0.01,
+            "second mode should be 2× first"
+        );
     }
 
     #[test]
@@ -108,7 +114,12 @@ mod tests {
     fn axial_modes_count() {
         let modes = axial_modes(5.0, 200.0, 343.0);
         // f1=34.3, f2=68.6, f3=102.9, f4=137.2, f5=171.5 → 5 modes below 200 Hz
-        assert_eq!(modes.len(), 5, "should have 5 modes below 200 Hz, got {}", modes.len());
+        assert_eq!(
+            modes.len(),
+            5,
+            "should have 5 modes below 200 Hz, got {}",
+            modes.len()
+        );
     }
 
     #[test]
@@ -123,21 +134,30 @@ mod tests {
     fn schroeder_frequency_basic() {
         // RT60 = 1.0s, V = 100 m³ → fs = 2000 × √(1/100) = 200 Hz
         let fs = schroeder_frequency(1.0, 100.0);
-        assert!((fs - 200.0).abs() < 1.0, "Schroeder frequency should be ~200 Hz, got {fs}");
+        assert!(
+            (fs - 200.0).abs() < 1.0,
+            "Schroeder frequency should be ~200 Hz, got {fs}"
+        );
     }
 
     #[test]
     fn schroeder_larger_room_lower_frequency() {
         let fs_small = schroeder_frequency(1.0, 50.0);
         let fs_large = schroeder_frequency(1.0, 500.0);
-        assert!(fs_large < fs_small, "larger room should have lower Schroeder frequency");
+        assert!(
+            fs_large < fs_small,
+            "larger room should have lower Schroeder frequency"
+        );
     }
 
     #[test]
     fn schroeder_longer_rt60_higher_frequency() {
         let fs_short = schroeder_frequency(0.5, 100.0);
         let fs_long = schroeder_frequency(2.0, 100.0);
-        assert!(fs_long > fs_short, "longer RT60 should raise Schroeder frequency");
+        assert!(
+            fs_long > fs_short,
+            "longer RT60 should raise Schroeder frequency"
+        );
     }
 
     #[test]
@@ -151,6 +171,9 @@ mod tests {
     fn modal_density_increases_with_volume() {
         let d_small = modal_density(500.0, 50.0, 343.0);
         let d_large = modal_density(500.0, 500.0, 343.0);
-        assert!(d_large > d_small, "modal density should increase with volume");
+        assert!(
+            d_large > d_small,
+            "modal density should increase with volume"
+        );
     }
 }

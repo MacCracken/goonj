@@ -19,22 +19,22 @@
 //! assert!(rt60 > 0.0);
 //! ```
 
+pub mod diffraction;
 pub mod error;
+pub mod impulse;
 pub mod material;
 pub mod propagation;
-pub mod room;
-pub mod impulse;
 pub mod ray;
-pub mod diffraction;
 pub mod resonance;
+pub mod room;
 
 #[cfg(feature = "logging")]
 pub mod logging;
 
 pub use error::{GoonjError, Result};
+pub use impulse::{ImpulseResponse, eyring_rt60, sabine_rt60};
 pub use material::AcousticMaterial;
-pub use propagation::{speed_of_sound, inverse_square_law, doppler_shift};
-pub use impulse::{ImpulseResponse, sabine_rt60, eyring_rt60};
-pub use room::{Wall, RoomGeometry, AcousticRoom};
+pub use propagation::{doppler_shift, inverse_square_law, speed_of_sound};
 pub use ray::{AcousticRay, RayHit};
 pub use resonance::{room_mode, schroeder_frequency};
+pub use room::{AcousticRoom, RoomGeometry, Wall};

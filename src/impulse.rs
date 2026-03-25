@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// An impulse response — the acoustic fingerprint of a room.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImpulseResponse {
     /// Audio samples of the impulse response.
     pub samples: Vec<f32>,
@@ -14,6 +14,7 @@ pub struct ImpulseResponse {
 impl ImpulseResponse {
     /// Compute the energy decay curve (Schroeder backward integration).
     #[must_use]
+    #[tracing::instrument(skip(self), fields(samples = self.samples.len(), sample_rate = self.sample_rate))]
     pub fn energy_decay_curve(&self) -> Vec<f32> {
         let mut edc = vec![0.0_f32; self.samples.len()];
         let mut cumulative = 0.0;
@@ -64,6 +65,7 @@ pub fn sabine_rt60(volume: f32, total_absorption: f32) -> f32 {
 ///
 /// Where S = total surface area, ā = average absorption coefficient.
 #[must_use]
+#[tracing::instrument]
 pub fn eyring_rt60(volume: f32, surface_area: f32, average_absorption: f32) -> f32 {
     if average_absorption <= 0.0 || average_absorption >= 1.0 || surface_area <= 0.0 {
         return f32::INFINITY;
@@ -77,6 +79,7 @@ pub fn eyring_rt60(volume: f32, surface_area: f32, average_absorption: f32) -> f
 
 /// Estimate RT60 for a shoebox room from dimensions and material.
 #[must_use]
+#[tracing::instrument]
 pub fn estimate_rt60_shoebox(length: f32, width: f32, height: f32, avg_absorption: f32) -> f32 {
     let volume = length * width * height;
     let surface_area = 2.0 * (length * width + length * height + width * height);
@@ -92,7 +95,10 @@ mod tests {
     fn sabine_basic() {
         // 240 m³ room with 50 m² absorption → RT60 ≈ 0.773 s
         let rt60 = sabine_rt60(240.0, 50.0);
-        assert!((rt60 - 0.773).abs() < 0.01, "Sabine RT60 should be ~0.773s, got {rt60}");
+        assert!(
+            (rt60 - 0.773).abs() < 0.01,
+            "Sabine RT60 should be ~0.773s, got {rt60}"
+        );
     }
 
     #[test]
@@ -123,7 +129,10 @@ mod tests {
         let sabine = sabine_rt60(volume, surface * avg_abs);
         let eyring = eyring_rt60(volume, surface, avg_abs);
         let diff = (sabine - eyring).abs() / sabine;
-        assert!(diff < 0.05, "Eyring should be within 5% of Sabine at low absorption, diff={diff:.3}");
+        assert!(
+            diff < 0.05,
+            "Eyring should be within 5% of Sabine at low absorption, diff={diff:.3}"
+        );
     }
 
     #[test]
@@ -133,14 +142,20 @@ mod tests {
         let avg_abs = 0.5;
         let sabine = sabine_rt60(volume, surface * avg_abs);
         let eyring = eyring_rt60(volume, surface, avg_abs);
-        assert!(eyring < sabine, "Eyring should be shorter than Sabine at high absorption");
+        assert!(
+            eyring < sabine,
+            "Eyring should be shorter than Sabine at high absorption"
+        );
     }
 
     #[test]
     fn shoebox_estimate_10x8x3_concrete() {
         let rt60 = estimate_rt60_shoebox(10.0, 8.0, 3.0, 0.02);
         // Volume=240, Surface=268, A=5.36, RT60 ≈ 7.2s (very reverberant, concrete)
-        assert!(rt60 > 5.0 && rt60 < 10.0, "Concrete room should be very reverberant, got {rt60}");
+        assert!(
+            rt60 > 5.0 && rt60 < 10.0,
+            "Concrete room should be very reverberant, got {rt60}"
+        );
     }
 
     #[test]
@@ -165,5 +180,26 @@ mod tests {
         for window in edc.windows(2) {
             assert!(window[0] >= window[1], "EDC should decrease monotonically");
         }
+    }
+
+    #[test]
+    fn energy_decay_curve_empty_samples() {
+        let ir = ImpulseResponse {
+            samples: vec![],
+            sample_rate: 48000,
+            rt60: 1.0,
+        };
+        let edc = ir.energy_decay_curve();
+        assert!(edc.is_empty());
+    }
+
+    #[test]
+    fn duration_zero_sample_rate() {
+        let ir = ImpulseResponse {
+            samples: vec![1.0; 100],
+            sample_rate: 0,
+            rt60: 1.0,
+        };
+        assert_eq!(ir.duration_seconds(), 0.0);
     }
 }

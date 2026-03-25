@@ -1,4 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use hisab::Vec3;
 
 fn bench_speed_of_sound(c: &mut Criterion) {
     c.bench_function("propagation/speed_of_sound", |b| {
@@ -26,7 +27,14 @@ fn bench_schroeder_frequency(c: &mut Criterion) {
 
 fn bench_doppler_shift(c: &mut Criterion) {
     c.bench_function("propagation/doppler_shift", |b| {
-        b.iter(|| goonj::propagation::doppler_shift(black_box(440.0), black_box(-30.0), black_box(0.0), black_box(343.0)));
+        b.iter(|| {
+            goonj::propagation::doppler_shift(
+                black_box(440.0),
+                black_box(-30.0),
+                black_box(0.0),
+                black_box(343.0),
+            )
+        });
     });
 }
 
@@ -37,11 +45,16 @@ fn bench_inverse_square(c: &mut Criterion) {
 }
 
 fn bench_ray_wall_intersection(c: &mut Criterion) {
-    let ray = goonj::ray::AcousticRay::new([2.5, 1.5, 0.0], [0.0, 0.0, 1.0]);
+    let ray = goonj::ray::AcousticRay::new(Vec3::new(2.5, 1.5, 0.0), Vec3::Z, 1000.0);
     let wall = goonj::room::Wall {
-        vertices: vec![[0.0, 0.0, 5.0], [5.0, 0.0, 5.0], [5.0, 3.0, 5.0], [0.0, 3.0, 5.0]],
+        vertices: vec![
+            Vec3::new(0.0, 0.0, 5.0),
+            Vec3::new(5.0, 0.0, 5.0),
+            Vec3::new(5.0, 3.0, 5.0),
+            Vec3::new(0.0, 3.0, 5.0),
+        ],
         material: goonj::material::AcousticMaterial::concrete(),
-        normal: [0.0, 0.0, -1.0],
+        normal: Vec3::new(0.0, 0.0, -1.0),
     };
     c.bench_function("ray/wall_intersection", |b| {
         b.iter(|| goonj::ray::ray_wall_intersection(black_box(&ray), black_box(&wall)));
@@ -50,7 +63,15 @@ fn bench_ray_wall_intersection(c: &mut Criterion) {
 
 fn bench_all_axial_modes(c: &mut Criterion) {
     c.bench_function("resonance/all_axial_modes_200hz", |b| {
-        b.iter(|| goonj::resonance::all_axial_modes(black_box(10.0), black_box(8.0), black_box(3.0), black_box(200.0), black_box(343.0)));
+        b.iter(|| {
+            goonj::resonance::all_axial_modes(
+                black_box(10.0),
+                black_box(8.0),
+                black_box(3.0),
+                black_box(200.0),
+                black_box(343.0),
+            )
+        });
     });
 }
 
