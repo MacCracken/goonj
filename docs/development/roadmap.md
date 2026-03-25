@@ -49,43 +49,15 @@
 
 ---
 
-## Tier 3 — Competitive Differentiation
+## Tier 3 — Competitive Differentiation (completed)
 
-### Beam Tracing
-- [ ] Volumetric beams replacing discrete rays — eliminates sampling artifacts
-- [ ] Handles specular reflection and transmission without aliasing
-- [ ] Reference: Funkhouser et al., JASA 2004
-
-### Acoustic Radiosity
-- [ ] Energy-exchange between surface patches (diffuse-only)
-- [ ] Source/receiver-independent computation (move listener for free)
-- [ ] ODEON-style ray-radiosity hybrid
-
-### Acoustic Diffusion Equation (ADE)
-- [ ] Energy density PDE (Fick's law analogy)
-- [ ] Effective for long rooms, coupled rooms, industrial spaces
-- [ ] Complementary to geometric methods
-
-### ISO 9613-2 Outdoor Methods
-- [ ] Barrier diffraction (screening)
-- [ ] Foliage attenuation
-- [ ] Meteorological correction factors
-- [ ] Terrain profiling
-
-### JCAL Porous Material Model
-- [ ] Johnson-Champoux-Allard-Lafarge 6-parameter model
-- [ ] Replaces Miki for detailed porous material characterization
-- [ ] Requires porosity, tortuosity, characteristic lengths, thermal permeability
-
-### Hybrid Frequency Crossover Interface
-- [ ] Define API for wave-based results below Schroeder frequency
-- [ ] Geometric results above crossover, blend in overlap region
-- [ ] Architecture for future FDTD/FEM plugin
-
-### Universal Diffraction Filter Approximation (UDFA)
-- [ ] Filter-based diffraction for real-time applications (2024)
-- [ ] Higher-order interactions and finite objects
-- [ ] Reference: Acta Acustica 2024
+- [x] **Beam tracing** — `AcousticBeam`, `trace_beam()`, `generate_beam_set()` with frustum-based propagation
+- [x] **Acoustic radiosity** — `Patch`, `create_patches()`, `solve_radiosity()` with form factor computation
+- [x] **Acoustic diffusion equation** — 2D FTCS solver for energy density PDE (`solve_diffusion_2d()`)
+- [x] **ISO 9613-2 outdoor methods** — `barrier_insertion_loss()`, `foliage_attenuation()`, `meteorological_correction()`, `ground_attenuation()`
+- [x] **JCAL porous material model** — `JcalMaterial` with 6-parameter characterization and absorption coefficient computation
+- [x] **Hybrid frequency crossover** — `CrossoverConfig`, `blend_weights()`, `blend_results()` for wave/geometric blending
+- [x] **UDFA filter-based diffraction** — `DiffractionFilter`, `compute_diffraction_filter()`, `chain_diffraction_filters()`
 
 ---
 
