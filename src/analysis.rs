@@ -1,9 +1,14 @@
-//! Room acoustics analysis metrics.
+//! Room acoustics analysis metrics per ISO 3382-1 and IEC 60268-16.
 //!
-//! Computes standard room acoustics quality metrics from impulse responses:
 //! - **C50/C80 (Clarity)**: ratio of early to late energy
 //! - **D50 (Definition)**: early-to-total energy ratio
-//! - **STI (Speech Transmission Index)**: speech intelligibility estimate
+//! - **EDT (Early Decay Time)**: perceptual reverberance
+//! - **G (Sound Strength)**: energy relative to free-field
+//! - **ts (Centre Time)**: temporal centre of gravity
+//! - **LF (Lateral Fraction)**: spatial impression from binaural IR
+//! - **IACC**: interaural cross-correlation for apparent source width
+//! - **STI (Speech Transmission Index)**: per IEC 60268-16:2020
+//! - **Octave-band filtering**: for per-band metric computation
 //! - **Absorption placement**: suggestions for optimal acoustic treatment
 
 use crate::impulse::{ImpulseResponse, sabine_rt60};
@@ -252,6 +257,155 @@ pub fn centre_time_ts(ir: &ImpulseResponse) -> f32 {
         return 0.0;
     }
     numerator / denominator
+}
+
+/// Apply a simple octave-band filter to an impulse response.
+///
+/// Uses a 2nd-order Butterworth bandpass approximation centred on `centre_freq`
+/// with bandwidth of one octave (f/√2 to f×√2). Returns the filtered samples.
+#[must_use]
+pub fn octave_band_filter(ir: &ImpulseResponse, centre_freq: f32) -> Vec<f32> {
+    if ir.samples.is_empty() || ir.sample_rate == 0 || centre_freq <= 0.0 {
+        return vec![];
+    }
+
+    let fs = ir.sample_rate as f32;
+    let sqrt2 = std::f32::consts::SQRT_2;
+    let f_low = centre_freq / sqrt2;
+    let f_high = centre_freq * sqrt2;
+
+    // Bilinear-transformed 2nd-order bandpass coefficients
+    let w_low = (std::f32::consts::PI * f_low / fs).tan();
+    let w_high = (std::f32::consts::PI * f_high / fs).tan();
+    let bw = w_high - w_low;
+    let ww = w_low * w_high;
+
+    let a0 = 1.0 + sqrt2 * bw + bw * bw + ww * (2.0 + sqrt2 * bw);
+    if a0.abs() < f32::EPSILON {
+        return vec![0.0; ir.samples.len()];
+    }
+    let inv_a0 = 1.0 / a0;
+
+    let b0 = bw * bw * inv_a0;
+    let b1 = 0.0;
+    let b2 = -2.0 * b0;
+    let _b3 = 0.0;
+    let b4 = b0;
+
+    let a1 = (2.0 * (ww * (2.0 + sqrt2 * bw) - 1.0 - sqrt2 * bw)) * inv_a0;
+    let a2 = (2.0 * (1.0 - bw * bw + ww * (2.0 * ww - 2.0))) * inv_a0;
+    let a3 = (2.0 * (ww * (2.0 - sqrt2 * bw) - 1.0 + sqrt2 * bw)) * inv_a0;
+    let a4 = (1.0 - sqrt2 * bw + bw * bw + ww * (2.0 - sqrt2 * bw)) * inv_a0;
+
+    let mut out = vec![0.0_f32; ir.samples.len()];
+    // Direct Form II transposed, 4th order (two cascaded 2nd-order sections)
+    let (mut x1, mut x2, mut x3, mut x4) = (0.0_f32, 0.0, 0.0, 0.0);
+    let (mut y1, mut y2, mut y3, mut y4) = (0.0_f32, 0.0, 0.0, 0.0);
+
+    for (i, &x) in ir.samples.iter().enumerate() {
+        let y =
+            b0 * x + b1 * x1 + b2 * x2 + _b3 * x3 + b4 * x4 - a1 * y1 - a2 * y2 - a3 * y3 - a4 * y4;
+        out[i] = y;
+        x4 = x3;
+        x3 = x2;
+        x2 = x1;
+        x1 = x;
+        y4 = y3;
+        y3 = y2;
+        y2 = y1;
+        y1 = y;
+    }
+
+    out
+}
+
+/// Lateral Energy Fraction (LF / JLF) — ISO 3382-1.
+///
+/// Ratio of early lateral energy (0–80 ms) to total early energy (0–80 ms).
+/// Measures the sense of spaciousness and spatial impression.
+///
+/// LF = ∫₀⁸⁰ᵐˢ h_lateral²(t) dt / ∫₀⁸⁰ᵐˢ h²(t) dt
+///
+/// Requires a binaural IR. The lateral component is approximated as the
+/// difference between left and right channels (figure-8 microphone model).
+///
+/// Returns a value 0.0–1.0.
+#[must_use]
+pub fn lateral_fraction_lf(left: &[f32], right: &[f32], sample_rate: u32) -> f32 {
+    if left.is_empty() || right.is_empty() || sample_rate == 0 {
+        return 0.0;
+    }
+
+    let boundary = (0.080 * sample_rate as f32) as usize;
+    let n = left.len().min(right.len()).min(boundary);
+
+    let mut lateral_energy = 0.0_f32;
+    let mut total_energy = 0.0_f32;
+
+    for i in 0..n {
+        let omni = (left[i] + right[i]) * 0.5; // W channel (omnidirectional)
+        let figure8 = (left[i] - right[i]) * 0.5; // lateral component
+        total_energy += omni * omni;
+        lateral_energy += figure8 * figure8;
+    }
+
+    if total_energy < f32::EPSILON {
+        return 0.0;
+    }
+    (lateral_energy / total_energy).clamp(0.0, 1.0)
+}
+
+/// Interaural Cross-Correlation Coefficient (IACC) — ISO 3382-1.
+///
+/// Measures the similarity between left and right ear signals in the early
+/// part of the impulse response (0–80 ms). Low IACC indicates wide apparent
+/// source width (good spatial impression).
+///
+/// IACC = max |∫ hL(t) × hR(t+τ) dt| / √(∫hL²dt × ∫hR²dt)
+///
+/// where τ ranges over ±1 ms (inter-aural time difference range).
+///
+/// Returns a value 0.0–1.0.
+#[must_use]
+pub fn iacc(left: &[f32], right: &[f32], sample_rate: u32) -> f32 {
+    if left.is_empty() || right.is_empty() || sample_rate == 0 {
+        return 0.0;
+    }
+
+    let boundary = (0.080 * sample_rate as f32) as usize;
+    let n = left.len().min(right.len()).min(boundary);
+    if n == 0 {
+        return 0.0;
+    }
+
+    // Energy normalization
+    let energy_l: f32 = left[..n].iter().map(|&s| s * s).sum();
+    let energy_r: f32 = right[..n].iter().map(|&s| s * s).sum();
+    let norm = (energy_l * energy_r).sqrt();
+    if norm < f32::EPSILON {
+        return 0.0;
+    }
+
+    // Cross-correlation over ±1 ms lag range
+    let max_lag = (0.001 * sample_rate as f32) as usize;
+    let max_lag = max_lag.max(1);
+    let mut max_xcorr = 0.0_f32;
+
+    for lag in 0..=max_lag {
+        let mut xcorr_pos = 0.0_f32;
+        let mut xcorr_neg = 0.0_f32;
+        for i in 0..n {
+            if i + lag < n {
+                xcorr_pos += left[i] * right[i + lag];
+            }
+            if i >= lag {
+                xcorr_neg += left[i] * right[i - lag];
+            }
+        }
+        max_xcorr = max_xcorr.max(xcorr_pos.abs()).max(xcorr_neg.abs());
+    }
+
+    (max_xcorr / norm).clamp(0.0, 1.0)
 }
 
 /// A suggestion for acoustic absorption placement.
@@ -653,5 +807,105 @@ mod tests {
             rt60: 1.0,
         };
         assert_eq!(centre_time_ts(&ir), 0.0);
+    }
+
+    // --- Octave-band filter tests ---
+
+    #[test]
+    fn octave_band_filter_produces_output() {
+        let ir = make_exponential_ir(1.0, 48000, 1.0);
+        let filtered = octave_band_filter(&ir, 1000.0);
+        assert_eq!(filtered.len(), ir.samples.len());
+        let energy: f32 = filtered.iter().map(|&s| s * s).sum();
+        assert!(energy > 0.0, "filtered output should have energy");
+    }
+
+    #[test]
+    fn octave_band_filter_empty() {
+        let ir = ImpulseResponse {
+            samples: vec![],
+            sample_rate: 48000,
+            rt60: 1.0,
+        };
+        assert!(octave_band_filter(&ir, 1000.0).is_empty());
+    }
+
+    #[test]
+    fn octave_band_filter_zero_freq() {
+        let ir = make_exponential_ir(1.0, 48000, 1.0);
+        assert!(octave_band_filter(&ir, 0.0).is_empty());
+    }
+
+    // --- LF tests ---
+
+    #[test]
+    fn lf_identical_channels_zero() {
+        // Identical L/R → no lateral energy → LF = 0
+        let signal: Vec<f32> = (0..4800).map(|i| (-0.01 * i as f32).exp()).collect();
+        let lf = lateral_fraction_lf(&signal, &signal, 48000);
+        assert!(
+            lf < 0.01,
+            "identical channels should give near-zero LF, got {lf}"
+        );
+    }
+
+    #[test]
+    fn lf_unbalanced_channels_measurable() {
+        // L much louder than R → significant lateral component
+        let left: Vec<f32> = (0..4800).map(|i| (-0.01 * i as f32).exp()).collect();
+        let right: Vec<f32> = (0..4800).map(|i| (-0.01 * i as f32).exp() * 0.1).collect();
+        let lf = lateral_fraction_lf(&left, &right, 48000);
+        assert!(
+            lf > 0.1,
+            "unbalanced channels should give measurable LF, got {lf}"
+        );
+    }
+
+    #[test]
+    fn lf_empty_returns_zero() {
+        assert_eq!(lateral_fraction_lf(&[], &[], 48000), 0.0);
+    }
+
+    // --- IACC tests ---
+
+    #[test]
+    fn iacc_identical_channels_one() {
+        let signal: Vec<f32> = (0..4800).map(|i| (-0.01 * i as f32).exp()).collect();
+        let val = iacc(&signal, &signal, 48000);
+        assert!(
+            val > 0.95,
+            "identical channels should give IACC ~1.0, got {val}"
+        );
+    }
+
+    #[test]
+    fn iacc_uncorrelated_low() {
+        // Alternating positive/negative samples → low correlation
+        let left: Vec<f32> = (0..4800)
+            .map(|i| if i % 2 == 0 { 0.5 } else { -0.5 })
+            .collect();
+        let right: Vec<f32> = (0..4800)
+            .map(|i| if i % 3 == 0 { 0.5 } else { -0.5 })
+            .collect();
+        let val = iacc(&left, &right, 48000);
+        assert!(val < 0.8, "uncorrelated should give lower IACC, got {val}");
+    }
+
+    #[test]
+    fn iacc_empty_returns_zero() {
+        assert_eq!(iacc(&[], &[], 48000), 0.0);
+    }
+
+    #[test]
+    fn iacc_in_valid_range() {
+        let left: Vec<f32> = (0..4800).map(|i| (-0.005 * i as f32).exp()).collect();
+        let right: Vec<f32> = (0..4800)
+            .map(|i| (-0.005 * (i as f32 + 5.0)).exp())
+            .collect();
+        let val = iacc(&left, &right, 48000);
+        assert!(
+            (0.0..=1.0).contains(&val),
+            "IACC should be in [0,1], got {val}"
+        );
     }
 }

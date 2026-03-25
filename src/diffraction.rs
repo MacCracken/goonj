@@ -54,6 +54,88 @@ pub fn edge_diffraction_loss(frequency: f32, angle_rad: f32, temperature_celsius
     20.0 * coefficient.log10()
 }
 
+/// Kouyoumjian-Pathak UTD wedge diffraction with geometry parameters.
+///
+/// Computes diffraction loss around a wedge of exterior angle `n × π` (where
+/// `n = 2` is a half-plane, `n = 1.5` is a 270° exterior angle, etc.).
+/// The source and receiver angles are measured from the illuminated face.
+///
+/// # Arguments
+/// * `frequency` — sound frequency in Hz
+/// * `wedge_n` — wedge parameter: exterior angle = n × π (2.0 = half-plane, 1.5 = 90° corner)
+/// * `source_angle` — angle from source to edge, measured from illuminated face (radians)
+/// * `receiver_angle` — angle from edge to receiver, measured from illuminated face (radians)
+/// * `distance_source` — distance from source to edge (m)
+/// * `distance_receiver` — distance from edge to receiver (m)
+/// * `temperature_celsius` — air temperature
+///
+/// Returns attenuation in dB (negative = loss).
+#[must_use]
+pub fn utd_wedge_diffraction(
+    frequency: f32,
+    wedge_n: f32,
+    source_angle: f32,
+    receiver_angle: f32,
+    distance_source: f32,
+    distance_receiver: f32,
+    temperature_celsius: f32,
+) -> f32 {
+    if frequency <= 0.0 || wedge_n <= 0.0 || distance_source <= 0.0 || distance_receiver <= 0.0 {
+        return 0.0;
+    }
+
+    let c = speed_of_sound(temperature_celsius);
+    let k = std::f32::consts::TAU * frequency / c;
+
+    // UTD distance factor: L = (rs × rr) / (rs + rr)
+    let l = (distance_source * distance_receiver) / (distance_source + distance_receiver);
+
+    // Diffraction coefficient components (Kouyoumjian-Pathak, 1974)
+    // D = -exp(-jπ/4) / (n × √(2πk)) × Σ cot((π±β)/2n) × F(kLa±)
+    // where β = source_angle ± receiver_angle
+    let inv_n = 1.0 / wedge_n;
+    let beta_plus = source_angle + receiver_angle;
+    let beta_minus = source_angle - receiver_angle;
+
+    // Cotangent terms and transition function arguments
+    let cot_term = |beta: f32, sign: f32| -> f32 {
+        let arg = (PI + sign * beta) * inv_n * 0.5;
+        let sin_val = arg.sin();
+        if sin_val.abs() < 1e-6 {
+            return 0.0;
+        }
+        let cot = arg.cos() / sin_val;
+
+        // Transition function argument: a = 2 × k × L × cos²((2nNπ - beta) / 2)
+        // Use N that minimizes |2nNπ - beta|
+        let n_best = ((sign * beta) / (std::f32::consts::TAU * wedge_n)).round();
+        let a_arg = std::f32::consts::TAU * wedge_n * n_best - sign * beta;
+        let a = 2.0 * k * l * (a_arg * 0.5).cos().powi(2);
+
+        // Approximate Fresnel transition function F(x)
+        // F(x) ≈ √(x / (1 + x)) for x > 0 (smooth approximation)
+        let f_val = if a < 0.01 {
+            a.sqrt()
+        } else {
+            (a / (1.0 + a)).sqrt()
+        };
+
+        cot * f_val
+    };
+
+    let d_magnitude = (cot_term(beta_plus, 1.0).abs()
+        + cot_term(beta_minus, 1.0).abs()
+        + cot_term(beta_plus, -1.0).abs()
+        + cot_term(beta_minus, -1.0).abs())
+        / (wedge_n * (std::f32::consts::TAU * k).sqrt());
+
+    // Distance spreading factor
+    let spread = (l / (distance_source + distance_receiver)).sqrt();
+    let total = (d_magnitude * spread).clamp(1e-10, 1.0);
+
+    20.0 * total.log10()
+}
+
 /// Check if a direct line-of-sight exists between source and listener.
 ///
 /// Returns true if the path is occluded (blocked by at least one wall).
@@ -165,5 +247,64 @@ mod tests {
         };
         // Same position → max_dist ≈ 0 → not occluded
         assert!(!is_occluded(Vec3::ZERO, Vec3::ZERO, &[wall]));
+    }
+
+    // --- UTD wedge diffraction tests ---
+
+    #[test]
+    fn utd_wedge_half_plane_shadow() {
+        // Half-plane (n=2), source and receiver in shadow
+        let loss = utd_wedge_diffraction(1000.0, 2.0, 0.5, 2.5, 5.0, 5.0, 20.0);
+        assert!(
+            loss < 0.0,
+            "shadow region should have negative dB, got {loss}"
+        );
+    }
+
+    #[test]
+    fn utd_wedge_produces_negative_loss() {
+        // Various geometries should all produce non-positive attenuation
+        for &(sa, ra) in &[(0.3, 0.3), (0.5, 2.5), (1.0, 1.0), (PI * 0.5, PI * 1.5)] {
+            let loss = utd_wedge_diffraction(1000.0, 2.0, sa, ra, 5.0, 5.0, 20.0);
+            assert!(
+                loss <= 0.0,
+                "UTD should produce non-positive loss for sa={sa}, ra={ra}, got {loss}"
+            );
+        }
+    }
+
+    #[test]
+    fn utd_wedge_higher_freq_more_loss() {
+        let loss_1k = utd_wedge_diffraction(1000.0, 2.0, 1.0, 2.0, 5.0, 5.0, 20.0);
+        let loss_4k = utd_wedge_diffraction(4000.0, 2.0, 1.0, 2.0, 5.0, 5.0, 20.0);
+        assert!(
+            loss_4k < loss_1k,
+            "4kHz ({loss_4k}) should have more loss than 1kHz ({loss_1k})"
+        );
+    }
+
+    #[test]
+    fn utd_wedge_zero_frequency() {
+        let loss = utd_wedge_diffraction(0.0, 2.0, 1.0, 2.0, 5.0, 5.0, 20.0);
+        assert_eq!(loss, 0.0);
+    }
+
+    #[test]
+    fn utd_wedge_in_valid_range() {
+        let loss = utd_wedge_diffraction(500.0, 1.5, 0.8, 1.5, 3.0, 4.0, 20.0);
+        assert!(
+            loss <= 0.0,
+            "diffraction loss should be non-positive, got {loss}"
+        );
+        assert!(
+            loss > -100.0,
+            "diffraction loss should be reasonable, got {loss}"
+        );
+    }
+
+    #[test]
+    fn edge_diffraction_zero_frequency() {
+        let loss = edge_diffraction_loss(0.0, 1.0, 20.0);
+        assert_eq!(loss, 0.0);
     }
 }

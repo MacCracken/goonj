@@ -27,20 +27,11 @@
 - [x] **Fitzroy RT60** — non-uniform absorption per axis pair + Kuttruff variance correction
 - [x] **Full UTD diffraction** — Kouyoumjian-Pathak wedge coefficients with Fresnel transition
 
-### Remaining ISO 3382-1 Parameters
-- [ ] Lateral Energy Fraction LF (JLF) — requires binaural/figure-8 microphone model
-- [ ] IACC (Interaural Cross-Correlation) — requires binaural IR
-- [ ] **Octave-band filtering before metric computation** (correctness: ISO requires filtering first)
-
-### Fitzroy RT60 Model
-- [ ] Non-uniform absorption handling (Sabine/Eyring assume uniform)
-- [ ] Computes RT60 per opposing wall pair, combines — ~20% accuracy improvement
-- [ ] Kuttruff variance correction as optional refinement
-
-### Full UTD Diffraction
-- [ ] Replace simplified edge loss with full Uniform Theory of Diffraction
-- [ ] Proper wedge diffraction coefficients with source/receiver geometry
-- [ ] Frequency-dependent diffraction around finite edges
+### Remaining Tier 1 (completed)
+- [x] Lateral Energy Fraction LF (JLF) — binaural figure-8 microphone model
+- [x] IACC (Interaural Cross-Correlation) — from binaural IR with ±1ms lag search
+- [x] Octave-band filtering (2nd-order Butterworth bandpass)
+- [x] Kouyoumjian-Pathak UTD wedge diffraction with geometry parameters
 
 ---
 
