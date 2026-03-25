@@ -75,9 +75,14 @@ pub fn definition_d50(ir: &ImpulseResponse) -> f32 {
 
 /// Speech Transmission Index per IEC 60268-16:2020.
 ///
-/// Computes the full STI using 7 octave bands (125–8000 Hz) × 14 modulation
-/// frequencies (0.63–12.5 Hz), with the 2020-revised male speech spectrum
-/// weighting and inter-band redundancy corrections.
+/// Speech Transmission Index estimate per IEC 60268-16:2020 structure.
+///
+/// Uses the 7-band × 14-modulation-frequency framework with 2020-revised
+/// male speech spectrum weighting. **Note**: this operates on a broadband
+/// impulse response — for full standard compliance, per-octave-band filtered
+/// IRs should be used (yielding distinct MTF per band). The current
+/// implementation applies identical MTF to all bands, which is an
+/// approximation suitable for comparative evaluation.
 ///
 /// Returns a value 0.0–1.0 where >0.75 is "excellent" and <0.45 is "poor".
 #[must_use]
@@ -186,8 +191,12 @@ pub fn early_decay_time(ir: &ImpulseResponse) -> f32 {
         }
     }
 
-    if t10_sample == 0 || t10_sample >= edc.len() {
+    if t10_sample == 0 {
         return 0.0;
+    }
+    if t10_sample >= edc.len() {
+        // EDC never reached -10 dB — extremely reverberant
+        return f32::INFINITY;
     }
 
     // EDT = 6 × T_10 (extrapolate 10 dB decay to 60 dB)

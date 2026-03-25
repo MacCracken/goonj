@@ -2,11 +2,15 @@ use crate::propagation::speed_of_sound;
 use hisab::Vec3;
 use std::f32::consts::PI;
 
-/// Edge diffraction attenuation using the Uniform Theory of Diffraction (UTD).
+/// Edge diffraction attenuation (UTD-inspired approximation).
 ///
-/// Models diffraction around a wedge-shaped edge using Kouyoumjian-Pathak
-/// UTD coefficients. The attenuation depends on frequency, the angular
-/// relationship between source/receiver and the edge, and the wedge angle.
+/// Approximates diffraction around a half-plane edge using a Fresnel-like
+/// transition function. Captures the key physics: low frequencies diffract
+/// freely (0 dB loss), high frequencies are shadowed, and the transition
+/// depends on the shadow angle and wave number.
+///
+/// For full Kouyoumjian-Pathak UTD with proper wedge geometry parameters,
+/// see the Tier 2 roadmap item.
 ///
 /// # Arguments
 /// * `frequency` — sound frequency in Hz

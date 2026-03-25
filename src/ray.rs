@@ -31,8 +31,8 @@ pub struct AcousticRay {
 
 /// A multiband acoustic ray carrying per-frequency-band energy.
 ///
-/// Each element of `energy` corresponds to a standard frequency band
-/// (125, 250, 500, 1000, 2000, 4000 Hz).
+/// Each element of `energy` corresponds to an ISO 3382-1 octave band
+/// (63, 125, 250, 500, 1000, 2000, 4000, 8000 Hz).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MultibandRay {
     /// Ray origin position.

@@ -117,11 +117,21 @@ pub fn fitzroy_rt60(volume: f32, surface_area: f32, axes: &[AxisAbsorption; 3]) 
         return f32::INFINITY;
     }
 
+    // Fitzroy (1959): T = (0.161 × V / S) × Σ_j (Sj/S) / (-ln(1 - αj))
+    // where the sum is over axis pairs, with the log in the denominator.
     let term = |ax: &AxisAbsorption| -> f32 {
-        if ax.alpha <= 0.0 || ax.alpha >= 1.0 || ax.area <= 0.0 {
+        if ax.alpha <= 0.0 || ax.area <= 0.0 {
             return 0.0;
         }
-        ax.area / surface_area * (-(1.0 - ax.alpha).ln())
+        if ax.alpha >= 1.0 {
+            // Fully absorptive wall pair → contributes 0 to RT60
+            return 0.0;
+        }
+        let neg_ln = -(1.0 - ax.alpha).ln();
+        if neg_ln < f32::EPSILON {
+            return 0.0;
+        }
+        (ax.area / surface_area) / neg_ln
     };
 
     let sum: f32 = axes.iter().map(term).sum();
@@ -129,7 +139,7 @@ pub fn fitzroy_rt60(volume: f32, surface_area: f32, axes: &[AxisAbsorption; 3]) 
         return f32::INFINITY;
     }
 
-    0.161 * volume / (surface_area * sum)
+    0.161 * volume / surface_area * sum
 }
 
 /// Kuttruff correction factor for Eyring RT60 based on absorption variance.

@@ -60,7 +60,7 @@ pub fn atmospheric_absorption(
         return 0.0;
     }
 
-    let t_kelvin = temperature_celsius + 273.15;
+    let t_kelvin = (temperature_celsius + 273.15).max(1.0); // guard against absolute zero
     let t_ref = 293.15_f32; // reference temperature (20°C)
     let t_01 = 273.16_f32; // triple point of water
 
@@ -158,7 +158,7 @@ pub struct TemperatureProfile {
     pub lapse_rate: f32,
 }
 
-/// Ground impedance model for surface reflection (Delany-Bazley).
+/// Ground impedance model for surface reflection (Miki 1990).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GroundImpedance {
     /// Flow resistivity in Pa·s/m² (rayls/m).
@@ -352,12 +352,13 @@ pub fn ground_reflection_coefficient(
         return 1.0;
     }
 
-    // Miki (1990) corrected impedance model
+    // Miki (1990) corrected normalized surface impedance Z/ρc
+    // Coefficients from: Y. Miki, "Acoustical properties of porous materials —
+    // Modifications of Delany-Bazley models," J. Acoust. Soc. Japan, 1990.
     let x = frequency_hz / impedance.flow_resistivity;
 
-    // Normalized specific acoustic impedance Z/ρc (Miki coefficients)
-    let z_real = 1.0 + 5.50 * x.powf(-0.632);
-    let z_imag = -8.43 * x.powf(-0.632);
+    let z_real = 1.0 + 0.0699 * x.powf(-0.632);
+    let z_imag = -0.1071 * x.powf(-0.632);
 
     // Reflection coefficient for grazing angle θ (angle from surface)
     // R = (Z sinθ - 1) / (Z sinθ + 1)

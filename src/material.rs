@@ -115,7 +115,7 @@ impl AcousticMaterial {
         Self {
             name: "curtain".into(),
             //           63    125   250   500   1k    2k    4k    8k Hz
-            absorption: [0.03, 0.07, 0.31, 0.49, 0.75, 0.70, 0.60, 0.55],
+            absorption: [0.03, 0.07, 0.31, 0.49, 0.75, 0.70, 0.65, 0.65],
             scattering: 0.50,
         }
     }
