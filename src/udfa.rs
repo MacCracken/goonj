@@ -48,11 +48,11 @@ pub fn compute_diffraction_filter(
     let c = speed_of_sound(temperature_celsius);
     let delay = path_difference / c;
 
-    // Finite-edge correction factor: reduces diffraction for short edges
-    let finite_correction = if edge_length > 0.0 {
+    // Finite-edge correction: zero-length edge → no diffraction, long edge → full diffraction
+    let finite_correction = if edge_length > f32::EPSILON {
         (edge_length / (edge_length + path_difference)).sqrt()
     } else {
-        1.0
+        0.0 // no edge → no diffraction
     };
 
     let attenuation = std::array::from_fn(|band| {

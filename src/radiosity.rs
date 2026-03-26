@@ -41,6 +41,8 @@ pub struct RadiosityResult {
 /// Each wall is divided into a grid of approximately `patches_per_wall` patches.
 #[must_use]
 pub fn create_patches(walls: &[Wall], patches_per_wall: usize) -> Vec<Patch> {
+    // Cap to prevent DoS: max 100 patches per wall, max 10000 total
+    let patches_per_wall = patches_per_wall.min(100);
     let mut patches = Vec::with_capacity(walls.len() * patches_per_wall);
 
     for wall in walls {
@@ -149,12 +151,16 @@ pub fn solve_radiosity(
 
     let n = patches.len();
     let mut converged = false;
+    // Pre-allocate outside loop to avoid per-iteration heap allocation
+    let mut incoming = vec![[0.0_f32; NUM_BANDS]; n];
 
     for iteration in 0..max_iterations {
         let mut max_change = 0.0_f32;
 
-        // Gather: compute incoming energy for each patch from all others
-        let mut incoming = vec![[0.0_f32; NUM_BANDS]; n];
+        // Clear incoming buffer
+        for inc in incoming.iter_mut() {
+            *inc = [0.0; NUM_BANDS];
+        }
         for i in 0..n {
             for j in 0..n {
                 if i == j {

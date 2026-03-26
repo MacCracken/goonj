@@ -55,8 +55,9 @@ pub fn solve_diffusion_2d(
     absorption_field: &[f32],
     source_field: &[f32],
 ) -> DiffusionResult {
-    let nx = config.nx.max(3);
-    let ny = config.ny.max(3);
+    // Cap grid size to prevent OOM (max ~4M cells = 16MB)
+    let nx = config.nx.clamp(3, 2000);
+    let ny = config.ny.clamp(3, 2000);
     let n = nx * ny;
 
     if config.dx <= 0.0 || config.dt <= 0.0 || config.mean_free_path <= 0.0 {

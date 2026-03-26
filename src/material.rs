@@ -291,9 +291,10 @@ impl JcalMaterial {
 
     /// Compute the surface impedance magnitude at a given frequency.
     ///
-    /// Uses the JCAL model to compute the complex characteristic impedance
-    /// and propagation constant, then derives the surface impedance for
-    /// a layer of given thickness backed by a rigid wall.
+    /// Uses the JCAL model: Johnson effective density (viscous effects using
+    /// viscous characteristic length) and Champoux-Allard-Lafarge bulk modulus
+    /// (thermal effects using thermal characteristic length and permeability).
+    /// Surface impedance accounts for layer thickness via `Z_s ≈ Z_c / tanh(k×d)`.
     ///
     /// Returns the impedance magnitude normalized to ρ₀c₀.
     #[must_use]
@@ -303,31 +304,65 @@ impl JcalMaterial {
         }
 
         let omega = std::f32::consts::TAU * frequency;
-
-        // Simplified JCAL: effective density and bulk modulus magnitudes
-        // Full complex computation would require complex arithmetic;
-        // this gives the magnitude for absorption coefficient estimation.
         let sigma = self.flow_resistivity;
         let phi = self.porosity;
         let alpha_inf = self.tortuosity;
+        let lambda_v = self.viscous_length;
+        let lambda_t = self.thermal_length;
 
-        // Johnson effective density magnitude (viscous effects)
-        let rho_0 = 1.21_f32; // air density
-        let omega_sigma = omega * rho_0 * alpha_inf / sigma;
-        let g_visc = (1.0 + omega_sigma * omega_sigma).sqrt();
-        let rho_eff = rho_0 * alpha_inf * g_visc / phi;
+        let rho_0 = 1.21_f32;
+        let c_0 = 343.0_f32;
+        let gamma = 1.4_f32;
+        let p_0 = 101325.0_f32;
+        let pr = 0.71_f32; // Prandtl number of air
 
-        // Champoux-Allard bulk modulus magnitude (thermal effects)
-        let gamma = 1.4_f32; // ratio of specific heats
-        let p_0 = 101325.0_f32; // atmospheric pressure
-        let k_eff = gamma * p_0 / phi;
+        // Johnson effective density (viscous effects)
+        // ρ_eff = (ρ₀α∞/φ) × √(1 + jσφ/(ωρ₀α∞) × √(1 + j4ω(ρ₀α∞)²η/(σ²φ²Λ_v²)))
+        // Magnitude approximation:
+        let visc_ratio = sigma * phi / (omega * rho_0 * alpha_inf);
+        let lambda_term = if lambda_v > 0.0 {
+            let eta = 1.81e-5_f32; // dynamic viscosity of air
+            4.0 * omega * rho_0 * alpha_inf * alpha_inf * eta
+                / (sigma * sigma * phi * phi * lambda_v * lambda_v)
+        } else {
+            0.0
+        };
+        let inner = (1.0 + lambda_term).sqrt();
+        let g_visc = (1.0 + visc_ratio * visc_ratio * inner * inner)
+            .sqrt()
+            .sqrt();
+        let rho_eff_mag = rho_0 * alpha_inf * g_visc / phi;
 
-        // Characteristic impedance magnitude: Z_c = sqrt(ρ_eff × K_eff)
-        let z_c = (rho_eff * k_eff).sqrt();
+        // Champoux-Allard-Lafarge bulk modulus (thermal effects)
+        // K_eff = γP₀/φ / (γ - (γ-1)/√(1 + jB²/ω))
+        // where B² involves thermal characteristic length
+        let thermal_ratio = if lambda_t > 0.0 {
+            let kappa = 0.026_f32; // thermal conductivity of air
+            let c_p = 1005.0_f32; // specific heat of air
+            8.0 * kappa / (lambda_t * lambda_t * c_p * rho_0 * pr * omega)
+        } else {
+            0.0
+        };
+        let thermal_factor = (1.0 + thermal_ratio * thermal_ratio).sqrt();
+        let denom = gamma - (gamma - 1.0) / thermal_factor;
+        let k_eff_mag = if denom.abs() > f32::EPSILON {
+            gamma * p_0 / (phi * denom)
+        } else {
+            gamma * p_0 / phi
+        };
 
-        // Normalize to air impedance
-        let rho_c = rho_0 * 343.0;
-        (z_c / rho_c).max(0.01)
+        // Characteristic impedance and propagation constant magnitudes
+        let z_c = (rho_eff_mag * k_eff_mag).sqrt();
+        let k_mag = omega * (rho_eff_mag / k_eff_mag).sqrt();
+
+        // Surface impedance of rigid-backed layer: Z_s = -jZ_c cot(k×d)
+        // Magnitude: |Z_s| ≈ Z_c / |tanh(k_mag × thickness)|
+        let kd = k_mag * thickness;
+        let tanh_kd = kd.tanh().abs().max(0.01);
+        let z_s = z_c / tanh_kd;
+
+        let rho_c = rho_0 * c_0;
+        (z_s / rho_c).max(0.01)
     }
 
     /// Compute absorption coefficient at a given frequency for a layer of given thickness.

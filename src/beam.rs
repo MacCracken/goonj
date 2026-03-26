@@ -86,14 +86,16 @@ pub fn trace_beam(beam: &AcousticBeam, walls: &[Wall], max_order: u32) -> BeamPa
         let Some((t, idx)) = nearest else { break };
         let wall = &walls[idx];
 
-        // Compute beam footprint coverage on the wall
+        // Coverage = fraction of beam solid angle intercepted by the wall.
+        // If wall is larger than beam footprint → coverage ≈ 1.0
+        // If wall is smaller → coverage = wall_area / beam_footprint_area
         let footprint_radius = t * current.half_angle.tan();
         let wall_area = wall.area();
         let beam_area = std::f32::consts::PI * footprint_radius * footprint_radius;
-        let coverage = if wall_area > f32::EPSILON {
-            (beam_area / wall_area).clamp(0.0, 1.0)
+        let coverage = if beam_area > f32::EPSILON {
+            (wall_area / beam_area).clamp(0.0, 1.0)
         } else {
-            0.0
+            1.0 // infinitely narrow beam — any wall fully intercepts it
         };
 
         let hit_point = current.apex + current.direction * t;

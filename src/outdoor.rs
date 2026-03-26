@@ -77,10 +77,10 @@ pub fn foliage_attenuation(depth_m: f32, frequency: f32) -> f32 {
         return 0.0;
     }
 
-    // ISO 9613-2: approximately 0.01-0.06 dB/m depending on frequency
-    // Low freq: ~0.01 dB/m, High freq: ~0.06 dB/m
+    // ISO 9613-2: approximately 0.01–0.12 dB/m depending on frequency
+    // Increases up to 8 kHz (not capped at 1 kHz)
     let f_khz = frequency / 1000.0;
-    let rate = 0.01 + 0.05 * f_khz.clamp(0.0, 1.0);
+    let rate = 0.01 + 0.014 * f_khz.clamp(0.0, 8.0);
     // Cap at 10 dB per 20m belt as per ISO
     (rate * depth_m).min(10.0)
 }
@@ -118,7 +118,8 @@ pub fn meteorological_correction(distance: f32, source_height: f32, receiver_hei
         0.0
     };
 
-    c0 * (1.0 - 10.0 * h_avg / distance).max(0.0)
+    let ratio = (1.0 - 10.0 * h_avg / distance).max(0.0);
+    c0 * ratio * ratio // ISO 9613-2: squared term
 }
 
 /// Ground effect attenuation per ISO 9613-2.
