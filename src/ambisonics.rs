@@ -134,7 +134,7 @@ fn spherical_harmonics(order: u32, theta: f32, phi: f32) -> [f32; MAX_HOA_CHANNE
         let cos2 = cos_t * cos_t;
         // SN3D factors for order 3
         let n3_3 = (5.0 / 8.0_f32).sqrt(); // m=±3
-        let n3_2 = (15.0 / 2.0_f32).sqrt() / 2.0; // m=±2
+        let n3_2 = 15.0_f32.sqrt() / 2.0; // m=±2: sqrt(15)/2
         let n3_1 = (3.0 / 8.0_f32).sqrt(); // m=±1
         sh[9] = n3_3 * sin3 * (3.0 * phi).sin(); // ACN 9: Y_3^{-3}
         sh[10] = n3_2 * sin2 * cos_t * (2.0 * phi).sin(); // ACN 10: Y_3^{-2}

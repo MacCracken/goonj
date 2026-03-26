@@ -1,5 +1,45 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **underwater** (feature-gated) — Mackenzie ocean sound speed, Francois-Garrison seawater absorption, Hamilton seabed sediment model (sand/silt/clay/rock), Rayleigh bottom reflection, Eckart sea surface scattering
+
+### Tier 1–3 Accuracy & Standards
+- **8 octave bands** (63–8000 Hz), full ISO 9613-1 atmospheric absorption, Miki ground impedance
+- **IEC 60268-16:2020 STI** with correct α_k/β_k redundancy weights
+- **ISO 3382-1**: EDT, G, ts, LF, IACC, octave-band filtering
+- **Fitzroy RT60** + Kuttruff correction, full UTD wedge diffraction (K-P 1974)
+
+### Tier 2 Features
+- Wall transmission (mass law + Davy), source directivity, portal propagation
+- 1st/3rd-order Ambisonics (SN3D/ACN), coupled rooms, vector scattering
+- FDN reverb (zero-allocation Householder), JCAL porous materials
+
+### Tier 3 Features
+- Beam tracing, acoustic radiosity, 2D diffusion equation solver
+- ISO 9613-2 outdoor (barrier, foliage, meteorological, ground)
+- Hybrid frequency crossover, UDFA filter-based diffraction
+
+### Correctness (P(-1) hardening)
+- Ambisonics ACN 10/14 SN3D factor: `sqrt(15/2)/2` → `sqrt(15)/2`
+- Coupled rooms: amplitude rate (6.908) → energy rate (13.816) for gamma
+- STI: correct IEC 60268-16:2020 formula `STI = Σ(α_k×MTI_k) − Σ(β_k×√(MTI_k×MTI_{k+1}))`
+- C_met: `h_avg` → `h_s + h_r`, removed spurious squared factor
+- UTD Fresnel argument: fixed N± computation per K-P 1974
+- Miki model: corrected coefficients to 0.0699 / -0.1071
+- FDN: zero-allocation `process_sample` (pre-allocated scratch buffer)
+- Portal: two-stage inverse square `A/(4π×d₁²×d₂²)`
+
+### Security
+- Capped image-source max_order (20 shoebox / 6 general)
+- Capped diffusion grid (2000×2000), radiosity patches (100/wall)
+- Overflow-safe WAV data size, IR generation capped at 10min@192kHz
+
+### Stats
+- 378 tests, 28 benchmarks, 29 modules
+- All formulas verified against references (ISO 9613-1, IEC 60268-16:2020, Miki 1990, K-P 1974, Mackenzie 1981, Francois-Garrison 1982, Hamilton 1980)
+
 ## [1.0.0] - 2026-03-25
 
 Security hardening, correctness fixes, and documentation pass for v1.0.0 freeze.

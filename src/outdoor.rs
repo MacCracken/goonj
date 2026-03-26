@@ -102,14 +102,15 @@ pub fn meteorological_correction(distance: f32, source_height: f32, receiver_hei
         return 0.0;
     }
 
-    let h_avg = (source_height + receiver_height) / 2.0;
-    let dp = distance - 10.0 * h_avg;
+    // ISO 9613-2: uses sum of heights h_s + h_r (not average)
+    let h_sum = source_height + receiver_height;
+    let dp = distance - 10.0 * h_sum;
     if dp <= 0.0 {
         return 0.0;
     }
 
-    // C_met = C_0 × (1 - 10 × h_avg / d) for d > 10 × h_avg
-    // C_0 ≈ 0 for d < 100m, increases for long distances
+    // C_met = C_0 × (1 - 10 × (h_s + h_r) / d) per ISO 9613-2
+    // C_0 depends on meteorological conditions (typically 0–5 dB)
     let c0 = if distance > 1000.0 {
         3.5
     } else if distance > 100.0 {
@@ -118,8 +119,7 @@ pub fn meteorological_correction(distance: f32, source_height: f32, receiver_hei
         0.0
     };
 
-    let ratio = (1.0 - 10.0 * h_avg / distance).max(0.0);
-    c0 * ratio * ratio // ISO 9613-2: squared term
+    c0 * (1.0 - 10.0 * h_sum / distance).max(0.0)
 }
 
 /// Ground effect attenuation per ISO 9613-2.

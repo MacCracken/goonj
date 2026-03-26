@@ -70,6 +70,11 @@ pub mod room;
 pub mod scattering;
 /// Universal Diffraction Filter Approximation (UDFA) for real-time diffraction.
 pub mod udfa;
+/// Underwater acoustics — ocean sound speed, seabed reflection, absorption.
+#[cfg(feature = "underwater")]
+pub mod underwater;
+/// Vibroacoustics — structural vibration to acoustic radiation coupling.
+pub mod vibroacoustics;
 /// WAV file export (16-bit PCM, mono/stereo).
 #[cfg(feature = "wav")]
 pub mod wav;

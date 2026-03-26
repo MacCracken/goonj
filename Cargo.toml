@@ -21,6 +21,7 @@ binaural = []
 dhvani-compat = []
 kiran-compat = []
 soorat-compat = []
+underwater = []
 
 [dependencies]
 hisab = "0.24"

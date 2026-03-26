@@ -107,14 +107,12 @@ pub fn sti_estimate(ir: &ImpulseResponse) -> f32 {
         0.63, 0.8, 1.0, 1.25, 1.6, 2.0, 2.5, 3.15, 4.0, 5.0, 6.3, 8.0, 10.0, 12.5,
     ];
 
-    // IEC 60268-16:2020 male speech spectrum octave band weights (revised)
-    // Bands: 125, 250, 500, 1000, 2000, 4000, 8000 Hz
-    let band_weights: [f32; 7] = [0.085, 0.127, 0.230, 0.233, 0.309, 0.224, 0.173];
-    let weight_sum: f32 = band_weights.iter().sum();
+    // IEC 60268-16:2020 Table 2: alpha_k weights per octave band
+    // STI = Σ(α_k × MTI_k) − Σ(β_k × √(MTI_k × MTI_{k+1}))
+    let alpha_k: [f32; 7] = [0.085, 0.127, 0.230, 0.233, 0.309, 0.224, 0.173];
 
-    // Redundancy weights between adjacent bands (IEC 60268-16 Table 3)
-    let alpha_redundancy: [f32; 6] = [0.085, 0.127, 0.230, 0.233, 0.309, 0.224];
-    let beta_redundancy: [f32; 6] = [0.085, 0.127, 0.230, 0.233, 0.309, 0.224];
+    // IEC 60268-16:2020 Table 3: beta_k redundancy weights between adjacent bands
+    let beta_k: [f32; 6] = [0.085, 0.078, 0.065, 0.011, 0.047, 0.095];
 
     // Compute per-band MTI (using broadband IR as approximation when
     // per-band IRs are not available)
@@ -149,27 +147,16 @@ pub fn sti_estimate(ir: &ImpulseResponse) -> f32 {
         let _ = band_idx; // band_idx reserved for per-band filtering in future
     }
 
-    // Weighted sum of MTI values
+    // IEC 60268-16:2020 Eq. 10: STI = Σ(α_k × MTI_k) − Σ(β_k × √(MTI_k × MTI_{k+1}))
     let mut sti = 0.0_f32;
-    for (i, &mti) in band_mti.iter().enumerate() {
-        sti += band_weights[i] * mti;
+    for (k, &mti) in band_mti.iter().enumerate() {
+        sti += alpha_k[k] * mti;
     }
-    sti /= weight_sum;
-
-    // Apply redundancy correction (inter-band correlation)
-    let mut redundancy = 0.0_f32;
-    for i in 0..6 {
-        redundancy += alpha_redundancy[i] * (band_mti[i] * band_mti[i + 1]).sqrt();
-        let _ = beta_redundancy[i]; // reserved for full correction
-    }
-    let redundancy_sum: f32 = alpha_redundancy.iter().sum();
-    if redundancy_sum > f32::EPSILON {
-        redundancy /= redundancy_sum;
+    for k in 0..6 {
+        sti -= beta_k[k] * (band_mti[k] * band_mti[k + 1]).sqrt();
     }
 
-    // Final STI with redundancy adjustment
-    let sti_final = sti - redundancy * 0.1; // simplified redundancy penalty
-    sti_final.clamp(0.0, 1.0)
+    sti.clamp(0.0, 1.0)
 }
 
 /// Early Decay Time (EDT) — ISO 3382-1.

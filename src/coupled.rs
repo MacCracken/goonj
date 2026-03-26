@@ -71,14 +71,16 @@ pub fn coupled_room_decay(coupled: &CoupledRooms) -> CoupledDecay {
         0.0
     };
 
-    // Decay rates (1/seconds)
+    // Energy decay rates (1/seconds): gamma = 6*ln(10) / RT60 = 13.816 / RT60
+    // Must be energy rates (not amplitude) to match kappa units (c*A/4V is energy rate)
+    let decay_const = 6.0 * 10.0_f32.ln(); // 13.8155
     let gamma_a = if rt60_a > 0.0 && rt60_a.is_finite() {
-        6.908 / rt60_a
+        decay_const / rt60_a
     } else {
         0.0
     };
     let gamma_b = if rt60_b > 0.0 && rt60_b.is_finite() {
-        6.908 / rt60_b
+        decay_const / rt60_b
     } else {
         0.0
     };
@@ -92,8 +94,16 @@ pub fn coupled_room_decay(coupled: &CoupledRooms) -> CoupledDecay {
     let lambda1 = (sum + sqrt_disc) * 0.5; // fast decay
     let lambda2 = (sum - sqrt_disc) * 0.5; // slow decay
 
-    let rt60_early = if lambda1 > 0.0 { 6.908 / lambda1 } else { 0.0 };
-    let rt60_late = if lambda2 > 0.0 { 6.908 / lambda2 } else { 0.0 };
+    let rt60_early = if lambda1 > 0.0 {
+        decay_const / lambda1
+    } else {
+        0.0
+    };
+    let rt60_late = if lambda2 > 0.0 {
+        decay_const / lambda2
+    } else {
+        0.0
+    };
 
     // Early component amplitude (energy partition)
     let early_amp = if lambda1 > lambda2 {

@@ -97,19 +97,20 @@ pub fn utd_wedge_diffraction(
     let beta_plus = source_angle + receiver_angle;
     let beta_minus = source_angle - receiver_angle;
 
-    // Cotangent terms and transition function arguments
+    // Cotangent terms and transition function arguments per K-P 1974
     let cot_term = |beta: f32, sign: f32| -> f32 {
-        let arg = (PI + sign * beta) * inv_n * 0.5;
-        let sin_val = arg.sin();
+        let phi_arg = PI + sign * beta; // argument of cotangent: (π ± β)
+        let cot_arg = phi_arg * inv_n * 0.5; // (π ± β) / (2n)
+        let sin_val = cot_arg.sin();
         if sin_val.abs() < 1e-6 {
             return 0.0;
         }
-        let cot = arg.cos() / sin_val;
+        let cot = cot_arg.cos() / sin_val;
 
-        // Transition function argument: a = 2 × k × L × cos²((2nNπ - beta) / 2)
-        // Use N that minimizes |2nNπ - beta|
-        let n_best = ((sign * beta) / (std::f32::consts::TAU * wedge_n)).round();
-        let a_arg = std::f32::consts::TAU * wedge_n * n_best - sign * beta;
+        // K-P 1974: a±(β) = 2kL cos²((2πnN± − β)/2)
+        // where N± is the integer nearest to (π ± β)/(2πn)
+        let n_int = (phi_arg / (std::f32::consts::TAU * wedge_n)).round();
+        let a_arg = std::f32::consts::TAU * wedge_n * n_int - beta;
         let a = 2.0 * k * l * (a_arg * 0.5).cos().powi(2);
 
         // Approximate Fresnel transition function F(x)
