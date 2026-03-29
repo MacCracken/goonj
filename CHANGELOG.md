@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-03-29
+
+### Changed
+- **license** — GPL-3.0 → GPL-3.0-only across Cargo.toml, README, CLAUDE.md, deny.toml
+
 ## [1.1.0]
 
 ### Added

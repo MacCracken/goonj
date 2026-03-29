@@ -5,7 +5,7 @@
 **Goonj** (Hindi/Urdu: गूँज — echo, resonance) — Acoustics engine for AGNOS
 
 - **Type**: Flat library crate
-- **License**: GPL-3.0
+- **License**: GPL-3.0-only
 - **MSRV**: 1.89
 - **Version**: SemVer 0.1.0
 
@@ -94,7 +94,7 @@ Root files (required):
   CONTRIBUTING.md    — fork, branch, make check, PR workflow
   SECURITY.md        — supported versions, scope, reporting
   CODE_OF_CONDUCT.md — Contributor Covenant
-  LICENSE            — GPL-3.0
+  LICENSE            — GPL-3.0-only
 
 docs/ (required):
   architecture/

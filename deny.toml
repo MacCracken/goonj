@@ -3,16 +3,10 @@ ignore = []
 
 [licenses]
 allow = [
-    "GPL-3.0",
     "GPL-3.0-only",
     "MIT",
     "Apache-2.0",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
-    "Zlib",
 ]
 
 [bans]
