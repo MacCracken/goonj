@@ -2,7 +2,10 @@
 
 ## [Unreleased]
 
+## [1.1.0]
+
 ### Added
+- **bridge** — cross-crate primitive-value bridges for pavan (wind attenuation, Doppler, effective speed of sound), badal (air absorption from weather, speed of sound, pressure conversion), ushma (absorption temperature scaling, sound speed gradient), bijli (EM resonance coupling, piezoelectric acoustic power)
 - **underwater** (feature-gated) — Mackenzie ocean sound speed, Francois-Garrison seawater absorption, Hamilton seabed sediment model (sand/silt/clay/rock), Rayleigh bottom reflection, Eckart sea surface scattering
 
 ### Tier 1–3 Accuracy & Standards
