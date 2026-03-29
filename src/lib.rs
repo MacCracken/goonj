@@ -28,6 +28,8 @@ pub mod beam;
 /// Binaural impulse response generation with HRTF spatialization.
 #[cfg(feature = "binaural")]
 pub mod binaural;
+/// Cross-crate bridges — primitive-value conversions from other AGNOS science crates.
+pub mod bridge;
 /// Coupled room acoustics — multi-room energy exchange and double-slope decay.
 pub mod coupled;
 /// Edge diffraction loss and occlusion detection (UTD, BTM).

@@ -67,6 +67,16 @@ Theory not proven at production quality, or requires infrastructure (ML runtimes
 
 ---
 
+## Cross-Crate Bridges
+
+- [ ] `bridge.rs` module — primitive-value conversions for cross-crate acoustics (no deps on sibling crates)
+- [ ] **pavan bridge**: wind speed (m/s) → outdoor sound propagation attenuation factor; Mach number → Doppler shift
+- [ ] **badal bridge**: humidity (%) → air absorption coefficients; temperature (°C) → speed of sound
+- [ ] **ushma bridge**: temperature (°C) → material absorption coefficient scaling
+- [ ] **bijli bridge**: EM frequency (Hz) → acoustic resonance coupling factor (vibroacoustics)
+
+---
+
 ## References
 
 - Funkhouser et al., "Beam Tracing for Interactive Architectural Acoustics," JASA 115(2), 2004
