@@ -114,38 +114,35 @@ pub fn sti_estimate(ir: &ImpulseResponse) -> f32 {
     // IEC 60268-16:2020 Table 3: beta_k redundancy weights between adjacent bands
     let beta_k: [f32; 6] = [0.085, 0.078, 0.065, 0.011, 0.047, 0.095];
 
-    // Compute per-band MTI (using broadband IR as approximation when
-    // per-band IRs are not available)
+    // Compute MTI from the broadband IR (approximation when per-band IRs are
+    // not available). Since the same IR is used for every band, MTI is
+    // identical across bands — compute once and broadcast.
     let dt = 1.0 / ir.sample_rate as f32;
-    let mut band_mti = [0.0_f32; 7];
-
-    for (band_idx, mti) in band_mti.iter_mut().enumerate() {
-        let mut ti_sum = 0.0_f32;
-        for &fm in &mod_freqs {
-            let omega = std::f32::consts::TAU * fm;
-            let mut real = 0.0_f32;
-            let mut imag = 0.0_f32;
-            for (i, &s) in ir.samples.iter().enumerate() {
-                let h2_i = s * s;
-                let t = i as f32 * dt;
-                let angle = omega * t;
-                real += h2_i * angle.cos();
-                imag += h2_i * angle.sin();
-            }
-            let mtf = ((real * real + imag * imag).sqrt() / total_energy).clamp(0.0, 1.0);
-
-            let snr = if mtf >= 1.0 {
-                15.0
-            } else if mtf <= f32::EPSILON {
-                -15.0
-            } else {
-                (mtf / (1.0 - mtf)).log10() * 10.0
-            };
-            ti_sum += (snr.clamp(-15.0, 15.0) + 15.0) / 30.0;
+    let mut ti_sum = 0.0_f32;
+    for &fm in &mod_freqs {
+        let omega = std::f32::consts::TAU * fm;
+        let mut real = 0.0_f32;
+        let mut imag = 0.0_f32;
+        for (i, &s) in ir.samples.iter().enumerate() {
+            let h2_i = s * s;
+            let t = i as f32 * dt;
+            let angle = omega * t;
+            real += h2_i * angle.cos();
+            imag += h2_i * angle.sin();
         }
-        *mti = ti_sum / mod_freqs.len() as f32;
-        let _ = band_idx; // band_idx reserved for per-band filtering in future
+        let mtf = ((real * real + imag * imag).sqrt() / total_energy).clamp(0.0, 1.0);
+
+        let snr = if mtf >= 1.0 {
+            15.0
+        } else if mtf <= f32::EPSILON {
+            -15.0
+        } else {
+            (mtf / (1.0 - mtf)).log10() * 10.0
+        };
+        ti_sum += (snr.clamp(-15.0, 15.0) + 15.0) / 30.0;
     }
+    let mti = ti_sum / mod_freqs.len() as f32;
+    let band_mti = [mti; 7];
 
     // IEC 60268-16:2020 Eq. 10: STI = Σ(α_k × MTI_k) − Σ(β_k × √(MTI_k × MTI_{k+1}))
     let mut sti = 0.0_f32;

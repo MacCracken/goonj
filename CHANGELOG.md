@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-01
+
+Final P(-1) scaffold-hardening pass before opening v1.3 feature work. No
+new public API; all changes are internal correctness / performance fixes.
+
+### Performance
+- **analysis** — `sti_estimate`: hoisted the broadband MTI computation out
+  of the per-band loop. The same broadband IR was being reduced 7× with
+  identical inputs and outputs; the result is now computed once and
+  broadcast to `band_mti`. Benchmark: `analysis/sti` 28,751,483 ns →
+  3,624,973 ns (−87%, **~7.9× faster**). Formula identity preserved:
+  `Σαₖ·MTI − Σβₖ·√(MTIₖ·MTIₖ₊₁)` collapses to `(Σαₖ − Σβₖ)·MTI` when
+  all bands share a value, exactly as before.
+
+### Fixed
+- **diffusion** — `solve_diffusion_2d` now also early-returns when
+  `speed_of_sound <= 0.0`. Previously a zero/negative speed propagated
+  into `d_coeff = c · mfp / 3`, leaving `dt_max = dx² / 0` to flow
+  through `min(config.dt)` and producing a degenerate-but-running
+  simulation. Added a regression test.
+- **integration/dhvani** — removed dead `_surface_area` binding in
+  `generate_dhvani_ir`; per-band Sabine RT60 already pulls absorption
+  area directly from `wall.area()`.
+- **scripts/bench-history.sh** — pass `--all-features` so feature-gated
+  benchmarks (`wav/export_48k_2s`, `binaural/generate_ir_shoebox`)
+  actually compile. The script silently failed on these benches after
+  those features were added in v0.2.0 / v1.1.0.
+
+### Stats
+- 411 tests passing (404 unit + 6 integration + 1 doc), 28 benchmarks, 30 modules
+- New regression test: `diffusion::tests::diffusion_zero_speed_of_sound_returns_empty`
+- All formulas remain verified against ISO/IEC and peer-reviewed sources
+- `cargo fmt`, `cargo clippy --all-features --all-targets -- -D warnings`,
+  `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps` all clean
+
 ## [1.1.1] - 2026-03-29
 
 ### Changed

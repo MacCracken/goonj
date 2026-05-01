@@ -2,11 +2,13 @@
 
 ## Current Release
 
-**v1.1.0** — Tiers 1–3 complete, P(-1) hardened, underwater acoustics + vibroacoustics added.
+**v1.2.0** — Final P(-1) hardening pass. No new features; correctness + performance only.
 
-- 388 tests, 28 benchmarks, 30 modules
-- All formulas verified against ISO/IEC standards and peer-reviewed references
-- Supply chain clean
+- 411 tests, 28 benchmarks, 30 modules
+- STI per-band loop hoisted: 28.75 ms → 3.62 ms (−87%, ~7.9× faster) with no behavioural change
+- Diffusion solver guards against `speed_of_sound <= 0.0` (+ regression test)
+- `bench-history.sh` now compiles feature-gated benchmarks correctly
+- All formulas remain verified against ISO/IEC and peer-reviewed sources
 
 ---
 
@@ -31,11 +33,18 @@
 - Underwater acoustics (Mackenzie, Francois-Garrison, Hamilton, Eckart)
 - Vibroacoustics (radiation efficiency, modal radiation, impetus coupling)
 
+### v1.2.0 — Final Scaffold Hardening
+- STI estimate: per-band MTI loop hoisted (broadband IR → identical MTI per band → compute once and broadcast). 28.75 ms → 3.62 ms (~7.9× faster).
+- Diffusion solver: added `speed_of_sound <= 0.0` early-return guard + regression test.
+- Removed dead `_surface_area` binding in dhvani integration.
+- `bench-history.sh`: pass `--all-features` so wav/binaural benches compile.
+- No new public API; closes the P(-1) cycle ahead of v1.3 feature work.
+
 ---
 
-## v1.2.0 — Wave-Based Methods + Emerging Algorithms
+## v1.3.0 — Wave-Based Methods + Emerging Algorithms
 
-Implementable now — algorithms are well-defined with clear references.
+Pushed back from v1.2.0. Implementable now — algorithms are well-defined with clear references.
 
 ### Wave Solvers
 - [ ] **2D FDTD modal solver** — explicit finite-difference time-domain below Schroeder frequency. Textbook algorithm (Botteldooren 1995). Plugs into hybrid crossover interface.

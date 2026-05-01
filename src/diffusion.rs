@@ -60,7 +60,11 @@ pub fn solve_diffusion_2d(
     let ny = config.ny.clamp(3, 2000);
     let n = nx * ny;
 
-    if config.dx <= 0.0 || config.dt <= 0.0 || config.mean_free_path <= 0.0 {
+    if config.dx <= 0.0
+        || config.dt <= 0.0
+        || config.mean_free_path <= 0.0
+        || config.speed_of_sound <= 0.0
+    {
         return DiffusionResult {
             energy_density: vec![0.0; n],
             dimensions: [nx, ny],
@@ -196,5 +200,21 @@ mod tests {
         };
         let result = solve_diffusion_2d(&config, &[], &[]);
         assert_eq!(result.time_steps, 0);
+    }
+
+    #[test]
+    fn diffusion_zero_speed_of_sound_returns_empty() {
+        let config = DiffusionConfig {
+            dx: 0.5,
+            dt: 0.001,
+            nx: 10,
+            ny: 10,
+            speed_of_sound: 0.0,
+            mean_free_path: 4.0,
+            max_time: 0.1,
+        };
+        let result = solve_diffusion_2d(&config, &[], &[]);
+        assert_eq!(result.time_steps, 0);
+        assert!(result.energy_density.iter().all(|&v| v == 0.0));
     }
 }

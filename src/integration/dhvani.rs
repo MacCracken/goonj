@@ -37,7 +37,6 @@ pub fn generate_dhvani_ir(
     let volume = room.geometry.volume_shoebox();
 
     // Estimate per-band RT60 using Sabine with per-band absorption
-    let _surface_area = room.geometry.surface_area();
     let rt60_bands = std::array::from_fn(|band| {
         let total_abs: f32 = room
             .geometry
