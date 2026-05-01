@@ -56,7 +56,7 @@ Pushed back from v1.2.0. Batched into a single release — committed per item, s
 - [x] **Dark Velvet Noise reverb** — non-exponential decay modeling using sparse stochastic sequences. 4% RT60 error, 50% fewer filters. Reference: Fagerström et al., JAES 72(6), 2024.
 
 ### Material Extensions
-- [ ] **Acoustic metamaterial types** — frequency-dependent negative-stiffness and negative-density material models for engineered absorbers. Lookup-table approach from manufacturer data.
+- [x] **Acoustic metamaterial types** — frequency-dependent negative-stiffness and negative-density material models for engineered absorbers. Lookup-table approach from manufacturer data.
 
 ### Outdoor Propagation
 - [ ] **GFPE terrain propagation** — Green's Function Parabolic Equation for range-dependent outdoor environments with hills/ridges. Reference: Gilbert & Di (1993).

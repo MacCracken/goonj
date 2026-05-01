@@ -463,6 +463,21 @@ fn bench_dvn_synthesize(c: &mut Criterion) {
     });
 }
 
+fn bench_metamaterial_absorption_bands(c: &mut Criterion) {
+    let m = goonj::metamaterial::Metamaterial::NegativeStiffness {
+        k_eff: goonj::metamaterial::LorentzianResonance {
+            center_hz: 500.0,
+            plasma_hz: 800.0,
+            damping_hz: 50.0,
+            background_value: goonj::metamaterial::AIR_BULK_MODULUS,
+        },
+        rho: goonj::metamaterial::AIR_DENSITY,
+    };
+    c.bench_function("metamaterial/absorption_bands_negstiff", |b| {
+        b.iter(|| black_box(&m).absorption_bands());
+    });
+}
+
 criterion_group!(
     benches,
     bench_speed_of_sound,
@@ -494,5 +509,6 @@ criterion_group!(
     bench_analysis_d50,
     bench_suggest_absorption,
     bench_dvn_synthesize,
+    bench_metamaterial_absorption_bands,
 );
 criterion_main!(benches);

@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Added
+- **metamaterial** — engineered acoustic materials with frequency-dependent
+  effective parameters. Three analytical models — `NegativeStiffness`,
+  `NegativeDensity`, `DoublyNegative` — driven by a Drude–Lorentz
+  `LorentzianResonance` (centre, plasma, damping, background_value) plus
+  a `LookupTable` form for manufacturer absorption datasheets. Each
+  variant produces an 8-band absorption profile via a bulk-impedance
+  approximation `α = 1 − |R|²` with `R = (Z_eff − Z₀)/(Z_eff + Z₀)` and
+  `Z_eff = √(ρ_eff·K_eff)` against air at Z₀ ≈ 413 rayls. Convenience
+  constructor `LorentzianResonance::with_dc_value` lets callers specify
+  the DC value directly instead of the canonical Drude–Lorentz
+  background. Outputs convert to `AcousticMaterial` via
+  `to_acoustic_material(name, scattering)` so a metamaterial panel
+  plugs into the existing ray / IR pipeline as a wall. Benchmark
+  `metamaterial/absorption_bands_negstiff`: 211 ns. References:
+  Liu 2000, Fang 2006, Yang 2008, Lee 2010.
 - **dark_velvet_noise** — Fagerström et al. 2024 reverb synthesis from
   sparse stochastic pulse sequences. New module exposes `DvnConfig`,
   `DecayEnvelope::{Exponential, PiecewiseDb}`, and

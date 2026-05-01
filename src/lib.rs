@@ -56,6 +56,8 @@ pub mod impulse;
 pub mod integration;
 /// Acoustic materials with frequency-dependent absorption, scattering, and transmission.
 pub mod material;
+/// Acoustic metamaterials — engineered structures with frequency-dependent effective parameters.
+pub mod metamaterial;
 /// ISO 9613-2 outdoor sound propagation methods.
 pub mod outdoor;
 /// Portal-based sound propagation through openings between rooms.
