@@ -3,6 +3,23 @@
 ## [Unreleased]
 
 ### Added
+- **gfpe** — Green's Function Parabolic Equation outdoor solver per Gilbert
+  & Di 1993. Marches range by Δr in a 2D vertical (range × height) slice
+  using direct (O(N²)) convolution against the parabolic-equation
+  Green's function plus an image-source ground term. New types: `GfpeConfig`,
+  `GfpeAtmosphere`, `GfpeTerrain` (range vs. ground-elevation polyline,
+  linearly interpolated), `GfpeResult` (excess-attenuation field as
+  row-major `Vec<f32>`). Inputs: source frequency / height, max range,
+  max height, range/height steps, `propagation::GroundImpedance` (Miki
+  complex form computed inline at a representative grazing angle), and
+  a linear sound-speed gradient. Terrain handled as a staircase that
+  zeros the field below the local ground elevation each range step —
+  simple but captures the dominant "shadow behind hill" effect (test
+  `hill_blocks_field_below_crest` asserts +∞ excess attenuation in the
+  shadow column). Output is excess attenuation (dB) relative to 2D
+  cylindrical free-field reference. Memory bounded by `MAX_GRID_CELLS`
+  (10 M cells). Benchmark `gfpe/solve_100m_30m_500hz`: 374 μs for a
+  21-range × 30-height grid. Reference: Gilbert & Di, JASA 94(4), 1993.
 - **metamaterial** — engineered acoustic materials with frequency-dependent
   effective parameters. Three analytical models — `NegativeStiffness`,
   `NegativeDensity`, `DoublyNegative` — driven by a Drude–Lorentz

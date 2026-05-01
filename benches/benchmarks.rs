@@ -463,6 +463,23 @@ fn bench_dvn_synthesize(c: &mut Criterion) {
     });
 }
 
+fn bench_gfpe_solve_small_grid(c: &mut Criterion) {
+    let terrain = goonj::gfpe::GfpeTerrain::flat(100.0);
+    let config = goonj::gfpe::GfpeConfig {
+        frequency_hz: 500.0,
+        source_height_m: 5.0,
+        max_range_m: 100.0,
+        max_height_m: 30.0,
+        range_step_m: 5.0,
+        height_step_m: 1.0,
+        ground_impedance: goonj::propagation::GroundImpedance::grass(),
+        atmosphere: goonj::gfpe::GfpeAtmosphere::default(),
+    };
+    c.bench_function("gfpe/solve_100m_30m_500hz", |b| {
+        b.iter(|| goonj::gfpe::solve_gfpe(black_box(&terrain), black_box(&config)));
+    });
+}
+
 fn bench_metamaterial_absorption_bands(c: &mut Criterion) {
     let m = goonj::metamaterial::Metamaterial::NegativeStiffness {
         k_eff: goonj::metamaterial::LorentzianResonance {
@@ -509,6 +526,7 @@ criterion_group!(
     bench_analysis_d50,
     bench_suggest_absorption,
     bench_dvn_synthesize,
+    bench_gfpe_solve_small_grid,
     bench_metamaterial_absorption_bands,
 );
 criterion_main!(benches);

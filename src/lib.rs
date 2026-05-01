@@ -46,6 +46,8 @@ pub mod directivity;
 pub mod error;
 /// Feedback Delay Network (FDN) for efficient late reverberation synthesis.
 pub mod fdn;
+/// Green's Function Parabolic Equation outdoor propagation over terrain.
+pub mod gfpe;
 /// Hybrid frequency crossover — blending wave-based and geometric results.
 pub mod hybrid;
 /// Image-source method for exact early specular reflections.
