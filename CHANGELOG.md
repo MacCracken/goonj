@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+- **dark_velvet_noise** — Fagerström et al. 2024 reverb synthesis from
+  sparse stochastic pulse sequences. New module exposes `DvnConfig`,
+  `DecayEnvelope::{Exponential, PiecewiseDb}`, and
+  `synthesize_dvn_ir(&config) -> Vec<f32>`. Supports non-exponential
+  decay shapes (e.g. coupled-room double-slope) via piecewise-linear-dB
+  breakpoints and "dark" tail coloration via a time-varying 1-pole
+  low-pass interpolated from `coloration_initial_cutoff_hz` to
+  `coloration_final_cutoff_hz`. RT60 recovery within the paper's 4%
+  budget (regression test asserts `< 4%`). Benchmark
+  `dvn/synthesize_2s_2khz_density`: 165 μs for a 2-second 48 kHz IR
+  (~290× real-time, ~15× faster than `impulse::generate_ir`).
+
 ## [1.2.1] - 2026-05-01
 
 Dependency bump release. Picks up the **hisab v1.0** stable line (we had

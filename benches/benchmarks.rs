@@ -456,6 +456,13 @@ fn bench_suggest_absorption(c: &mut Criterion) {
     });
 }
 
+fn bench_dvn_synthesize(c: &mut Criterion) {
+    let config = goonj::dark_velvet_noise::DvnConfig::default();
+    c.bench_function("dvn/synthesize_2s_2khz_density", |b| {
+        b.iter(|| goonj::dark_velvet_noise::synthesize_dvn_ir(black_box(&config)));
+    });
+}
+
 criterion_group!(
     benches,
     bench_speed_of_sound,
@@ -486,5 +493,6 @@ criterion_group!(
     bench_is_occluded,
     bench_analysis_d50,
     bench_suggest_absorption,
+    bench_dvn_synthesize,
 );
 criterion_main!(benches);

@@ -32,6 +32,8 @@ pub mod binaural;
 pub mod bridge;
 /// Coupled room acoustics — multi-room energy exchange and double-slope decay.
 pub mod coupled;
+/// Dark Velvet Noise reverb — non-exponential late reverberation from sparse stochastic pulses.
+pub mod dark_velvet_noise;
 /// Edge diffraction loss and occlusion detection (UTD, BTM).
 pub mod diffraction;
 /// Stochastic ray tracing (diffuse rain) for late reverberation tails.

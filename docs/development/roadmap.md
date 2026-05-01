@@ -50,20 +50,28 @@
 
 ## v1.3.0 — Wave-Based Methods + Emerging Algorithms
 
-Pushed back from v1.2.0. Implementable now — algorithms are well-defined with clear references.
-
-### Wave Solvers
-- [ ] **2D FDTD modal solver** — explicit finite-difference time-domain below Schroeder frequency. Textbook algorithm (Botteldooren 1995). Plugs into hybrid crossover interface.
-- [ ] **Digital Waveguide Mesh** — FDTD variant with waveguide interpretation for room simulation. Reference: Wayverb (reuk), Smith (Stanford CCRMA).
+Pushed back from v1.2.0. Batched into a single release — committed per item, shipped together. Algorithms are well-defined with clear references.
 
 ### Reverb Synthesis
-- [ ] **Dark Velvet Noise reverb** — non-exponential decay modeling using sparse stochastic sequences. 4% RT60 error, 50% fewer filters. Reference: Fagerström et al., JAES 72(6), 2024.
+- [x] **Dark Velvet Noise reverb** — non-exponential decay modeling using sparse stochastic sequences. 4% RT60 error, 50% fewer filters. Reference: Fagerström et al., JAES 72(6), 2024.
+
+### Material Extensions
+- [ ] **Acoustic metamaterial types** — frequency-dependent negative-stiffness and negative-density material models for engineered absorbers. Lookup-table approach from manufacturer data.
 
 ### Outdoor Propagation
 - [ ] **GFPE terrain propagation** — Green's Function Parabolic Equation for range-dependent outdoor environments with hills/ridges. Reference: Gilbert & Di (1993).
 
-### Material Extensions
-- [ ] **Acoustic metamaterial types** — frequency-dependent negative-stiffness and negative-density material models for engineered absorbers. Lookup-table approach from manufacturer data.
+### Wave Solvers
+- [ ] **2D FDTD modal solver** — explicit finite-difference time-domain below Schroeder frequency. Textbook algorithm (Botteldooren 1995). Plugs into hybrid crossover interface.
+
+---
+
+## v1.4.0 — Digital Waveguide Mesh
+
+Carved out from v1.3.0 because it's the largest of the wave-based items and warrants its own release cycle. Anything that doesn't make the v1.3.0 cut cascades back here.
+
+### Wave Solvers
+- [ ] **Digital Waveguide Mesh** — FDTD variant with waveguide interpretation for room simulation. Reference: Wayverb (reuk), Smith (Stanford CCRMA).
 
 ---
 

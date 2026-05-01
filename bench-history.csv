@@ -774,3 +774,61 @@ test analysis/d50 ... bench:      35,312 ns/iter (+/- 595)
 
 test analysis/suggest_absorption ... bench:         144 ns/iter (+/- 2)
 
+test propagation/speed_of_sound ... bench:           0 ns/iter (+/- 0)
+
+test impulse/sabine_rt60 ... bench:           0 ns/iter (+/- 0)
+
+test resonance/room_mode ... bench:           1 ns/iter (+/- 0)
+
+test resonance/schroeder_frequency ... bench:           2 ns/iter (+/- 0)
+
+test propagation/doppler_shift ... bench:           1 ns/iter (+/- 0)
+
+test propagation/inverse_square_law ... bench:           0 ns/iter (+/- 0)
+
+test ray/wall_intersection ... bench:           7 ns/iter (+/- 0)
+
+test resonance/all_axial_modes_200hz ... bench:         372 ns/iter (+/- 5)
+
+test ray/trace_single_shoebox ... bench:       2,567 ns/iter (+/- 48)
+
+test ray/trace_100_rays_shoebox ... bench:     217,903 ns/iter (+/- 1,402)
+
+test image_source/shoebox_order_3 ... bench:       4,351 ns/iter (+/- 35)
+
+test image_source/shoebox_order_5 ... bench:      16,031 ns/iter (+/- 392)
+
+test diffuse/1000_rays_shoebox ... bench:   2,437,315 ns/iter (+/- 37,069)
+
+test impulse/generate_ir_shoebox ... bench:   2,447,798 ns/iter (+/- 33,170)
+
+test analysis/c80 ... bench:      33,607 ns/iter (+/- 482)
+
+test analysis/sti ... bench:   3,622,466 ns/iter (+/- 37,771)
+
+test propagation/atmospheric_ray_1000_steps ... bench:      15,534 ns/iter (+/- 276)
+
+test wav/export_48k_2s ... bench:      96,551 ns/iter (+/- 5,879)
+
+test binaural/generate_ir_shoebox ... bench:       6,783 ns/iter (+/- 134)
+
+test ray/trace_bvh_100_walls ... bench:      74,190 ns/iter (+/- 937)
+
+test ray/trace_linear_100_walls ... bench:      47,065 ns/iter (+/- 1,050)
+
+test impulse/eyring_rt60 ... bench:           6 ns/iter (+/- 0)
+
+test impulse/energy_decay_curve ... bench:     203,391 ns/iter (+/- 3,603)
+
+test propagation/ground_reflection ... bench:          12 ns/iter (+/- 0)
+
+test diffraction/edge_loss ... bench:           9 ns/iter (+/- 0)
+
+test diffraction/is_occluded_shoebox ... bench:          34 ns/iter (+/- 0)
+
+test analysis/d50 ... bench:      35,340 ns/iter (+/- 547)
+
+test analysis/suggest_absorption ... bench:         147 ns/iter (+/- 3)
+
+test dvn/synthesize_2s_2khz_density ... bench:     165,046 ns/iter (+/- 3,424)
+
