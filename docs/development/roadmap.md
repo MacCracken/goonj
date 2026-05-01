@@ -54,12 +54,31 @@
 
 ---
 
-## v1.4.0 — Digital Waveguide Mesh
+## v1.4.0 — Digital Waveguide Mesh (MVP)
 
-Carved out from v1.3.0 because it's the largest of the wave-based items and warrants its own release cycle.
+Carved out from v1.3.0 because it's the largest of the wave-based items. Scope intentionally simplified at the top so deferred work can land cleanly across the v1.4.x ladder below.
 
 ### Wave Solvers
-- [ ] **Digital Waveguide Mesh** — FDTD variant with waveguide interpretation for room simulation. Reference: Wayverb (reuk), Smith (Stanford CCRMA).
+- [x] **3D rectilinear Digital Waveguide Mesh — core, rigid walls** — Smith / Van Duyne–Smith K=6 scattering junction on a Cartesian grid. New `src/dwm.rs` with `DwmConfig` / `DwmSource` / `DwmReceiver` / `DwmResult` / `solve_dwm_3d` / `required_dx`. Rigid Neumann walls. Plugs into `hybrid::blend_results` via re-exported `fdtd::band_energies`. (Bite 1 of v1.4.0; absorbing walls land in bite 2.)
+- [ ] **DWM scalar absorbing walls** — uniform absorption from `AcousticMaterial::average_absorption()`; `DwmConfig::with_acoustic_material(&mat)` helper. (Bite 2 of v1.4.0.)
+
+---
+
+## v1.4.x — Deferred-from-v1.4.0 ladder
+
+Each rung is independently shippable. Any rung can be skipped if Cyrius reaches its readiness gate first; the ladder runs only as long as the port isn't ready. No new initiatives outside this list.
+
+### v1.4.1 — Per-wall material assignment
+- [ ] Replace `wall_absorption: f32` with `wall_materials: [AcousticMaterial; 6]` (one per ±x/±y/±z face). Each face pulls its own `average_absorption()`. Mechanical extension; same algorithm.
+
+### v1.4.2 — Per-band frequency-dependent impedance walls
+- [ ] Replace scalar reflection per face with a 1-pole IIR reflection filter, coefficients least-squares-fit to `AcousticMaterial.absorption[band]` across the 8 ISO octave centres. One filter state per wall face. The DWM-over-FDTD design dividend.
+
+### v1.4.3 — Dispersion correction
+- [ ] Frequency pre/post-warp (Savioja IDWM) to compensate the ~5% directional dispersion error near the mesh frequency on the 3D rectilinear lattice.
+
+### v1.4.x+ — Triangular / hexagonal mesh variants (consumer-demand-gated)
+- [ ] Lower-anisotropy mesh topologies. K=12 hexagonal close-packed in 3D. Ship only on demand from a downstream consumer (dhvani, kiran, shruti).
 
 ---
 

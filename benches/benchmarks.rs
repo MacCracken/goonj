@@ -463,6 +463,35 @@ fn bench_dvn_synthesize(c: &mut Criterion) {
     });
 }
 
+fn bench_dwm_solve_small_grid(c: &mut Criterion) {
+    let sample_rate = 22_050_u32;
+    let speed_of_sound = 343.0_f32;
+    let config = goonj::dwm::DwmConfig {
+        sample_rate,
+        dx: goonj::dwm::required_dx(sample_rate, speed_of_sound),
+        speed_of_sound,
+        nx: 30,
+        ny: 25,
+        nz: 20,
+        duration_seconds: 0.05,
+    };
+    let source = goonj::dwm::DwmSource::gaussian_pulse(15, 12, 10, 5, 2.0, 1.0);
+    let receivers = vec![goonj::dwm::DwmReceiver {
+        ix: 20,
+        iy: 12,
+        iz: 10,
+    }];
+    c.bench_function("dwm/solve_30x25x20_50ms", |b| {
+        b.iter(|| {
+            goonj::dwm::solve_dwm_3d(
+                black_box(&config),
+                black_box(&source),
+                black_box(&receivers),
+            )
+        });
+    });
+}
+
 fn bench_fdtd_solve_small_grid(c: &mut Criterion) {
     let config = goonj::fdtd::FdtdConfig {
         sample_rate: 22_050,
@@ -548,6 +577,7 @@ criterion_group!(
     bench_analysis_d50,
     bench_suggest_absorption,
     bench_dvn_synthesize,
+    bench_dwm_solve_small_grid,
     bench_fdtd_solve_small_grid,
     bench_gfpe_solve_small_grid,
     bench_metamaterial_absorption_bands,

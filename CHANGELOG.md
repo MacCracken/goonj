@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+### Added
+- **dwm** — 3D rectilinear Digital Waveguide Mesh per Smith / Van Duyne &
+  Smith. New module exposes `DwmConfig`, `DwmSource` (with `gaussian_pulse`
+  constructor), `DwmReceiver`, `DwmResult`, `solve_dwm_3d`, and
+  `required_dx(sample_rate, c)` helper. Each grid node is a `K = 6`-port
+  scattering junction (±x ±y ±z); outgoing-wave buffers are rotated each
+  step in a `node × K` flat layout. Pressure `p = (2/K)·Σ incoming`,
+  outgoing `out_i = p − in_i`. Rigid Neumann walls implemented by
+  reflecting a node's own outgoing wave back as the incoming wave at
+  boundary faces.
+
+  The 3D rectilinear lattice imposes `Δx = c · Δt · √3`. The solver
+  validates the user's `dx` against this — `tracing::warn` if deviation
+  exceeds 1%, empty result if it exceeds 10%. Source is transparent
+  (additive into junction pressure); a hybrid-crossover convenience
+  `dwm::band_energies` re-exports `fdtd::band_energies` so DWM plugs into
+  `hybrid::blend_results` exactly like FDTD does.
+
+  Modal-frequency validation: a 1 m³ rigid box's first axial mode at
+  c/(2L) ≈ 171.5 Hz lands in the 63–500 Hz octave bands as expected
+  (test uses a band-limited Gaussian to avoid pumping the lossless
+  mesh-frequency dispersion modes). Memory bounded by
+  `MAX_GRID_CELLS = 4·10⁶`. Benchmark `dwm/solve_30x25x20_50ms`: 76 ms
+  for a 15 000-node grid × 1102 time steps at 22.05 kHz (~11 GFLOPS
+  effective). References: Smith (Stanford CCRMA), Van Duyne & Smith
+  ICMC 1993, Wayverb (reuk).
+
 ## [1.3.0] - 2026-05-01
 
 Wave-based methods + emerging algorithms. Four new modules — Dark Velvet

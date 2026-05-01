@@ -42,6 +42,8 @@ pub mod diffuse;
 pub mod diffusion;
 /// Source directivity patterns (omnidirectional, cardioid, tabulated balloon data).
 pub mod directivity;
+/// 3D rectilinear Digital Waveguide Mesh — wave-based room acoustics (Smith / Van Duyne).
+pub mod dwm;
 /// Error types for the goonj crate.
 pub mod error;
 /// Feedback Delay Network (FDN) for efficient late reverberation synthesis.
