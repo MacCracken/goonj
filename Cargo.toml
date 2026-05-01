@@ -1,6 +1,6 @@
 [package]
 name = "goonj"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2024"
 rust-version = "1.89"
 license = "GPL-3.0-only"
@@ -24,17 +24,17 @@ soorat-compat = []
 underwater = []
 
 [dependencies]
-hisab = "0.24"
-serde = { version = "1", features = ["derive"] }
-thiserror = "2"
-tracing = "0.1"
+hisab = "1.4"
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.18"
+tracing = "0.1.44"
 
 # Optional
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"], optional = true }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
-serde_json = "1"
+criterion = { version = "0.8", features = ["html_reports"] }
+serde_json = "1.0.149"
 
 [[bench]]
 name = "benchmarks"

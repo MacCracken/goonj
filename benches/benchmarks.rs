@@ -1,5 +1,6 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use hisab::Vec3;
+use std::hint::black_box;
 
 fn bench_speed_of_sound(c: &mut Criterion) {
     c.bench_function("propagation/speed_of_sound", |b| {

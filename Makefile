@@ -1,6 +1,6 @@
 .PHONY: check fmt clippy test audit deny bench coverage build doc clean
 
-check: fmt clippy test audit
+check: fmt clippy test audit deny doc
 
 fmt:
 	cargo fmt --all -- --check

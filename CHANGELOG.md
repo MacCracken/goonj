@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-05-01
+
+Dependency bump release. Picks up the **hisab v1.0** stable line (we had
+been running on the pre-v1 `0.24` series since project inception) and
+brings the rest of the supply chain to current. Added supply-chain
+checks to the cleanliness gates.
+
+### Changed
+- **deps** — `hisab 0.24 → 1.4` (first stable major). No goonj-side API
+  changes required: every `hisab::Vec3`, `hisab::geo::Bvh`, and
+  `hisab::geo::Ray` call site recompiles unchanged against v1.4.
+- **deps** — `criterion 0.5 → 0.8`. Replaced the now-deprecated
+  `criterion::black_box` import with `std::hint::black_box` in
+  `benches/benchmarks.rs` (criterion 0.8 removes the re-export).
+- **deps** — pinned minimum patch versions: `serde 1.0.228`,
+  `thiserror 2.0.18`, `tracing 0.1.44`, `tracing-subscriber 0.3.23`,
+  `serde_json 1.0.149`. No behaviour change; tightens the floor so
+  `cargo audit` runs against a known-good baseline.
+
+### Added
+- **CI/dev gates** — `cargo audit` and `cargo deny check` are now part
+  of the documented P(-1) and Working-Loop cleanliness sweeps. Both run
+  clean on the new lockfile (91 transitive crates, 0 advisories,
+  licenses ok, bans ok, sources ok). The existing `deny.toml` allowlist
+  (GPL-3.0-only, MIT, Apache-2.0, Unicode-3.0) covers the v1.4 hisab
+  tree without modification.
+
+### Stats
+- 411 tests passing (404 unit + 6 integration + 1 doc), 28 benchmarks
+- All benchmarks hold within noise vs. v1.2.0 (e.g. `analysis/sti`
+  3,624,973 ns → 3,621,627 ns) — no regression from the dep bump
+- All six gates clean: `cargo fmt --check`,
+  `cargo clippy --all-features --all-targets -- -D warnings`,
+  `cargo test --all-features`, `cargo audit`, `cargo deny check`,
+  `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
+
 ## [1.2.0] - 2026-05-01
 
 Final P(-1) scaffold-hardening pass before opening v1.3 feature work. No

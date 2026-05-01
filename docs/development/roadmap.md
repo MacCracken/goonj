@@ -2,13 +2,13 @@
 
 ## Current Release
 
-**v1.2.0** — Final P(-1) hardening pass. No new features; correctness + performance only.
+**v1.2.1** — Dependency bump. Picks up the hisab v1.0 stable line; supply-chain checks added to the gate.
 
+- hisab 0.24 → 1.4 (no source changes required)
+- criterion 0.5 → 0.8 (deprecated `criterion::black_box` migrated to `std::hint::black_box`)
+- `cargo audit` + `cargo deny check` now part of the cleanliness sweep — both clean
+- Bench numbers hold within noise vs. v1.2.0; no regression from the dep bump
 - 411 tests, 28 benchmarks, 30 modules
-- STI per-band loop hoisted: 28.75 ms → 3.62 ms (−87%, ~7.9× faster) with no behavioural change
-- Diffusion solver guards against `speed_of_sound <= 0.0` (+ regression test)
-- `bench-history.sh` now compiles feature-gated benchmarks correctly
-- All formulas remain verified against ISO/IEC and peer-reviewed sources
 
 ---
 
@@ -39,6 +39,12 @@
 - Removed dead `_surface_area` binding in dhvani integration.
 - `bench-history.sh`: pass `--all-features` so wav/binaural benches compile.
 - No new public API; closes the P(-1) cycle ahead of v1.3 feature work.
+
+### v1.2.1 — Dependency Bump
+- hisab `0.24 → 1.4` (first stable major; no source changes required).
+- criterion `0.5 → 0.8`; bench file migrated from `criterion::black_box` to `std::hint::black_box`.
+- Patch-version floors pinned: serde 1.0.228, thiserror 2.0.18, tracing 0.1.44, tracing-subscriber 0.3.23, serde_json 1.0.149.
+- `cargo audit` + `cargo deny check` added to the documented cleanliness sweep — both clean (91 crates, 0 advisories).
 
 ---
 
