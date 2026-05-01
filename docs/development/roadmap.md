@@ -62,7 +62,7 @@ Pushed back from v1.2.0. Batched into a single release — committed per item, s
 - [x] **GFPE terrain propagation** — Green's Function Parabolic Equation for range-dependent outdoor environments with hills/ridges. Reference: Gilbert & Di (1993).
 
 ### Wave Solvers
-- [ ] **2D FDTD modal solver** — explicit finite-difference time-domain below Schroeder frequency. Textbook algorithm (Botteldooren 1995). Plugs into hybrid crossover interface.
+- [x] **2D FDTD modal solver** — explicit finite-difference time-domain below Schroeder frequency. Textbook algorithm (Botteldooren 1995). Plugs into hybrid crossover interface.
 
 ---
 

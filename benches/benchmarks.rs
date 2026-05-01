@@ -463,6 +463,28 @@ fn bench_dvn_synthesize(c: &mut Criterion) {
     });
 }
 
+fn bench_fdtd_solve_small_grid(c: &mut Criterion) {
+    let config = goonj::fdtd::FdtdConfig {
+        sample_rate: 22_050,
+        dx: 0.05,
+        speed_of_sound: 343.0,
+        nx: 40,
+        ny: 40,
+        duration_seconds: 0.05,
+    };
+    let source = goonj::fdtd::FdtdSource::gaussian_pulse(20, 20, 5, 2.0, 1.0);
+    let receivers = vec![goonj::fdtd::FdtdReceiver { ix: 30, iy: 20 }];
+    c.bench_function("fdtd/solve_40x40_50ms", |b| {
+        b.iter(|| {
+            goonj::fdtd::solve_fdtd_2d(
+                black_box(&config),
+                black_box(&source),
+                black_box(&receivers),
+            )
+        });
+    });
+}
+
 fn bench_gfpe_solve_small_grid(c: &mut Criterion) {
     let terrain = goonj::gfpe::GfpeTerrain::flat(100.0);
     let config = goonj::gfpe::GfpeConfig {
@@ -526,6 +548,7 @@ criterion_group!(
     bench_analysis_d50,
     bench_suggest_absorption,
     bench_dvn_synthesize,
+    bench_fdtd_solve_small_grid,
     bench_gfpe_solve_small_grid,
     bench_metamaterial_absorption_bands,
 );

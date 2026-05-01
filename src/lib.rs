@@ -46,6 +46,8 @@ pub mod directivity;
 pub mod error;
 /// Feedback Delay Network (FDN) for efficient late reverberation synthesis.
 pub mod fdn;
+/// 2D FDTD modal solver for low-frequency room acoustics (Botteldooren 1995).
+pub mod fdtd;
 /// Green's Function Parabolic Equation outdoor propagation over terrain.
 pub mod gfpe;
 /// Hybrid frequency crossover — blending wave-based and geometric results.

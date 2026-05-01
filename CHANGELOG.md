@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Added
+- **fdtd** — 2D explicit finite-difference time-domain solver per
+  Botteldooren 1995. New types: `FdtdConfig`, `FdtdSource` (with
+  `gaussian_pulse(...)` constructor), `FdtdReceiver`, `FdtdResult`
+  (per-receiver pressure traces + final pressure-field snapshot).
+  Standard 5-point Laplacian + leapfrog update, rigid (Neumann) walls
+  via single-row mirror. CFL `c·Δt/Δx ≤ 1/√2` enforced — solver
+  early-returns empty on violation rather than diverging silently.
+  Memory bounded by `MAX_GRID_CELLS = 4·10⁶` and `MAX_TIME_STEPS = 10⁶`.
+  Plugs into `hybrid::blend_results` via the new `band_energies(signal,
+  sample_rate)` helper, which evaluates Goertzel at each ISO octave
+  centre to yield a `[f32; NUM_BANDS]` energy vector. Modal-frequency
+  validation: a 2 m × 2 m rigid box's first axial mode (c/(2L) ≈ 86 Hz)
+  lands in the 63–250 Hz bands as expected. Benchmark
+  `fdtd/solve_40x40_50ms`: 1.13 ms (40×40 grid × 1102 time steps at
+  22.05 kHz). Reference: Botteldooren, JASA 98(6), 1995.
 - **gfpe** — Green's Function Parabolic Equation outdoor solver per Gilbert
   & Di 1993. Marches range by Δr in a 2D vertical (range × height) slice
   using direct (O(N²)) convolution against the parabolic-equation
