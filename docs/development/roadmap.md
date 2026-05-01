@@ -2,13 +2,13 @@
 
 ## Current Release
 
-**v1.2.1** — Dependency bump. Picks up the hisab v1.0 stable line; supply-chain checks added to the gate.
+**v1.3.0** — Wave-based methods + emerging algorithms. Four new modules: Dark Velvet Noise reverb, acoustic metamaterials, GFPE outdoor terrain propagation, 2D FDTD modal solver.
 
-- hisab 0.24 → 1.4 (no source changes required)
-- criterion 0.5 → 0.8 (deprecated `criterion::black_box` migrated to `std::hint::black_box`)
-- `cargo audit` + `cargo deny check` now part of the cleanliness sweep — both clean
-- Bench numbers hold within noise vs. v1.2.0; no regression from the dep bump
-- 411 tests, 28 benchmarks, 30 modules
+- 479 tests (+52), 32 benchmarks (+4), 33 modules (+4)
+- All four v1.3.0 roadmap items shipped, each as its own commit through the work loop
+- Digital Waveguide Mesh carved out into v1.4.0 (next release)
+- All formulas validated against peer-reviewed references (Botteldooren 1995, Gilbert & Di 1993, Fagerström 2024, Liu/Fang/Yang/Lee for metamaterials)
+- All six cleanliness gates clean (fmt, clippy, test, audit, deny, doc)
 
 ---
 
@@ -46,29 +46,17 @@
 - Patch-version floors pinned: serde 1.0.228, thiserror 2.0.18, tracing 0.1.44, tracing-subscriber 0.3.23, serde_json 1.0.149.
 - `cargo audit` + `cargo deny check` added to the documented cleanliness sweep — both clean (91 crates, 0 advisories).
 
----
-
-## v1.3.0 — Wave-Based Methods + Emerging Algorithms
-
-Pushed back from v1.2.0. Batched into a single release — committed per item, shipped together. Algorithms are well-defined with clear references.
-
-### Reverb Synthesis
-- [x] **Dark Velvet Noise reverb** — non-exponential decay modeling using sparse stochastic sequences. 4% RT60 error, 50% fewer filters. Reference: Fagerström et al., JAES 72(6), 2024.
-
-### Material Extensions
-- [x] **Acoustic metamaterial types** — frequency-dependent negative-stiffness and negative-density material models for engineered absorbers. Lookup-table approach from manufacturer data.
-
-### Outdoor Propagation
-- [x] **GFPE terrain propagation** — Green's Function Parabolic Equation for range-dependent outdoor environments with hills/ridges. Reference: Gilbert & Di (1993).
-
-### Wave Solvers
-- [x] **2D FDTD modal solver** — explicit finite-difference time-domain below Schroeder frequency. Textbook algorithm (Botteldooren 1995). Plugs into hybrid crossover interface.
+### v1.3.0 — Wave-Based Methods + Emerging Algorithms
+- **dark_velvet_noise** — Fagerström 2024 sparse-pulse late-reverb synthesis. Exponential or piecewise-dB decay envelope, time-varying low-pass coloration. RT60 within 4% of target. 165 μs for a 2 s 48 kHz IR (~290× real-time).
+- **metamaterial** — engineered acoustic materials with Drude–Lorentz `LorentzianResonance` (`NegativeStiffness` / `NegativeDensity` / `DoublyNegative`) plus a `LookupTable` for manufacturer data. 8-band absorption from bulk-impedance approximation. 211 ns per band sweep.
+- **gfpe** — Gilbert & Di 1993 outdoor parabolic-equation solver over range-dependent terrain. Linear sound-speed gradient + Miki ground impedance + staircase terrain. 374 μs for a 21 × 30 grid at 500 Hz.
+- **fdtd** — Botteldooren 1995 2D FDTD modal solver with rigid Neumann walls, CFL-enforced time step, Goertzel `band_energies` helper for `hybrid::blend_results` integration. 1.13 ms for a 40 × 40 grid × 1102 steps at 22.05 kHz.
 
 ---
 
 ## v1.4.0 — Digital Waveguide Mesh
 
-Carved out from v1.3.0 because it's the largest of the wave-based items and warrants its own release cycle. Anything that doesn't make the v1.3.0 cut cascades back here.
+Carved out from v1.3.0 because it's the largest of the wave-based items and warrants its own release cycle.
 
 ### Wave Solvers
 - [ ] **Digital Waveguide Mesh** — FDTD variant with waveguide interpretation for room simulation. Reference: Wayverb (reuk), Smith (Stanford CCRMA).
@@ -87,16 +75,6 @@ Theory not proven at production quality, or requires infrastructure (ML runtimes
 | **Non-linear propagation (Burgers)** | Very specialized (>140 dB SPL) — no downstream consumer needs it | kiran/joshua explosion audio or sonic boom simulation demand |
 | **BEM (Boundary Element Method)** | Massive engineering effort (complex linear system solver, surface meshing) — separate crate scale | Rust BEM library emerges, or consumer demand justifies the investment |
 | **Full structural-acoustic FEM coupling** | Craig-Bampton substructuring needs a dedicated FEM solver beyond impetus scope | impetus grows elastic FEM, or a Rust FEM crate appears |
-
----
-
-## Cross-Crate Bridges
-
-- [ ] `bridge.rs` module — primitive-value conversions for cross-crate acoustics (no deps on sibling crates)
-- [ ] **pavan bridge**: wind speed (m/s) → outdoor sound propagation attenuation factor; Mach number → Doppler shift
-- [ ] **badal bridge**: humidity (%) → air absorption coefficients; temperature (°C) → speed of sound
-- [ ] **ushma bridge**: temperature (°C) → material absorption coefficient scaling
-- [ ] **bijli bridge**: EM frequency (Hz) → acoustic resonance coupling factor (vibroacoustics)
 
 ---
 

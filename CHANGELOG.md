@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-05-01
+
+Wave-based methods + emerging algorithms. Four new modules — Dark Velvet
+Noise reverb, acoustic metamaterials, GFPE outdoor terrain propagation,
+and a 2D FDTD modal solver — each landed as its own commit through the
+work loop. Digital Waveguide Mesh was carved out into v1.4.0.
+
 ### Added
 - **fdtd** — 2D explicit finite-difference time-domain solver per
   Botteldooren 1995. New types: `FdtdConfig`, `FdtdSource` (with
@@ -61,6 +68,19 @@
   budget (regression test asserts `< 4%`). Benchmark
   `dvn/synthesize_2s_2khz_density`: 165 μs for a 2-second 48 kHz IR
   (~290× real-time, ~15× faster than `impulse::generate_ir`).
+
+### Stats
+- 33 modules (4 new), 32 benchmarks (4 new), **479 tests** passing
+  (472 unit + 6 integration + 1 doc) — up from 427 at v1.2.1
+- All formulas validated against peer-reviewed references (Botteldooren
+  1995, Gilbert & Di 1993, Liu 2000 / Fang 2006 / Yang 2008 / Lee 2010,
+  Fagerström 2024)
+- All six gates clean: `cargo fmt --check`,
+  `cargo clippy --all-features --all-targets -- -D warnings`,
+  `cargo test --all-features`, `cargo audit`, `cargo deny check`,
+  `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
+- No regressions on existing benches — STI 3.62 ms, image-source/diffuse
+  rain / IR generation all within noise of v1.2.1
 
 ## [1.2.1] - 2026-05-01
 
