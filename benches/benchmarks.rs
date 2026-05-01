@@ -474,6 +474,7 @@ fn bench_dwm_solve_small_grid(c: &mut Criterion) {
         ny: 25,
         nz: 20,
         duration_seconds: 0.05,
+        wall_absorption: 0.0,
     };
     let source = goonj::dwm::DwmSource::gaussian_pulse(15, 12, 10, 5, 2.0, 1.0);
     let receivers = vec![goonj::dwm::DwmReceiver {

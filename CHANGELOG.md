@@ -3,6 +3,20 @@
 ## [Unreleased]
 
 ### Added
+- **dwm: scalar absorbing walls** — `DwmConfig` gains a `wall_absorption: f32`
+  field (`0.0` = rigid Neumann, `1.0` = fully absorbing) applied uniformly
+  at every face. Boundary update now scales the reflected outgoing wave
+  by `R = √(1 − α)` so reflected-energy fraction equals `1 − α` per the
+  standard acoustics convention. New builder helper
+  `DwmConfig::with_acoustic_material(&AcousticMaterial)` pulls
+  `material.average_absorption()` (mean of the 8 ISO octave-band
+  coefficients) and clamps to `[0, 1]`. Out-of-range `wall_absorption`
+  values are clamped silently. Tests confirm absorbing walls reduce
+  field energy vs. rigid (carpet < concrete < rigid by RT60-ordering).
+  No bench regression — boundary scaling is one multiply per boundary
+  cell, ~5% of nodes. (Bite 2 of v1.4.0; v1.4.1 will replace the scalar
+  with `[AcousticMaterial; 6]` for per-wall material assignment.)
+
 - **dwm** — 3D rectilinear Digital Waveguide Mesh per Smith / Van Duyne &
   Smith. New module exposes `DwmConfig`, `DwmSource` (with `gaussian_pulse`
   constructor), `DwmReceiver`, `DwmResult`, `solve_dwm_3d`, and

@@ -59,8 +59,8 @@
 Carved out from v1.3.0 because it's the largest of the wave-based items. Scope intentionally simplified at the top so deferred work can land cleanly across the v1.4.x ladder below.
 
 ### Wave Solvers
-- [x] **3D rectilinear Digital Waveguide Mesh — core, rigid walls** — Smith / Van Duyne–Smith K=6 scattering junction on a Cartesian grid. New `src/dwm.rs` with `DwmConfig` / `DwmSource` / `DwmReceiver` / `DwmResult` / `solve_dwm_3d` / `required_dx`. Rigid Neumann walls. Plugs into `hybrid::blend_results` via re-exported `fdtd::band_energies`. (Bite 1 of v1.4.0; absorbing walls land in bite 2.)
-- [ ] **DWM scalar absorbing walls** — uniform absorption from `AcousticMaterial::average_absorption()`; `DwmConfig::with_acoustic_material(&mat)` helper. (Bite 2 of v1.4.0.)
+- [x] **3D rectilinear Digital Waveguide Mesh — core, rigid walls** — Smith / Van Duyne–Smith K=6 scattering junction on a Cartesian grid. New `src/dwm.rs` with `DwmConfig` / `DwmSource` / `DwmReceiver` / `DwmResult` / `solve_dwm_3d` / `required_dx`. Rigid Neumann walls. Plugs into `hybrid::blend_results` via re-exported `fdtd::band_energies`. (Bite 1 of v1.4.0.)
+- [x] **DWM scalar absorbing walls** — uniform absorption coefficient on `DwmConfig`; boundary reflection `R = √(1 − α)`; `DwmConfig::with_acoustic_material(&mat)` builder helper. (Bite 2 of v1.4.0.)
 
 ---
 
