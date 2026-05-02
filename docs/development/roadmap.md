@@ -69,7 +69,7 @@
 Each rung is independently shippable. Any rung can be skipped if Cyrius reaches its readiness gate first; the ladder runs only as long as the port isn't ready. No new initiatives outside this list.
 
 ### v1.4.3 — Dispersion correction
-- [ ] Frequency pre/post-warp (Savioja IDWM) to compensate the ~5% directional dispersion error near the mesh frequency on the 3D rectilinear lattice.
+- [x] Dispersion characterization helpers `mesh_frequency` and `dispersion_factor` for the 3D rectilinear lattice + a 2-tap FIR `DispersionCorrection` calibrated to boost the half-mesh frequency by a configurable amount (default 5%) without DC gain change. First-order only; paper-faithful Savioja IDWM phase equalization deferred until consumer demand.
 
 ### v1.4.x+ — Triangular / hexagonal mesh variants (consumer-demand-gated)
 - [ ] Lower-anisotropy mesh topologies. K=12 hexagonal close-packed in 3D. Ship only on demand from a downstream consumer (dhvani, kiran, shruti).

@@ -20,9 +20,9 @@
 //! specific FDTD scheme — but the waveguide formalism makes per-band
 //! impedance boundaries and non-rectilinear topologies a clean extension
 //! rather than a structural rewrite. This module ships the 3D rectilinear
-//! variant with per-wall materials and per-band IIR boundary filtering;
-//! dispersion correction and non-rectilinear topologies are planned as
-//! later v1.4.x rungs (see `docs/development/roadmap.md`).
+//! variant with per-wall materials, per-band IIR boundary filtering, and
+//! a coarse first-order dispersion correction; non-rectilinear topologies
+//! remain demand-gated (see `docs/development/roadmap.md`).
 //!
 //! ## Sound speed and grid spacing
 //!
@@ -550,6 +550,152 @@ pub fn required_dx(sample_rate: u32, speed_of_sound: f32) -> f32 {
 #[inline]
 pub fn band_energies(signal: &[f32], sample_rate: u32) -> [f32; NUM_BANDS] {
     crate::fdtd::band_energies(signal, sample_rate)
+}
+
+// ---------------------------------------------------------------------------
+// Dispersion characterization and correction (Savioja-IDWM-style, post-process)
+// ---------------------------------------------------------------------------
+//
+// The 3D rectilinear DWM has a known direction-dependent phase-velocity error:
+// waves at high frequencies propagate slightly slow on axis-aligned paths, with
+// the deviation growing toward the mesh frequency `f_mesh = c/(2·Δx)`. The
+// helpers below let callers (a) characterize the error, and (b) apply a coarse
+// 2-tap FIR post-process correction to the receiver signal that boosts the
+// upper octaves by ~5% at the half-mesh point with no DC gain change.
+//
+// This is a *first-order* correction. A paper-faithful Savioja IDWM phase-
+// equalizer would use a longer all-pass IIR — out of scope for v1.4.3 unless a
+// downstream consumer needs it. The characterization functions below are
+// sufficient for callers who want to design their own corrections.
+
+/// Mesh frequency `f_mesh = c / (2·Δx)` for the given DWM configuration —
+/// the upper limit of usable simulation bandwidth. Returns `0.0` if `dx` is
+/// non-positive.
+#[must_use]
+#[inline]
+pub fn mesh_frequency(config: &DwmConfig) -> f32 {
+    if config.dx <= 0.0 {
+        return 0.0;
+    }
+    config.speed_of_sound / (2.0 * config.dx)
+}
+
+/// Dispersion factor `f_sim / f_true` for axis-aligned propagation in the
+/// 3D rectilinear DWM. Returns `1.0` at DC, drops below 1.0 as `f` approaches
+/// the mesh frequency, and `0.0` above it. Returns `1.0` for invalid input
+/// (degenerate configs, non-positive frequency).
+///
+/// Derivation: the on-axis dispersion relation
+/// `sin(ω_sim·Δt/2) = sin(ω_true·Δt·√3/2) / √3`
+/// inverts to `ω_sim = (2/Δt)·arcsin(sin(ω_true·Δt·√3/2)/√3)`. Above the
+/// mesh limit the inner sine exceeds √3 and the relation has no real
+/// solution.
+#[must_use]
+pub fn dispersion_factor(config: &DwmConfig, frequency_hz: f32) -> f32 {
+    if frequency_hz <= 0.0 || config.sample_rate == 0 || config.speed_of_sound <= 0.0 {
+        return 1.0;
+    }
+    // Above the mesh frequency, the lattice can't represent the wavenumber
+    // (axis-aligned k > π/Δx) — report 0 as "out of range".
+    if frequency_hz >= mesh_frequency(config) {
+        return 0.0;
+    }
+    let dt = 1.0 / config.sample_rate as f32;
+    let omega_true = std::f32::consts::TAU * frequency_hz;
+    let arg = omega_true * dt * SQRT_3 / 2.0;
+    let sin_arg = (arg.sin() / SQRT_3).clamp(-1.0, 1.0);
+    let omega_sim = 2.0 * sin_arg.asin() / dt;
+    if omega_true.abs() < f32::EPSILON {
+        return 1.0;
+    }
+    omega_sim / omega_true
+}
+
+/// Coarse first-order dispersion-correction post-process: a 2-tap FIR
+/// `y[n] = b0·x[n] + b1·x[n−1]` calibrated to keep DC gain at 1.0 and boost
+/// magnitude by `target_boost` at the half-mesh frequency (`f_mesh / 2`).
+/// Above the half-mesh point the boost grows monotonically, but DWM doesn't
+/// resolve those frequencies cleanly anyway.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DispersionCorrection {
+    /// Feedforward coefficient on `x[n]`.
+    pub b0: f32,
+    /// Feedforward coefficient on `x[n−1]`.
+    pub b1: f32,
+}
+
+impl DispersionCorrection {
+    /// Default boost target — `1.05` at the half-mesh frequency.
+    pub const DEFAULT_BOOST: f32 = 1.05;
+
+    /// Calibrate the FIR for the given `DwmConfig` so that the boost at
+    /// `f_mesh / 2` matches `boost`. Use `boost = 1.0` to disable correction.
+    #[must_use]
+    pub fn calibrated(config: &DwmConfig, boost: f32) -> Self {
+        let f_mesh = mesh_frequency(config);
+        if f_mesh <= 0.0 || config.sample_rate == 0 {
+            return Self::passthrough();
+        }
+        // Target angular frequency in normalized rad/sample.
+        let omega_target = std::f32::consts::TAU * (0.5 * f_mesh) / config.sample_rate as f32;
+        // Constraint 1: |H(0)|² = 1 ⇒ b0 + b1 = 1 (taking real coeffs and
+        // requiring positive-DC gain).
+        // Constraint 2: |H(ω_t)|² = boost² where
+        //   |H(ω)|² = b0² + 2·b0·b1·cos(ω) + b1² = 1 + 2·b0·b1·(cos(ω) − 1).
+        // Substituting b1 = 1 − b0 and solving for b0:
+        //   b0·(1 − b0) = (boost² − 1) / (2·(cos(ω_t) − 1))
+        // gives a quadratic with two real roots; pick the one closer to 1
+        // (the trivial passthrough root is b0 = 1, b1 = 0).
+        let cos_t = omega_target.cos();
+        let denom = 2.0 * (cos_t - 1.0); // negative for ω_t in (0, π)
+        if denom.abs() < f32::EPSILON {
+            return Self::passthrough();
+        }
+        let target_sq = boost * boost;
+        let rhs = (target_sq - 1.0) / denom;
+        // Solve b0² − b0 + rhs = 0 ⇒ b0 = (1 ± √(1 − 4·rhs)) / 2.
+        let disc = 1.0 - 4.0 * rhs;
+        if disc < 0.0 {
+            return Self::passthrough();
+        }
+        let root = disc.sqrt();
+        // Larger root gives the meaningful (non-trivial) filter.
+        let b0 = (1.0 + root) * 0.5;
+        let b1 = 1.0 - b0;
+        Self { b0, b1 }
+    }
+
+    /// Calibrate at the default `1.05` boost.
+    #[must_use]
+    #[inline]
+    pub fn for_config(config: &DwmConfig) -> Self {
+        Self::calibrated(config, Self::DEFAULT_BOOST)
+    }
+
+    /// Identity filter — leaves the signal unchanged.
+    #[must_use]
+    #[inline]
+    pub fn passthrough() -> Self {
+        Self { b0: 1.0, b1: 0.0 }
+    }
+
+    /// Apply the FIR in-place. Iterates backwards so the input sample
+    /// `x[i−1]` isn't clobbered by the just-computed `y[i]`.
+    pub fn apply(&self, signal: &mut [f32]) {
+        if signal.is_empty() {
+            return;
+        }
+        for i in (1..signal.len()).rev() {
+            signal[i] = self.b0 * signal[i] + self.b1 * signal[i - 1];
+        }
+        signal[0] *= self.b0;
+    }
+}
+
+impl Default for DispersionCorrection {
+    fn default() -> Self {
+        Self::passthrough()
+    }
 }
 
 #[cfg(test)]
@@ -1119,5 +1265,143 @@ mod tests {
             "carpet (high α) should retain less energy than concrete (low α): \
              carpet={e_carpet}, concrete={e_concrete}"
         );
+    }
+
+    // --- Dispersion correction (v1.4.3) ---
+
+    #[test]
+    fn mesh_frequency_at_standard_params() {
+        // c=343, dx ≈ 0.02694 ⇒ f_mesh ≈ 6364 Hz
+        let c = small_config();
+        let f = mesh_frequency(&c);
+        assert!(
+            (f - 6364.0).abs() < 50.0,
+            "mesh frequency should be ~6364 Hz at standard params, got {f}"
+        );
+    }
+
+    #[test]
+    fn mesh_frequency_zero_dx_returns_zero() {
+        let mut c = small_config();
+        c.dx = 0.0;
+        assert_eq!(mesh_frequency(&c), 0.0);
+    }
+
+    #[test]
+    fn dispersion_factor_at_dc_is_one() {
+        let c = small_config();
+        let factor = dispersion_factor(&c, 0.0);
+        assert!((factor - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn dispersion_factor_decreases_with_frequency() {
+        let c = small_config();
+        let f_mesh = mesh_frequency(&c);
+        let mid = dispersion_factor(&c, 0.25 * f_mesh);
+        let near = dispersion_factor(&c, 0.75 * f_mesh);
+        assert!(
+            mid > near,
+            "dispersion factor should decrease toward mesh frequency: \
+             quarter-mesh={mid}, three-quarter-mesh={near}"
+        );
+        assert!(
+            mid < 1.0,
+            "should be slightly below 1.0 at f > 0, got {mid}"
+        );
+        assert!(
+            mid > 0.9,
+            "shouldn't drop below 90% at quarter-mesh, got {mid}"
+        );
+    }
+
+    #[test]
+    fn dispersion_factor_above_mesh_is_zero() {
+        let c = small_config();
+        let f_mesh = mesh_frequency(&c);
+        // Just above the mesh frequency the dispersion relation has no
+        // real solution — we report 0 to signal "out of range".
+        assert_eq!(dispersion_factor(&c, 1.5 * f_mesh), 0.0);
+    }
+
+    #[test]
+    fn dispersion_correction_passthrough_is_identity() {
+        let dc = DispersionCorrection::passthrough();
+        let mut sig = vec![1.0_f32, 2.0, 3.0, 4.0];
+        let original = sig.clone();
+        dc.apply(&mut sig);
+        for (a, b) in sig.iter().zip(original.iter()) {
+            assert!((a - b).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn dispersion_correction_dc_gain_is_unity() {
+        let c = small_config();
+        let dc = DispersionCorrection::for_config(&c);
+        // |H(0)| = b0 + b1 should be 1.0
+        assert!((dc.b0 + dc.b1 - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn dispersion_correction_boosts_high_freq() {
+        let c = small_config();
+        let dc = DispersionCorrection::calibrated(&c, 1.10);
+        // Generate a tone at f_mesh/2 and verify amplitude grows.
+        let f_mesh = mesh_frequency(&c);
+        let f_target = 0.5 * f_mesh;
+        let sample_rate = c.sample_rate as f32;
+        let n = (sample_rate * 0.5) as usize; // 0.5 s buffer
+        let mut sig: Vec<f32> = (0..n)
+            .map(|i| (std::f32::consts::TAU * f_target * i as f32 / sample_rate).sin())
+            .collect();
+        let energy_before: f32 = sig.iter().map(|s| s * s).sum();
+        dc.apply(&mut sig);
+        let energy_after: f32 = sig.iter().map(|s| s * s).sum();
+        let ratio = (energy_after / energy_before).sqrt();
+        assert!(
+            (ratio - 1.10).abs() < 0.05,
+            "amplitude ratio at f_mesh/2 should match boost (1.10), got {ratio}"
+        );
+    }
+
+    #[test]
+    fn dispersion_correction_preserves_dc_signal() {
+        let c = small_config();
+        let dc = DispersionCorrection::for_config(&c);
+        let mut sig = vec![5.0_f32; 100];
+        dc.apply(&mut sig);
+        // After the first sample (which has implicit x[-1]=0), the DC
+        // response is steady-state |H(0)| = 1.0.
+        for &s in sig.iter().skip(1) {
+            assert!(
+                (s - 5.0).abs() < 0.01,
+                "DC signal should pass through unchanged after warm-up, got {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn dispersion_correction_empty_signal_no_panic() {
+        let dc = DispersionCorrection::for_config(&small_config());
+        let mut sig: Vec<f32> = vec![];
+        dc.apply(&mut sig); // should not panic
+    }
+
+    #[test]
+    fn dispersion_correction_single_sample() {
+        let dc = DispersionCorrection { b0: 1.2, b1: -0.2 };
+        let mut sig = vec![3.0_f32];
+        dc.apply(&mut sig);
+        // Single sample: y[0] = b0·x[0] (x[-1] = 0 implicit)
+        assert!((sig[0] - 3.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn dispersion_correction_serialization_roundtrip() {
+        let dc = DispersionCorrection::calibrated(&small_config(), 1.08);
+        let json = serde_json::to_string(&dc).unwrap();
+        let back: DispersionCorrection = serde_json::from_str(&json).unwrap();
+        assert_eq!(dc, back);
     }
 }

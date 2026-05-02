@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Added
+- **dwm: dispersion characterization + first-order correction** —
+  three new public items in `goonj::dwm`:
+  - `mesh_frequency(&DwmConfig) -> f32` — the `c/(2·Δx)` upper-limit
+    frequency above which the 3D rectilinear lattice can't resolve waves.
+  - `dispersion_factor(&DwmConfig, frequency_hz) -> f32` — returns
+    `f_sim / f_true` for axis-aligned propagation by inverting the
+    dispersion relation `sin(ω_sim·Δt/2) = sin(ω_true·Δt·√3/2) / √3`;
+    `1.0` at DC, drops monotonically toward the mesh frequency, `0.0`
+    above it.
+  - `DispersionCorrection { b0, b1 }` — a 2-tap FIR
+    `y[n] = b0·x[n] + b1·x[n−1]` calibrated to keep DC gain at 1.0 and
+    boost magnitude by a target factor at the half-mesh frequency.
+    Constructors `for_config(&DwmConfig)` (default 5% boost),
+    `calibrated(&DwmConfig, boost)` (custom), and `passthrough()`
+    (identity). `apply(&self, &mut [f32])` runs the FIR in-place,
+    iterating backwards so `x[i−1]` isn't clobbered by the
+    just-written `y[i]`.
+
+  Documented as a *first-order* correction: it boosts magnitudes at the
+  upper octaves to compensate the dominant low-pass tilt of DWM
+  dispersion. A paper-faithful Savioja IDWM all-pass phase equalizer is
+  out of scope for v1.4.3 — `dispersion_factor` is provided so callers
+  who need finer correction can design their own filter.
+
+  Tests: mesh-frequency endpoint, dispersion factor at DC / mid-mesh /
+  above-mesh, FIR DC gain unity, FIR boosts target frequency by the
+  calibrated amount (≤5% error), passthrough identity, empty / single-
+  sample signals, serde roundtrip. Benchmark
+  `dwm/dispersion_correct_22kHz_1s`: 11.2 μs for a 22050-sample buffer
+  (~2 GFLOPS effective).
+
 ## [1.4.2] - 2026-05-01
 
 Second rung of the v1.4.x ladder: per-band IIR boundary filters in DWM.

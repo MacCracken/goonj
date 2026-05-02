@@ -463,6 +463,24 @@ fn bench_dvn_synthesize(c: &mut Criterion) {
     });
 }
 
+fn bench_dwm_dispersion_correct(c: &mut Criterion) {
+    let config = goonj::dwm::DwmConfig::default();
+    let dc = goonj::dwm::DispersionCorrection::for_config(&config);
+    let signal: Vec<f32> = (0..22050)
+        .map(|i| (std::f32::consts::TAU * 1000.0 * i as f32 / 22050.0).sin())
+        .collect();
+    c.bench_function("dwm/dispersion_correct_22kHz_1s", |b| {
+        b.iter_batched(
+            || signal.clone(),
+            |mut s| {
+                black_box(&dc).apply(&mut s);
+                black_box(s)
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+}
+
 fn bench_dwm_solve_small_grid(c: &mut Criterion) {
     let sample_rate = 22_050_u32;
     let speed_of_sound = 343.0_f32;
@@ -578,6 +596,7 @@ criterion_group!(
     bench_analysis_d50,
     bench_suggest_absorption,
     bench_dvn_synthesize,
+    bench_dwm_dispersion_correct,
     bench_dwm_solve_small_grid,
     bench_fdtd_solve_small_grid,
     bench_gfpe_solve_small_grid,
