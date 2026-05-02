@@ -65,7 +65,7 @@
 Each rung is independently shippable. Any rung can be skipped if Cyrius reaches its readiness gate first; the ladder runs only as long as the port isn't ready. No new initiatives outside this list.
 
 ### v1.4.2 — Per-band frequency-dependent impedance walls
-- [ ] Replace scalar reflection per face with a 1-pole IIR reflection filter, coefficients least-squares-fit to `AcousticMaterial.absorption[band]` across the 8 ISO octave centres. One filter state per wall face. The DWM-over-FDTD design dividend.
+- [x] Replace scalar reflection per face with a 1-pole IIR reflection filter `H(z) = b0/(1 − a1·z⁻¹)`, coefficients fitted so |H(0)| matches `R[63 Hz]` and |H(π)| matches `R[8 kHz]`. One filter state per boundary cell per face (~15 KB for a 30×25×20 grid). Carpet-like materials → low-pass IIR; glass-like → high-pass. The DWM-over-FDTD design dividend.
 
 ### v1.4.3 — Dispersion correction
 - [ ] Frequency pre/post-warp (Savioja IDWM) to compensate the ~5% directional dispersion error near the mesh frequency on the 3D rectilinear lattice.

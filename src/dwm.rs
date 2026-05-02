@@ -20,9 +20,9 @@
 //! specific FDTD scheme — but the waveguide formalism makes per-band
 //! impedance boundaries and non-rectilinear topologies a clean extension
 //! rather than a structural rewrite. This module ships the 3D rectilinear
-//! variant with rigid Neumann walls; per-wall materials, per-band
-//! impedance filters, and triangular meshes are planned as the v1.4.x
-//! ladder (see `docs/development/roadmap.md`).
+//! variant with per-wall materials and per-band IIR boundary filtering;
+//! dispersion correction and non-rectilinear topologies are planned as
+//! later v1.4.x rungs (see `docs/development/roadmap.md`).
 //!
 //! ## Sound speed and grid spacing
 //!
@@ -71,9 +71,12 @@ const DX_FAIL_TOL: f32 = 0.10;
 /// - `z_neg` — back face at `z = 0`
 /// - `z_pos` — front face at `z = nz − 1`
 ///
-/// The boundary reflection at each face is `R = √(1 − ᾱ)` where ᾱ is the
-/// face's [`AcousticMaterial::average_absorption`] (mean of the 8 ISO
-/// octave-band coefficients), clamped to `[0, 1]`.
+/// Each face's outgoing wave is filtered through a per-face 1-pole IIR
+/// reflection filter (see `BoundaryFilter`) fitted to that material's
+/// low-band (63 Hz) and high-band (8 kHz) absorption coefficients so the
+/// filter's DC and Nyquist gains match the corresponding `R = √(1 − α)`
+/// values; intermediate bands are interpolated by the IIR's natural
+/// frequency response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WallMaterials {
     /// Material at the left face (x = 0).
@@ -145,12 +148,11 @@ pub struct DwmConfig {
     pub nz: usize,
     /// Total simulation time (seconds).
     pub duration_seconds: f32,
-    /// Per-face wall materials. The reflection amplitude at each face is
-    /// `R = √(1 − ᾱ)` where ᾱ is that face material's
-    /// `average_absorption()`, clamped to `[0, 1]`. Defaults to
+    /// Per-face wall materials. Each face is given a 1-pole IIR
+    /// reflection filter fitted to that material's low-band and
+    /// high-band absorption coefficients (see `BoundaryFilter`), with
+    /// per-cell filter state on the face's 2D extent. Defaults to
     /// fully-rigid (zero absorption everywhere).
-    ///
-    /// Per-band frequency-dependent impedance walls land in v1.4.2.
     pub wall_materials: WallMaterials,
 }
 
@@ -187,12 +189,59 @@ impl DwmConfig {
     }
 }
 
-/// Boundary reflection amplitude `R = √(1 − ᾱ)` for a single face,
-/// clamped to a finite real value.
-#[inline]
-fn boundary_reflection(material: &AcousticMaterial) -> f32 {
-    let alpha = material.average_absorption().clamp(0.0, 1.0);
-    (1.0 - alpha).max(0.0).sqrt()
+/// 1-pole IIR reflection filter for a single wall face:
+/// `H(z) = b0 / (1 − a1·z⁻¹)`, applied to the outgoing wave at every
+/// boundary cell of that face to produce the incoming wave at the next
+/// time step. Coefficients are fitted so that |H(0)| matches the
+/// material's reflection at the lowest octave band (63 Hz) and |H(π)|
+/// matches it at the highest band (8 kHz):
+///
+/// ```text
+/// |H(0)|  = b0 / (1 − a1) = √(1 − α[63 Hz])  = R_low
+/// |H(π)|  = b0 / (1 + a1) = √(1 − α[8 kHz]) = R_high
+/// ```
+///
+/// Solving:
+/// ```text
+/// a1 = (R_low − R_high) / (R_low + R_high)
+/// b0 = R_low · (1 − a1)
+/// ```
+///
+/// `a1 > 0` ⇒ low-pass (more high-frequency absorption — typical fabric
+/// or carpet). `a1 < 0` ⇒ high-pass (more low-frequency absorption —
+/// typical glass or thin panels). `a1 = 0` ⇒ frequency-flat reflection.
+/// Clamped to `(−0.99, 0.99)` for numerical stability.
+///
+/// Intermediate octave bands are interpolated by the IIR's natural
+/// frequency response — not least-squares fit across all 8, but the
+/// 2-parameter fit captures the dominant low-vs-high tilt that
+/// AcousticMaterial coefficients encode and is robust at endpoints.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BoundaryFilter {
+    b0: f32,
+    a1: f32,
+}
+
+impl BoundaryFilter {
+    fn from_material(material: &AcousticMaterial) -> Self {
+        let alpha_low = material.absorption[0].clamp(0.0, 1.0);
+        let alpha_high = material.absorption[NUM_BANDS - 1].clamp(0.0, 1.0);
+        let r_low = (1.0 - alpha_low).max(0.0).sqrt();
+        let r_high = (1.0 - alpha_high).max(0.0).sqrt();
+        let denom = r_low + r_high;
+        let a1 = if denom > f32::EPSILON {
+            ((r_low - r_high) / denom).clamp(-0.99, 0.99)
+        } else {
+            0.0
+        };
+        let b0 = r_low * (1.0 - a1);
+        Self { b0, a1 }
+    }
+
+    #[inline]
+    fn process(&self, x: f32, prev_y: f32) -> f32 {
+        self.b0 * x + self.a1 * prev_y
+    }
 }
 
 /// Source injected into the grid as an additive pressure term per time step.
@@ -333,13 +382,23 @@ pub fn solve_dwm_3d(
     let nz = config.nz;
     let n = n_total;
 
-    // Precompute per-face reflection amplitudes R = √(1 − ᾱ).
-    let r_xneg = boundary_reflection(&config.wall_materials.x_neg);
-    let r_xpos = boundary_reflection(&config.wall_materials.x_pos);
-    let r_yneg = boundary_reflection(&config.wall_materials.y_neg);
-    let r_ypos = boundary_reflection(&config.wall_materials.y_pos);
-    let r_zneg = boundary_reflection(&config.wall_materials.z_neg);
-    let r_zpos = boundary_reflection(&config.wall_materials.z_pos);
+    // Per-face 1-pole IIR reflection filters fitted to each material's
+    // low / high band absorption coefficients.
+    let f_xneg = BoundaryFilter::from_material(&config.wall_materials.x_neg);
+    let f_xpos = BoundaryFilter::from_material(&config.wall_materials.x_pos);
+    let f_yneg = BoundaryFilter::from_material(&config.wall_materials.y_neg);
+    let f_ypos = BoundaryFilter::from_material(&config.wall_materials.y_pos);
+    let f_zneg = BoundaryFilter::from_material(&config.wall_materials.z_neg);
+    let f_zpos = BoundaryFilter::from_material(&config.wall_materials.z_pos);
+
+    // Per-cell filter state on each face, one f32 (the filter's previous
+    // output `y[n−1]`). Indexed by the face's 2D coordinate.
+    let mut s_xneg = vec![0.0_f32; ny * nz];
+    let mut s_xpos = vec![0.0_f32; ny * nz];
+    let mut s_yneg = vec![0.0_f32; nx * nz];
+    let mut s_ypos = vec![0.0_f32; nx * nz];
+    let mut s_zneg = vec![0.0_f32; nx * ny];
+    let mut s_zpos = vec![0.0_f32; nx * ny];
 
     // Outgoing-wave buffers, K components per node, indexed `node * K + dir`.
     // Direction indices: 0 = +x, 1 = -x, 2 = +y, 3 = -y, 4 = +z, 5 = -z.
@@ -371,36 +430,55 @@ pub fn solve_dwm_3d(
 
                     // Incoming from each direction. At a boundary face the
                     // missing neighbour reflects the previously-outgoing wave
-                    // back, scaled by that face's reflection amplitude.
+                    // back through that face's 1-pole IIR filter, with one
+                    // filter state per boundary cell.
                     let in_xpos = if x + 1 < nx {
                         out_curr[idx(x + 1, y, z, nx, ny) * K + 1] // neighbour's −x outgoing
                     } else {
-                        r_xpos * out_curr[base]
+                        let s_idx = z * ny + y;
+                        let y_n = f_xpos.process(out_curr[base], s_xpos[s_idx]);
+                        s_xpos[s_idx] = y_n;
+                        y_n
                     };
                     let in_xneg = if x > 0 {
                         out_curr[idx(x - 1, y, z, nx, ny) * K]
                     } else {
-                        r_xneg * out_curr[base + 1]
+                        let s_idx = z * ny + y;
+                        let y_n = f_xneg.process(out_curr[base + 1], s_xneg[s_idx]);
+                        s_xneg[s_idx] = y_n;
+                        y_n
                     };
                     let in_ypos = if y + 1 < ny {
                         out_curr[idx(x, y + 1, z, nx, ny) * K + 3]
                     } else {
-                        r_ypos * out_curr[base + 2]
+                        let s_idx = z * nx + x;
+                        let y_n = f_ypos.process(out_curr[base + 2], s_ypos[s_idx]);
+                        s_ypos[s_idx] = y_n;
+                        y_n
                     };
                     let in_yneg = if y > 0 {
                         out_curr[idx(x, y - 1, z, nx, ny) * K + 2]
                     } else {
-                        r_yneg * out_curr[base + 3]
+                        let s_idx = z * nx + x;
+                        let y_n = f_yneg.process(out_curr[base + 3], s_yneg[s_idx]);
+                        s_yneg[s_idx] = y_n;
+                        y_n
                     };
                     let in_zpos = if z + 1 < nz {
                         out_curr[idx(x, y, z + 1, nx, ny) * K + 5]
                     } else {
-                        r_zpos * out_curr[base + 4]
+                        let s_idx = y * nx + x;
+                        let y_n = f_zpos.process(out_curr[base + 4], s_zpos[s_idx]);
+                        s_zpos[s_idx] = y_n;
+                        y_n
                     };
                     let in_zneg = if z > 0 {
                         out_curr[idx(x, y, z - 1, nx, ny) * K + 4]
                     } else {
-                        r_zneg * out_curr[base + 5]
+                        let s_idx = y * nx + x;
+                        let y_n = f_zneg.process(out_curr[base + 5], s_zneg[s_idx]);
+                        s_zneg[s_idx] = y_n;
+                        y_n
                     };
 
                     // Junction pressure: p = (2/K) · Σ incoming.
@@ -893,21 +971,123 @@ mod tests {
         );
     }
 
+    /// Magnitude response of a 1-pole IIR `H(z) = b0 / (1 − a1·z⁻¹)` at
+    /// normalised frequency `omega = 2π·f/fs`. Internal test helper.
+    fn iir_magnitude(filter: &BoundaryFilter, omega: f32) -> f32 {
+        let cos_w = omega.cos();
+        let sin_w = omega.sin();
+        let denom = ((1.0 - filter.a1 * cos_w).powi(2) + (filter.a1 * sin_w).powi(2)).sqrt();
+        filter.b0.abs() / denom.max(f32::EPSILON)
+    }
+
     #[test]
-    fn boundary_reflection_endpoints() {
-        // α = 0 → R = 1 (rigid); α = 1 → R = 0 (fully absorbing).
+    fn boundary_filter_rigid_is_identity() {
         let rigid = AcousticMaterial {
             name: "rigid".into(),
             absorption: [0.0; NUM_BANDS],
             scattering: 0.0,
         };
-        assert!((boundary_reflection(&rigid) - 1.0).abs() < 1e-6);
+        let f = BoundaryFilter::from_material(&rigid);
+        // α = 0 ⇒ R_low = R_high = 1, b0 = 1, a1 = 0 ⇒ y[n] = x[n].
+        assert!((f.b0 - 1.0).abs() < 1e-6);
+        assert!(f.a1.abs() < 1e-6);
+        assert!((f.process(0.7, 999.0) - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    fn boundary_filter_fully_absorbing_zeros_signal() {
         let absorbing = AcousticMaterial {
             name: "absorbing".into(),
             absorption: [1.0; NUM_BANDS],
             scattering: 0.0,
         };
-        assert!(boundary_reflection(&absorbing).abs() < 1e-6);
+        let f = BoundaryFilter::from_material(&absorbing);
+        // α = 1 ⇒ R_low = R_high = 0 ⇒ b0 = 0, a1 = 0.
+        assert!(f.b0.abs() < 1e-6);
+        assert!(f.a1.abs() < 1e-6);
+        assert!(f.process(1.0, 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn boundary_filter_dc_matches_low_band_reflection() {
+        let mat = AcousticMaterial::carpet();
+        let f = BoundaryFilter::from_material(&mat);
+        let r_low = (1.0 - mat.absorption[0]).sqrt();
+        // |H(0)| = b0 / (1 − a1)
+        let h_dc = iir_magnitude(&f, 0.0);
+        assert!(
+            (h_dc - r_low).abs() < 1e-4,
+            "|H(0)|={h_dc} should match R_low={r_low}"
+        );
+    }
+
+    #[test]
+    fn boundary_filter_nyquist_matches_high_band_reflection() {
+        let mat = AcousticMaterial::carpet();
+        let f = BoundaryFilter::from_material(&mat);
+        let r_high = (1.0 - mat.absorption[NUM_BANDS - 1]).sqrt();
+        // |H(π)| = b0 / (1 + a1)
+        let h_ny = iir_magnitude(&f, std::f32::consts::PI);
+        assert!(
+            (h_ny - r_high).abs() < 1e-4,
+            "|H(π)|={h_ny} should match R_high={r_high}"
+        );
+    }
+
+    #[test]
+    fn boundary_filter_carpet_attenuates_high_freq_more() {
+        // Carpet: low α at 63 Hz, high α at 8 kHz ⇒ low-pass behavior
+        // (a1 > 0). |H| at low freq should exceed |H| at high freq.
+        let f = BoundaryFilter::from_material(&AcousticMaterial::carpet());
+        let h_low = iir_magnitude(&f, 0.05); // ~low frequency
+        let h_high = iir_magnitude(&f, std::f32::consts::PI - 0.05);
+        assert!(
+            h_low > h_high,
+            "carpet should reflect low freq more than high; |H_low|={h_low}, |H_high|={h_high}"
+        );
+        assert!(
+            f.a1 > 0.0,
+            "carpet IIR pole should be positive (low-pass), got {}",
+            f.a1
+        );
+    }
+
+    #[test]
+    fn boundary_filter_glass_attenuates_low_freq_more() {
+        // Glass: high α at 63 Hz, low α at 8 kHz ⇒ high-pass behavior
+        // (a1 < 0). |H| at high freq should exceed |H| at low freq.
+        let f = BoundaryFilter::from_material(&AcousticMaterial::glass());
+        let h_low = iir_magnitude(&f, 0.05);
+        let h_high = iir_magnitude(&f, std::f32::consts::PI - 0.05);
+        assert!(
+            h_high > h_low,
+            "glass should reflect high freq more than low; |H_low|={h_low}, |H_high|={h_high}"
+        );
+        assert!(
+            f.a1 < 0.0,
+            "glass IIR pole should be negative (high-pass), got {}",
+            f.a1
+        );
+    }
+
+    #[test]
+    fn boundary_filter_pole_within_stable_range() {
+        for mat in [
+            AcousticMaterial::concrete(),
+            AcousticMaterial::carpet(),
+            AcousticMaterial::glass(),
+            AcousticMaterial::wood(),
+            AcousticMaterial::curtain(),
+            AcousticMaterial::drywall(),
+        ] {
+            let f = BoundaryFilter::from_material(&mat);
+            assert!(
+                f.a1.abs() <= 0.99,
+                "pole for {} = {} outside [-0.99, 0.99]",
+                mat.name,
+                f.a1
+            );
+        }
     }
 
     #[test]

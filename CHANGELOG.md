@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Changed
+- **dwm: per-band frequency-dependent impedance walls** — DWM boundary
+  reflection upgrades from a scalar `R = √(1 − ᾱ)` to a per-face 1-pole
+  IIR filter `H(z) = b0 / (1 − a1·z⁻¹)` fitted so that |H(0)| matches
+  the material's reflection at 63 Hz and |H(π)| matches it at 8 kHz:
+  `a1 = (R_low − R_high) / (R_low + R_high)`, `b0 = R_low · (1 − a1)`,
+  with `a1` clamped to `(−0.99, 0.99)` for stability. Intermediate
+  octave bands are interpolated by the IIR's natural frequency
+  response — not least-squares-fit across all 8, but the 2-parameter
+  fit captures the dominant low-vs-high tilt and is robust at endpoints
+  (rigid → identity, fully-absorbing → zero).
+
+  Carpet-like materials (high α at high freq, low α at low freq) yield
+  `a1 > 0` (low-pass: high-freq content absorbed, low-freq content
+  reflected). Glass-like materials (high α at low freq, low α at high
+  freq) yield `a1 < 0` (high-pass: low-freq content absorbed). Tests
+  `boundary_filter_carpet_attenuates_high_freq_more` and
+  `boundary_filter_glass_attenuates_low_freq_more` validate both cases.
+
+  Per-cell filter state is allocated per face (`ny·nz`, `nx·nz`, or
+  `nx·ny` f32 values per face); ~15 KB total for a 30×25×20 grid,
+  negligible. Source-side `DwmConfig` API is unchanged — same
+  `wall_materials: WallMaterials` field, same builders. The behavioural
+  upgrade is opt-in by virtue of using a material with non-flat
+  band absorption.
+
+  No regressions on the existing modal-frequency or asymmetric-walls
+  tests. Bench `dwm/solve_30x25x20_50ms`: 72.9 ms (was 68.8 ms in
+  v1.4.1; the per-cell IIR is one extra multiply-add per boundary cell
+  per step, ~6% added cost for full per-band physics).
+
 ## [1.4.1] - 2026-05-01
 
 First rung of the v1.4.x ladder. Per-wall material assignment lands as a
