@@ -2,11 +2,11 @@
 
 ## Current Release
 
-**v1.4.0** — 3D wave-based room acoustics via Digital Waveguide Mesh. Single new module `dwm`, two bites (core + rigid walls; scalar absorbing walls + `AcousticMaterial` bridge).
+**v1.4.1** — First rung of the v1.4.x ladder: per-wall material assignment in DWM. `DwmConfig.wall_absorption: f32` → `wall_materials: WallMaterials` (named struct, one `AcousticMaterial` per face).
 
-- 503 tests (+24), 33 benchmarks (+1), 34 modules (+1)
-- Last new-module Rust feature work; remaining v1.4.x items are extensions of `dwm` (per-wall materials, per-band impedance walls, dispersion correction)
-- All formulas validated against Smith CCRMA, Van Duyne & Smith 1993, Wayverb (reuk)
+- 507 tests (+4), 33 benchmarks, 34 modules
+- Breaking change to `DwmConfig`; migration documented in CHANGELOG
+- DWM bench down from 76 ms → 68.8 ms (precomputed reflection coefficients trim inner-loop branches)
 - All six cleanliness gates clean (fmt, clippy, test, audit, deny, doc)
 
 ---
@@ -55,14 +55,14 @@
 - **dwm core, rigid walls** — Smith / Van Duyne–Smith K=6 scattering junctions on a 3D Cartesian lattice. `DwmConfig` / `DwmSource` / `DwmReceiver` / `DwmResult` / `solve_dwm_3d` / `required_dx`. Lattice constraint `Δx = c·Δt·√3` enforced (warn at >1%, refuse at >10%). Rigid Neumann walls reflect a node's own outgoing wave back. Modal-frequency test validates first axial mode against `room_mode`. 76 ms for 30×25×20 × 1102 steps. (Bite 1 of v1.4.0.)
 - **dwm scalar absorbing walls** — `DwmConfig::wall_absorption: f32` (`R = √(1 − α)` boundary reflection); `with_acoustic_material(&mat)` builder pulls `average_absorption()`. RT60-ordering test confirms carpet < concrete < rigid. No bench regression. (Bite 2 of v1.4.0.)
 
+### v1.4.1 — Per-wall material assignment (BREAKING)
+- **dwm: WallMaterials** — `DwmConfig.wall_absorption: f32` replaced by `wall_materials: WallMaterials` (named struct with `x_neg`/`x_pos`/`y_neg`/`y_pos`/`z_neg`/`z_pos` fields, each an `AcousticMaterial`). `WallMaterials::uniform` / `::rigid` constructors; new `with_wall_materials(walls)` builder. Solver precomputes 6 reflection coefficients per face. Asymmetric-walls test verifies per-face routing. Bench dropped from 76 ms → 68.8 ms (branch-free inner loop).
+
 ---
 
-## v1.4.x — Deferred-from-v1.4.0 ladder
+## v1.4.x — Remaining ladder
 
 Each rung is independently shippable. Any rung can be skipped if Cyrius reaches its readiness gate first; the ladder runs only as long as the port isn't ready. No new initiatives outside this list.
-
-### v1.4.1 — Per-wall material assignment
-- [x] Replace `wall_absorption: f32` with `wall_materials: WallMaterials` (named struct with `x_neg`/`x_pos`/`y_neg`/`y_pos`/`z_neg`/`z_pos` fields, each an `AcousticMaterial`). `WallMaterials::uniform` and `::rigid` constructors. Solver precomputes 6 reflection coefficients. Asymmetric-walls test verifies per-face routing.
 
 ### v1.4.2 — Per-band frequency-dependent impedance walls
 - [ ] Replace scalar reflection per face with a 1-pole IIR reflection filter, coefficients least-squares-fit to `AcousticMaterial.absorption[band]` across the 8 ISO octave centres. One filter state per wall face. The DWM-over-FDTD design dividend.

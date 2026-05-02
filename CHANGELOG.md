@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-05-01
+
+First rung of the v1.4.x ladder. Per-wall material assignment lands as a
+single-bite breaking change to `DwmConfig`. No new modules, no algorithm
+changes — just the shape of the boundary input. Migration path
+documented inline below.
+
 ### Changed
 - **dwm: per-wall material assignment (BREAKING)** — `DwmConfig` field
   `wall_absorption: f32` is replaced by `wall_materials: WallMaterials`,
@@ -34,6 +41,19 @@
   with `wall_materials: WallMaterials::uniform(material_with_alpha)` or
   build a `WallMaterials` directly. The `with_acoustic_material(&mat)`
   helper signature is unchanged.
+
+### Stats
+- 34 modules, 33 benchmarks, **507 tests** passing (500 unit + 6
+  integration + 1 doc) — up from 503 at v1.4.0
+- All formulas validated against Smith CCRMA, Van Duyne & Smith 1993,
+  Wayverb (reuk)
+- All six gates clean: `cargo fmt --check`,
+  `cargo clippy --all-features --all-targets -- -D warnings`,
+  `cargo test --all-features`, `cargo audit`, `cargo deny check`,
+  `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
+- DWM bench `dwm/solve_30x25x20_50ms`: 68.8 ms (was 76 ms at v1.4.0;
+  precomputing six reflection coefficients trims the inner-loop
+  branches the v1.4.0 single-coef path had)
 
 ## [1.4.0] - 2026-05-01
 

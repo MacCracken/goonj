@@ -1346,3 +1346,69 @@ test gfpe/solve_100m_30m_500hz ... bench:     360,846 ns/iter (+/- 7,960)
 
 test metamaterial/absorption_bands_negstiff ... bench:         210 ns/iter (+/- 1)
 
+test propagation/speed_of_sound ... bench:           0 ns/iter (+/- 0)
+
+test impulse/sabine_rt60 ... bench:           0 ns/iter (+/- 0)
+
+test resonance/room_mode ... bench:           1 ns/iter (+/- 0)
+
+test resonance/schroeder_frequency ... bench:           2 ns/iter (+/- 0)
+
+test propagation/doppler_shift ... bench:           1 ns/iter (+/- 0)
+
+test propagation/inverse_square_law ... bench:           0 ns/iter (+/- 0)
+
+test ray/wall_intersection ... bench:           7 ns/iter (+/- 0)
+
+test resonance/all_axial_modes_200hz ... bench:         382 ns/iter (+/- 8)
+
+test ray/trace_single_shoebox ... bench:       2,576 ns/iter (+/- 48)
+
+test ray/trace_100_rays_shoebox ... bench:     218,208 ns/iter (+/- 3,035)
+
+test image_source/shoebox_order_3 ... bench:       4,509 ns/iter (+/- 83)
+
+test image_source/shoebox_order_5 ... bench:      16,248 ns/iter (+/- 336)
+
+test diffuse/1000_rays_shoebox ... bench:   2,437,910 ns/iter (+/- 22,209)
+
+test impulse/generate_ir_shoebox ... bench:   2,451,379 ns/iter (+/- 28,790)
+
+test analysis/c80 ... bench:      33,288 ns/iter (+/- 431)
+
+test analysis/sti ... bench:   3,602,323 ns/iter (+/- 36,082)
+
+test propagation/atmospheric_ray_1000_steps ... bench:      15,249 ns/iter (+/- 256)
+
+test wav/export_48k_2s ... bench:      98,757 ns/iter (+/- 2,686)
+
+test binaural/generate_ir_shoebox ... bench:       6,975 ns/iter (+/- 144)
+
+test ray/trace_bvh_100_walls ... bench:      73,582 ns/iter (+/- 1,475)
+
+test ray/trace_linear_100_walls ... bench:      46,623 ns/iter (+/- 689)
+
+test impulse/eyring_rt60 ... bench:           6 ns/iter (+/- 0)
+
+test impulse/energy_decay_curve ... bench:     200,881 ns/iter (+/- 4,095)
+
+test propagation/ground_reflection ... bench:          12 ns/iter (+/- 0)
+
+test diffraction/edge_loss ... bench:           9 ns/iter (+/- 0)
+
+test diffraction/is_occluded_shoebox ... bench:          29 ns/iter (+/- 0)
+
+test analysis/d50 ... bench:      35,335 ns/iter (+/- 536)
+
+test analysis/suggest_absorption ... bench:         143 ns/iter (+/- 1)
+
+test dvn/synthesize_2s_2khz_density ... bench:     164,872 ns/iter (+/- 2,278)
+
+test dwm/solve_30x25x20_50ms ... bench:  69,193,307 ns/iter (+/- 988,843)
+
+test fdtd/solve_40x40_50ms ... bench:   1,104,865 ns/iter (+/- 13,289)
+
+test gfpe/solve_100m_30m_500hz ... bench:     354,764 ns/iter (+/- 3,462)
+
+test metamaterial/absorption_bands_negstiff ... bench:         210 ns/iter (+/- 1)
+
