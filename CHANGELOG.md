@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-05-01
+
+Second rung of the v1.4.x ladder: per-band IIR boundary filters in DWM.
+Behavioural upgrade only — the public API surface is unchanged from
+v1.4.1, but boundary reflections now carry frequency dependence
+fitted from `AcousticMaterial.absorption[band]` instead of collapsing
+to a single average. The DWM-over-FDTD design dividend.
+
 ### Changed
 - **dwm: per-band frequency-dependent impedance walls** — DWM boundary
   reflection upgrades from a scalar `R = √(1 − ᾱ)` to a per-face 1-pole
@@ -32,6 +40,17 @@
   tests. Bench `dwm/solve_30x25x20_50ms`: 72.9 ms (was 68.8 ms in
   v1.4.1; the per-cell IIR is one extra multiply-add per boundary cell
   per step, ~6% added cost for full per-band physics).
+
+### Stats
+- 34 modules, 33 benchmarks, **513 tests** passing (506 unit + 6
+  integration + 1 doc) — up from 507 at v1.4.1
+- Per-band filter validated: rigid → identity, fully-absorbing → zero,
+  carpet → low-pass IIR (`a1 > 0`), glass → high-pass IIR (`a1 < 0`),
+  all preset materials yield poles within the stable `(−0.99, 0.99)` range
+- All six gates clean: `cargo fmt --check`,
+  `cargo clippy --all-features --all-targets -- -D warnings`,
+  `cargo test --all-features`, `cargo audit`, `cargo deny check`,
+  `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
 
 ## [1.4.1] - 2026-05-01
 

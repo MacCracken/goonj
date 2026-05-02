@@ -2,11 +2,12 @@
 
 ## Current Release
 
-**v1.4.1** — First rung of the v1.4.x ladder: per-wall material assignment in DWM. `DwmConfig.wall_absorption: f32` → `wall_materials: WallMaterials` (named struct, one `AcousticMaterial` per face).
+**v1.4.2** — Second rung of the v1.4.x ladder: per-band frequency-dependent IIR boundary filters in DWM. Public API unchanged from v1.4.1; boundary reflections now carry frequency dependence fitted from `AcousticMaterial.absorption[band]`.
 
-- 507 tests (+4), 33 benchmarks, 34 modules
-- Breaking change to `DwmConfig`; migration documented in CHANGELOG
-- DWM bench down from 76 ms → 68.8 ms (precomputed reflection coefficients trim inner-loop branches)
+- 513 tests (+6), 33 benchmarks, 34 modules
+- 1-pole IIR `H(z) = b0 / (1 − a1·z⁻¹)` per face; coefficients fitted so |H(0)| = R[63 Hz], |H(π)| = R[8 kHz]
+- Per-cell filter state on each face (~15 KB total for a 30×25×20 grid)
+- DWM bench 68.8 ms → 72.9 ms (+6% for the per-cell multiply-add)
 - All six cleanliness gates clean (fmt, clippy, test, audit, deny, doc)
 
 ---
@@ -58,14 +59,14 @@
 ### v1.4.1 — Per-wall material assignment (BREAKING)
 - **dwm: WallMaterials** — `DwmConfig.wall_absorption: f32` replaced by `wall_materials: WallMaterials` (named struct with `x_neg`/`x_pos`/`y_neg`/`y_pos`/`z_neg`/`z_pos` fields, each an `AcousticMaterial`). `WallMaterials::uniform` / `::rigid` constructors; new `with_wall_materials(walls)` builder. Solver precomputes 6 reflection coefficients per face. Asymmetric-walls test verifies per-face routing. Bench dropped from 76 ms → 68.8 ms (branch-free inner loop).
 
+### v1.4.2 — Per-band frequency-dependent impedance walls
+- **dwm: per-face 1-pole IIR boundary filter** — scalar reflection per face replaced by `H(z) = b0/(1 − a1·z⁻¹)` fitted so |H(0)| matches `R[63 Hz]` and |H(π)| matches `R[8 kHz]`: `a1 = (R_low − R_high)/(R_low + R_high)` clamped to `(−0.99, 0.99)`, `b0 = R_low·(1 − a1)`. Per-cell filter state on each face. Carpet-like materials → low-pass IIR (`a1 > 0`); glass-like → high-pass (`a1 < 0`). Public API unchanged. Bench 68.8 ms → 72.9 ms (+6% per-cell multiply-add).
+
 ---
 
 ## v1.4.x — Remaining ladder
 
 Each rung is independently shippable. Any rung can be skipped if Cyrius reaches its readiness gate first; the ladder runs only as long as the port isn't ready. No new initiatives outside this list.
-
-### v1.4.2 — Per-band frequency-dependent impedance walls
-- [x] Replace scalar reflection per face with a 1-pole IIR reflection filter `H(z) = b0/(1 − a1·z⁻¹)`, coefficients fitted so |H(0)| matches `R[63 Hz]` and |H(π)| matches `R[8 kHz]`. One filter state per boundary cell per face (~15 KB for a 30×25×20 grid). Carpet-like materials → low-pass IIR; glass-like → high-pass. The DWM-over-FDTD design dividend.
 
 ### v1.4.3 — Dispersion correction
 - [ ] Frequency pre/post-warp (Savioja IDWM) to compensate the ~5% directional dispersion error near the mesh frequency on the 3D rectilinear lattice.
