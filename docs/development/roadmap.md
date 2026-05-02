@@ -2,12 +2,13 @@
 
 ## Current Release
 
-**v1.4.2** — Second rung of the v1.4.x ladder: per-band frequency-dependent IIR boundary filters in DWM. Public API unchanged from v1.4.1; boundary reflections now carry frequency dependence fitted from `AcousticMaterial.absorption[band]`.
+**v1.4.3** — Third rung of the v1.4.x ladder: dispersion characterization + first-order correction for the 3D rectilinear DWM. Public-API additions only; the solver inner loop is untouched.
 
-- 513 tests (+6), 33 benchmarks, 34 modules
-- 1-pole IIR `H(z) = b0 / (1 − a1·z⁻¹)` per face; coefficients fitted so |H(0)| = R[63 Hz], |H(π)| = R[8 kHz]
-- Per-cell filter state on each face (~15 KB total for a 30×25×20 grid)
-- DWM bench 68.8 ms → 72.9 ms (+6% for the per-cell multiply-add)
+- 525 tests (+12), 34 benchmarks (+1), 34 modules
+- `mesh_frequency`, `dispersion_factor`, `DispersionCorrection` (2-tap FIR boost at half-mesh frequency)
+- New bench `dwm/dispersion_correct_22kHz_1s`: 11.2 μs for a 22050-sample buffer (~2 GFLOPS effective)
+- Solver bench unchanged at ~72 ms — correction is post-process
+- After this rung the only remaining ladder item is consumer-demand-gated (triangular / hexagonal mesh variants)
 - All six cleanliness gates clean (fmt, clippy, test, audit, deny, doc)
 
 ---
@@ -62,14 +63,14 @@
 ### v1.4.2 — Per-band frequency-dependent impedance walls
 - **dwm: per-face 1-pole IIR boundary filter** — scalar reflection per face replaced by `H(z) = b0/(1 − a1·z⁻¹)` fitted so |H(0)| matches `R[63 Hz]` and |H(π)| matches `R[8 kHz]`: `a1 = (R_low − R_high)/(R_low + R_high)` clamped to `(−0.99, 0.99)`, `b0 = R_low·(1 − a1)`. Per-cell filter state on each face. Carpet-like materials → low-pass IIR (`a1 > 0`); glass-like → high-pass (`a1 < 0`). Public API unchanged. Bench 68.8 ms → 72.9 ms (+6% per-cell multiply-add).
 
+### v1.4.3 — Dispersion correction
+- **dwm: characterization + first-order FIR correction** — `mesh_frequency` and `dispersion_factor` helpers + a 2-tap FIR `DispersionCorrection` calibrated to boost the half-mesh frequency by a configurable amount (default 5%) with no DC gain change. Documented as first-order; paper-faithful Savioja IDWM phase equalization deferred until consumer demand. New bench `dwm/dispersion_correct_22kHz_1s`: 11.2 μs.
+
 ---
 
 ## v1.4.x — Remaining ladder
 
-Each rung is independently shippable. Any rung can be skipped if Cyrius reaches its readiness gate first; the ladder runs only as long as the port isn't ready. No new initiatives outside this list.
-
-### v1.4.3 — Dispersion correction
-- [x] Dispersion characterization helpers `mesh_frequency` and `dispersion_factor` for the 3D rectilinear lattice + a 2-tap FIR `DispersionCorrection` calibrated to boost the half-mesh frequency by a configurable amount (default 5%) without DC gain change. First-order only; paper-faithful Savioja IDWM phase equalization deferred until consumer demand.
+The remaining rung is consumer-demand-gated. The ladder runs only as long as the Cyrius port isn't ready.
 
 ### v1.4.x+ — Triangular / hexagonal mesh variants (consumer-demand-gated)
 - [ ] Lower-anisotropy mesh topologies. K=12 hexagonal close-packed in 3D. Ship only on demand from a downstream consumer (dhvani, kiran, shruti).

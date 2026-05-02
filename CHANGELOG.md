@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-05-01
+
+Third rung of the v1.4.x ladder: dispersion characterization and a
+first-order correction for the 3D rectilinear DWM. Public additions
+only — the solver itself is untouched. After this rung the only
+remaining ladder item is consumer-demand-gated (triangular meshes).
+
 ### Added
 - **dwm: dispersion characterization + first-order correction** —
   three new public items in `goonj::dwm`:
@@ -33,6 +40,17 @@
   sample signals, serde roundtrip. Benchmark
   `dwm/dispersion_correct_22kHz_1s`: 11.2 μs for a 22050-sample buffer
   (~2 GFLOPS effective).
+
+### Stats
+- 34 modules, 34 benchmarks (+1: `dwm/dispersion_correct_22kHz_1s`),
+  **525 tests** passing (518 unit + 6 integration + 1 doc) — up from
+  513 at v1.4.2
+- DWM solver bench unchanged at ~72 ms — the correction is a separate
+  post-process and doesn't touch the inner loop
+- All six gates clean: `cargo fmt --check`,
+  `cargo clippy --all-features --all-targets -- -D warnings`,
+  `cargo test --all-features`, `cargo audit`, `cargo deny check`,
+  `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
 
 ## [1.4.2] - 2026-05-01
 
