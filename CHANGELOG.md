@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-05-01
+
+3D wave-based room acoustics via Digital Waveguide Mesh. Single new
+module (`dwm`) shipped across two bites — core solver with rigid walls,
+then scalar absorbing walls + `AcousticMaterial` bridge. Carved out from
+v1.3.0 because DWM is the largest of the wave-based items and warranted
+its own release cycle. Per-wall material assignment, per-band impedance
+walls, and dispersion correction are planned as the v1.4.x ladder (see
+`docs/development/roadmap.md`); the user will green-light each rung
+explicitly, none are committed in advance.
+
 ### Added
 - **dwm: scalar absorbing walls** — `DwmConfig` gains a `wall_absorption: f32`
   field (`0.0` = rigid Neumann, `1.0` = fully absorbing) applied uniformly
@@ -42,6 +53,19 @@
   for a 15 000-node grid × 1102 time steps at 22.05 kHz (~11 GFLOPS
   effective). References: Smith (Stanford CCRMA), Van Duyne & Smith
   ICMC 1993, Wayverb (reuk).
+
+### Stats
+- 34 modules (1 new: `dwm`), 33 benchmarks (1 new: `dwm/solve_30x25x20_50ms`),
+  **503 tests** passing (496 unit + 6 integration + 1 doc) — up from
+  479 at v1.3.0
+- All formulas validated against peer-reviewed references (Smith CCRMA
+  online, Van Duyne & Smith 1993, Wayverb)
+- All six gates clean: `cargo fmt --check`,
+  `cargo clippy --all-features --all-targets -- -D warnings`,
+  `cargo test --all-features`, `cargo audit`, `cargo deny check`,
+  `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
+- No regressions on existing benches — DWM bench held at ~77 ms across
+  bites 1 and 2 (boundary scaling cost negligible)
 
 ## [1.3.0] - 2026-05-01
 

@@ -2,12 +2,11 @@
 
 ## Current Release
 
-**v1.3.0** — Wave-based methods + emerging algorithms. Four new modules: Dark Velvet Noise reverb, acoustic metamaterials, GFPE outdoor terrain propagation, 2D FDTD modal solver.
+**v1.4.0** — 3D wave-based room acoustics via Digital Waveguide Mesh. Single new module `dwm`, two bites (core + rigid walls; scalar absorbing walls + `AcousticMaterial` bridge).
 
-- 479 tests (+52), 32 benchmarks (+4), 33 modules (+4)
-- All four v1.3.0 roadmap items shipped, each as its own commit through the work loop
-- Digital Waveguide Mesh carved out into v1.4.0 (next release)
-- All formulas validated against peer-reviewed references (Botteldooren 1995, Gilbert & Di 1993, Fagerström 2024, Liu/Fang/Yang/Lee for metamaterials)
+- 503 tests (+24), 33 benchmarks (+1), 34 modules (+1)
+- Last new-module Rust feature work; remaining v1.4.x items are extensions of `dwm` (per-wall materials, per-band impedance walls, dispersion correction)
+- All formulas validated against Smith CCRMA, Van Duyne & Smith 1993, Wayverb (reuk)
 - All six cleanliness gates clean (fmt, clippy, test, audit, deny, doc)
 
 ---
@@ -52,15 +51,9 @@
 - **gfpe** — Gilbert & Di 1993 outdoor parabolic-equation solver over range-dependent terrain. Linear sound-speed gradient + Miki ground impedance + staircase terrain. 374 μs for a 21 × 30 grid at 500 Hz.
 - **fdtd** — Botteldooren 1995 2D FDTD modal solver with rigid Neumann walls, CFL-enforced time step, Goertzel `band_energies` helper for `hybrid::blend_results` integration. 1.13 ms for a 40 × 40 grid × 1102 steps at 22.05 kHz.
 
----
-
-## v1.4.0 — Digital Waveguide Mesh (MVP)
-
-Carved out from v1.3.0 because it's the largest of the wave-based items. Scope intentionally simplified at the top so deferred work can land cleanly across the v1.4.x ladder below.
-
-### Wave Solvers
-- [x] **3D rectilinear Digital Waveguide Mesh — core, rigid walls** — Smith / Van Duyne–Smith K=6 scattering junction on a Cartesian grid. New `src/dwm.rs` with `DwmConfig` / `DwmSource` / `DwmReceiver` / `DwmResult` / `solve_dwm_3d` / `required_dx`. Rigid Neumann walls. Plugs into `hybrid::blend_results` via re-exported `fdtd::band_energies`. (Bite 1 of v1.4.0.)
-- [x] **DWM scalar absorbing walls** — uniform absorption coefficient on `DwmConfig`; boundary reflection `R = √(1 − α)`; `DwmConfig::with_acoustic_material(&mat)` builder helper. (Bite 2 of v1.4.0.)
+### v1.4.0 — Digital Waveguide Mesh (MVP)
+- **dwm core, rigid walls** — Smith / Van Duyne–Smith K=6 scattering junctions on a 3D Cartesian lattice. `DwmConfig` / `DwmSource` / `DwmReceiver` / `DwmResult` / `solve_dwm_3d` / `required_dx`. Lattice constraint `Δx = c·Δt·√3` enforced (warn at >1%, refuse at >10%). Rigid Neumann walls reflect a node's own outgoing wave back. Modal-frequency test validates first axial mode against `room_mode`. 76 ms for 30×25×20 × 1102 steps. (Bite 1 of v1.4.0.)
+- **dwm scalar absorbing walls** — `DwmConfig::wall_absorption: f32` (`R = √(1 − α)` boundary reflection); `with_acoustic_material(&mat)` builder pulls `average_absorption()`. RT60-ordering test confirms carpet < concrete < rigid. No bench regression. (Bite 2 of v1.4.0.)
 
 ---
 
