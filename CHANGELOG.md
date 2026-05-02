@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Changed
+- **dwm: per-wall material assignment (BREAKING)** — `DwmConfig` field
+  `wall_absorption: f32` is replaced by `wall_materials: WallMaterials`,
+  a new struct with one `AcousticMaterial` per face (`x_neg`, `x_pos`,
+  `y_neg`, `y_pos`, `z_neg`, `z_pos`). Each face's reflection amplitude
+  is `R = √(1 − ᾱ)` where ᾱ is that face's `average_absorption()`,
+  clamped to `[0, 1]`. The solver precomputes the six reflection
+  coefficients before the time loop, so the inner loop cost is
+  unchanged (one multiply per boundary cell, same as v1.4.0).
+
+  `WallMaterials::uniform(material)` clones a single material to all
+  six faces. `WallMaterials::rigid()` constructs zero-absorption walls
+  (the new `Default`). Builder helpers: `with_acoustic_material(&mat)`
+  routes through `WallMaterials::uniform`; new
+  `with_wall_materials(walls)` accepts a fully-populated struct.
+
+  Tests `asymmetric_walls_drain_more_than_all_concrete` and
+  `boundary_reflection_endpoints` (R=1 at α=0, R=0 at α=1) confirm
+  per-face routing and the energy-correct convention. Out-of-range
+  absorption (e.g. direct field-construct an `AcousticMaterial` with
+  α > 1, bypassing `AcousticMaterial::new` validation) is clamped
+  silently inside `boundary_reflection`.
+
+  Bench `dwm/solve_30x25x20_50ms`: 68.8 ms (was 76 ms in v1.4.0;
+  precomputing the six reflection coefficients is marginally cheaper
+  than the old single-coef-with-branches path).
+
+  Migration: replace `wall_absorption: 0.0` with
+  `wall_materials: WallMaterials::rigid()`. Replace `wall_absorption: α`
+  with `wall_materials: WallMaterials::uniform(material_with_alpha)` or
+  build a `WallMaterials` directly. The `with_acoustic_material(&mat)`
+  helper signature is unchanged.
+
 ## [1.4.0] - 2026-05-01
 
 3D wave-based room acoustics via Digital Waveguide Mesh. Single new

@@ -61,6 +61,72 @@ const DX_WARN_TOL: f32 = 0.01;
 /// Hard tolerance: refuse to run when the deviation exceeds this.
 const DX_FAIL_TOL: f32 = 0.10;
 
+/// Per-face wall materials for a 3D DWM box. Each field corresponds to
+/// the boundary face on its named side of the grid:
+///
+/// - `x_neg` — left face at `x = 0`
+/// - `x_pos` — right face at `x = nx − 1`
+/// - `y_neg` — bottom face at `y = 0` (floor)
+/// - `y_pos` — top face at `y = ny − 1` (ceiling)
+/// - `z_neg` — back face at `z = 0`
+/// - `z_pos` — front face at `z = nz − 1`
+///
+/// The boundary reflection at each face is `R = √(1 − ᾱ)` where ᾱ is the
+/// face's [`AcousticMaterial::average_absorption`] (mean of the 8 ISO
+/// octave-band coefficients), clamped to `[0, 1]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WallMaterials {
+    /// Material at the left face (x = 0).
+    pub x_neg: AcousticMaterial,
+    /// Material at the right face (x = nx − 1).
+    pub x_pos: AcousticMaterial,
+    /// Material at the floor (y = 0).
+    pub y_neg: AcousticMaterial,
+    /// Material at the ceiling (y = ny − 1).
+    pub y_pos: AcousticMaterial,
+    /// Material at the back face (z = 0).
+    pub z_neg: AcousticMaterial,
+    /// Material at the front face (z = nz − 1).
+    pub z_pos: AcousticMaterial,
+}
+
+impl WallMaterials {
+    /// All six faces share the same material.
+    #[must_use]
+    pub fn uniform(material: AcousticMaterial) -> Self {
+        Self {
+            x_neg: material.clone(),
+            x_pos: material.clone(),
+            y_neg: material.clone(),
+            y_pos: material.clone(),
+            z_neg: material.clone(),
+            z_pos: material,
+        }
+    }
+
+    /// Fully rigid walls (zero absorption everywhere, `R = 1`). Useful
+    /// for pristine modal analysis where any boundary loss disrupts the
+    /// mode-buildup test. Constructed directly via the public fields of
+    /// `AcousticMaterial` since `AcousticMaterial::new` validates
+    /// against `[0, 1]` (which 0.0 satisfies trivially) but allocates a
+    /// name string regardless.
+    #[must_use]
+    pub fn rigid() -> Self {
+        let rigid_mat = AcousticMaterial {
+            name: "rigid".into(),
+            absorption: [0.0; NUM_BANDS],
+            scattering: 0.0,
+        };
+        Self::uniform(rigid_mat)
+    }
+}
+
+impl Default for WallMaterials {
+    fn default() -> Self {
+        Self::rigid()
+    }
+}
+
 /// Configuration for a 3D DWM simulation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DwmConfig {
@@ -79,15 +145,13 @@ pub struct DwmConfig {
     pub nz: usize,
     /// Total simulation time (seconds).
     pub duration_seconds: f32,
-    /// Uniform absorption coefficient `α` applied at every wall face,
-    /// in `0..=1`. `0.0` = rigid Neumann (full reflection), `1.0` =
-    /// fully absorbing (no reflection). Per-wall and per-band variants
-    /// land in v1.4.1 / v1.4.2. Out-of-range values are clamped silently.
+    /// Per-face wall materials. The reflection amplitude at each face is
+    /// `R = √(1 − ᾱ)` where ᾱ is that face material's
+    /// `average_absorption()`, clamped to `[0, 1]`. Defaults to
+    /// fully-rigid (zero absorption everywhere).
     ///
-    /// Convention: the boundary reflection amplitude is `R = √(1 − α)`
-    /// so that the reflected energy fraction equals `1 − α`, matching
-    /// the standard acoustics meaning of α.
-    pub wall_absorption: f32,
+    /// Per-band frequency-dependent impedance walls land in v1.4.2.
+    pub wall_materials: WallMaterials,
 }
 
 impl Default for DwmConfig {
@@ -101,24 +165,34 @@ impl Default for DwmConfig {
             ny: 25,
             nz: 20,
             duration_seconds: 0.05,
-            wall_absorption: 0.0,
+            wall_materials: WallMaterials::rigid(),
         }
     }
 }
 
 impl DwmConfig {
-    /// Set `wall_absorption` from an [`AcousticMaterial`] by pulling its
-    /// `average_absorption()` (mean of the 8 ISO octave-band coefficients).
+    /// Set every wall to the same material. Convenience over
+    /// `with_wall_materials(WallMaterials::uniform(mat.clone()))`.
     /// Consumes and returns `self` for builder-style chaining.
-    ///
-    /// v1.4.1 will replace this with a per-wall `[AcousticMaterial; 6]`
-    /// taking each face's own band-average; the helper there will
-    /// supersede this one.
     #[must_use]
-    pub fn with_acoustic_material(mut self, material: &AcousticMaterial) -> Self {
-        self.wall_absorption = material.average_absorption().clamp(0.0, 1.0);
+    pub fn with_acoustic_material(self, material: &AcousticMaterial) -> Self {
+        self.with_wall_materials(WallMaterials::uniform(material.clone()))
+    }
+
+    /// Set per-face materials directly. Consumes and returns `self`.
+    #[must_use]
+    pub fn with_wall_materials(mut self, walls: WallMaterials) -> Self {
+        self.wall_materials = walls;
         self
     }
+}
+
+/// Boundary reflection amplitude `R = √(1 − ᾱ)` for a single face,
+/// clamped to a finite real value.
+#[inline]
+fn boundary_reflection(material: &AcousticMaterial) -> f32 {
+    let alpha = material.average_absorption().clamp(0.0, 1.0);
+    (1.0 - alpha).max(0.0).sqrt()
 }
 
 /// Source injected into the grid as an additive pressure term per time step.
@@ -259,10 +333,13 @@ pub fn solve_dwm_3d(
     let nz = config.nz;
     let n = n_total;
 
-    // R = √(1 − α) so reflected *energy* = (1 − α) of incident.
-    let reflection = (1.0 - config.wall_absorption.clamp(0.0, 1.0))
-        .max(0.0)
-        .sqrt();
+    // Precompute per-face reflection amplitudes R = √(1 − ᾱ).
+    let r_xneg = boundary_reflection(&config.wall_materials.x_neg);
+    let r_xpos = boundary_reflection(&config.wall_materials.x_pos);
+    let r_yneg = boundary_reflection(&config.wall_materials.y_neg);
+    let r_ypos = boundary_reflection(&config.wall_materials.y_pos);
+    let r_zneg = boundary_reflection(&config.wall_materials.z_neg);
+    let r_zpos = boundary_reflection(&config.wall_materials.z_pos);
 
     // Outgoing-wave buffers, K components per node, indexed `node * K + dir`.
     // Direction indices: 0 = +x, 1 = -x, 2 = +y, 3 = -y, 4 = +z, 5 = -z.
@@ -294,37 +371,36 @@ pub fn solve_dwm_3d(
 
                     // Incoming from each direction. At a boundary face the
                     // missing neighbour reflects the previously-outgoing wave
-                    // back, scaled by the reflection coefficient R.
-                    // R = 1.0 ⇒ rigid Neumann; R = 0.0 ⇒ fully absorbing.
+                    // back, scaled by that face's reflection amplitude.
                     let in_xpos = if x + 1 < nx {
                         out_curr[idx(x + 1, y, z, nx, ny) * K + 1] // neighbour's −x outgoing
                     } else {
-                        reflection * out_curr[base]
+                        r_xpos * out_curr[base]
                     };
                     let in_xneg = if x > 0 {
                         out_curr[idx(x - 1, y, z, nx, ny) * K]
                     } else {
-                        reflection * out_curr[base + 1]
+                        r_xneg * out_curr[base + 1]
                     };
                     let in_ypos = if y + 1 < ny {
                         out_curr[idx(x, y + 1, z, nx, ny) * K + 3]
                     } else {
-                        reflection * out_curr[base + 2]
+                        r_ypos * out_curr[base + 2]
                     };
                     let in_yneg = if y > 0 {
                         out_curr[idx(x, y - 1, z, nx, ny) * K + 2]
                     } else {
-                        reflection * out_curr[base + 3]
+                        r_yneg * out_curr[base + 3]
                     };
                     let in_zpos = if z + 1 < nz {
                         out_curr[idx(x, y, z + 1, nx, ny) * K + 5]
                     } else {
-                        reflection * out_curr[base + 4]
+                        r_zpos * out_curr[base + 4]
                     };
                     let in_zneg = if z > 0 {
                         out_curr[idx(x, y, z - 1, nx, ny) * K + 4]
                     } else {
-                        reflection * out_curr[base + 5]
+                        r_zneg * out_curr[base + 5]
                     };
 
                     // Junction pressure: p = (2/K) · Σ incoming.
@@ -411,8 +487,17 @@ mod tests {
             ny: 25,
             nz: 20,
             duration_seconds: 0.05,
-            wall_absorption: 0.0,
+            wall_materials: WallMaterials::rigid(),
         }
+    }
+
+    fn uniform_alpha(alpha: f32) -> WallMaterials {
+        let mat = AcousticMaterial {
+            name: format!("alpha={alpha}"),
+            absorption: [alpha; NUM_BANDS],
+            scattering: 0.0,
+        };
+        WallMaterials::uniform(mat)
     }
 
     #[test]
@@ -559,7 +644,7 @@ mod tests {
             ny: n,
             nz: n,
             duration_seconds: 0.2,
-            wall_absorption: 0.0,
+            wall_materials: WallMaterials::rigid(),
         };
         // σ=30 samples → spectral half-width ~125 Hz; energy concentrated
         // below ~600 Hz, where the (1,0,0) mode at 171.5 Hz lives.
@@ -638,10 +723,40 @@ mod tests {
     }
 
     #[test]
-    fn rigid_default_absorption_is_zero() {
-        // Bite-1 baseline: default config has wall_absorption = 0 (rigid).
+    fn default_uses_rigid_walls() {
         let c = DwmConfig::default();
-        assert_eq!(c.wall_absorption, 0.0);
+        assert_eq!(c.wall_materials, WallMaterials::rigid());
+    }
+
+    #[test]
+    fn wall_materials_rigid_has_zero_absorption() {
+        let walls = WallMaterials::rigid();
+        for face in [
+            &walls.x_neg,
+            &walls.x_pos,
+            &walls.y_neg,
+            &walls.y_pos,
+            &walls.z_neg,
+            &walls.z_pos,
+        ] {
+            assert!(face.absorption.iter().all(|&a| a == 0.0));
+        }
+    }
+
+    #[test]
+    fn wall_materials_uniform_clones_to_all_faces() {
+        let walls = WallMaterials::uniform(AcousticMaterial::carpet());
+        let avg = AcousticMaterial::carpet().average_absorption();
+        for face in [
+            &walls.x_neg,
+            &walls.x_pos,
+            &walls.y_neg,
+            &walls.y_pos,
+            &walls.z_neg,
+            &walls.z_pos,
+        ] {
+            assert!((face.average_absorption() - avg).abs() < 1e-6);
+        }
     }
 
     #[test]
@@ -652,11 +767,11 @@ mod tests {
         c.duration_seconds = 0.1;
         let src = DwmSource::gaussian_pulse(15, 12, 10, 5, 2.0, 1.0);
 
-        c.wall_absorption = 0.0;
+        c.wall_materials = WallMaterials::rigid();
         let rigid = solve_dwm_3d(&c, &src, &[]);
         let energy_rigid: f32 = rigid.final_pressure.iter().map(|p| p * p).sum();
 
-        c.wall_absorption = 0.5;
+        c.wall_materials = uniform_alpha(0.5);
         let absorbing = solve_dwm_3d(&c, &src, &[]);
         let energy_absorbing: f32 = absorbing.final_pressure.iter().map(|p| p * p).sum();
 
@@ -670,7 +785,7 @@ mod tests {
     fn fully_absorbing_walls_drain_to_near_zero() {
         let mut c = small_config();
         c.duration_seconds = 0.1;
-        c.wall_absorption = 1.0;
+        c.wall_materials = uniform_alpha(1.0);
         let src = DwmSource::gaussian_pulse(15, 12, 10, 5, 2.0, 1.0);
         let r = solve_dwm_3d(&c, &src, &[]);
         let energy: f32 = r.final_pressure.iter().map(|p| p * p).sum();
@@ -694,9 +809,9 @@ mod tests {
             iz: 10,
         };
 
-        c.wall_absorption = 0.0;
+        c.wall_materials = WallMaterials::rigid();
         let rigid = solve_dwm_3d(&c, &src, std::slice::from_ref(&recv));
-        c.wall_absorption = 0.5;
+        c.wall_materials = uniform_alpha(0.5);
         let absorbing = solve_dwm_3d(&c, &src, std::slice::from_ref(&recv));
 
         // Compare the energy in the second half of the trace.
@@ -713,34 +828,94 @@ mod tests {
     }
 
     #[test]
-    fn with_acoustic_material_pulls_average_absorption() {
+    fn with_acoustic_material_uniform_walls_match_average_absorption() {
         let carpet = AcousticMaterial::carpet();
         let c = DwmConfig::default().with_acoustic_material(&carpet);
-        assert!((c.wall_absorption - carpet.average_absorption()).abs() < 1e-6);
-    }
-
-    #[test]
-    fn with_acoustic_material_clamps() {
-        // Construct a hypothetical material with average > 1 — clamp to 1.
-        // (AcousticMaterial::new validates 0..=1, so this path shouldn't
-        // hit in normal use, but check that the helper is defensive.)
-        let mat = AcousticMaterial::carpet();
-        let c = DwmConfig::default().with_acoustic_material(&mat);
-        assert!((0.0..=1.0).contains(&c.wall_absorption));
+        let avg = carpet.average_absorption();
+        for face in [
+            &c.wall_materials.x_neg,
+            &c.wall_materials.x_pos,
+            &c.wall_materials.y_neg,
+            &c.wall_materials.y_pos,
+            &c.wall_materials.z_neg,
+            &c.wall_materials.z_pos,
+        ] {
+            assert!((face.average_absorption() - avg).abs() < 1e-6);
+        }
     }
 
     #[test]
     fn out_of_range_absorption_clamped_silently() {
+        // Direct field-construct an AcousticMaterial with absorption > 1
+        // (bypasses AcousticMaterial::new validation). Boundary
+        // computation should clamp to α = 1 (fully absorbing) rather
+        // than produce NaN or panic.
+        let bogus = AcousticMaterial {
+            name: "bogus".into(),
+            absorption: [5.0; NUM_BANDS],
+            scattering: 0.0,
+        };
         let mut c = small_config();
         c.duration_seconds = 0.02;
-        c.wall_absorption = 5.0; // nonsense; expected clamp to 1.0 (fully absorbing)
+        c.wall_materials = WallMaterials::uniform(bogus);
         let src = DwmSource::gaussian_pulse(15, 12, 10, 5, 1.0, 1.0);
         let r = solve_dwm_3d(&c, &src, &[]);
-        // Should run without panic and produce a valid (mostly drained) field.
         assert!(r.time_steps > 0);
         for &p in &r.final_pressure {
             assert!(p.is_finite(), "pressure should stay finite under clamped α");
         }
+    }
+
+    #[test]
+    fn asymmetric_walls_drain_more_than_all_concrete() {
+        // All-concrete vs. concrete + carpet floor: the carpet floor
+        // should pull more energy out of the box. Tests per-face
+        // material assignment routes through the solver correctly.
+        let mut c = small_config();
+        c.duration_seconds = 0.05;
+        let src = DwmSource::gaussian_pulse(15, 12, 10, 5, 2.0, 1.0);
+
+        c.wall_materials = WallMaterials::uniform(AcousticMaterial::concrete());
+        let all_concrete = solve_dwm_3d(&c, &src, &[]);
+        let e_all_concrete: f32 = all_concrete.final_pressure.iter().map(|p| p * p).sum();
+
+        c.wall_materials = WallMaterials {
+            y_neg: AcousticMaterial::carpet(), // floor only
+            ..WallMaterials::uniform(AcousticMaterial::concrete())
+        };
+        let carpet_floor = solve_dwm_3d(&c, &src, &[]);
+        let e_carpet_floor: f32 = carpet_floor.final_pressure.iter().map(|p| p * p).sum();
+
+        assert!(
+            e_carpet_floor < e_all_concrete,
+            "carpet floor + concrete elsewhere should retain less energy than all concrete: \
+             carpet_floor={e_carpet_floor}, all_concrete={e_all_concrete}"
+        );
+    }
+
+    #[test]
+    fn boundary_reflection_endpoints() {
+        // α = 0 → R = 1 (rigid); α = 1 → R = 0 (fully absorbing).
+        let rigid = AcousticMaterial {
+            name: "rigid".into(),
+            absorption: [0.0; NUM_BANDS],
+            scattering: 0.0,
+        };
+        assert!((boundary_reflection(&rigid) - 1.0).abs() < 1e-6);
+        let absorbing = AcousticMaterial {
+            name: "absorbing".into(),
+            absorption: [1.0; NUM_BANDS],
+            scattering: 0.0,
+        };
+        assert!(boundary_reflection(&absorbing).abs() < 1e-6);
+    }
+
+    #[test]
+    fn wall_materials_serialization_roundtrip() {
+        let walls = WallMaterials::uniform(AcousticMaterial::carpet());
+        let json = serde_json::to_string(&walls).unwrap();
+        let back: WallMaterials = serde_json::from_str(&json).unwrap();
+        assert_eq!(walls, back);
     }
 
     #[test]

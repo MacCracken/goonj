@@ -62,7 +62,7 @@
 Each rung is independently shippable. Any rung can be skipped if Cyrius reaches its readiness gate first; the ladder runs only as long as the port isn't ready. No new initiatives outside this list.
 
 ### v1.4.1 — Per-wall material assignment
-- [ ] Replace `wall_absorption: f32` with `wall_materials: [AcousticMaterial; 6]` (one per ±x/±y/±z face). Each face pulls its own `average_absorption()`. Mechanical extension; same algorithm.
+- [x] Replace `wall_absorption: f32` with `wall_materials: WallMaterials` (named struct with `x_neg`/`x_pos`/`y_neg`/`y_pos`/`z_neg`/`z_pos` fields, each an `AcousticMaterial`). `WallMaterials::uniform` and `::rigid` constructors. Solver precomputes 6 reflection coefficients. Asymmetric-walls test verifies per-face routing.
 
 ### v1.4.2 — Per-band frequency-dependent impedance walls
 - [ ] Replace scalar reflection per face with a 1-pole IIR reflection filter, coefficients least-squares-fit to `AcousticMaterial.absorption[band]` across the 8 ISO octave centres. One filter state per wall face. The DWM-over-FDTD design dividend.
