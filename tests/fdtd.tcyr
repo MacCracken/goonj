@@ -1,0 +1,230 @@
+# fdtd.tcyr -- parity tests for src/fdtd.cyr
+# Ported from the #[test] blocks in rust-old/src/fdtd.rs.
+# (config_serialization_roundtrip + source_serialization_roundtrip
+#  omitted -- no serde in Cyrius.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/hybrid.cyr"
+include "src/fdtd.cyr"
+
+var BIG_1E6 = 0x412E848000000000;   # 1e6
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) {
+        return 1;
+    }
+    return 0;
+}
+
+# small_config(): 22050 Hz, dx 0.05, c 343, 40x40, 0.05 s.
+fn small_config() {
+    return fdtd_config_new(22050, pct(5), f64_from(343), 40, 40, pct(5));
+}
+
+# Sum of squares over a vec of f64.
+fn sum_sq_vec(v) {
+    var s = 0;
+    var n = vec_len(v);
+    var i = 0;
+    while (i < n) {
+        var x = vec_get(v, i);
+        s = f64_add(s, f64_mul(x, x));
+        i = i + 1;
+    }
+    return s;
+}
+
+# Index of the largest of NUM_BANDS f64 in an alloc'd buffer.
+fn argmax_bands(buf) {
+    var best = 0;
+    var bestval = load64(buf);
+    var i = 1;
+    while (i < NUM_BANDS) {
+        var v = load64(buf + i * 8);
+        if (f64_gt(v, bestval) == 1) {
+            best = i;
+            bestval = v;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+# A vec of one receiver pointer.
+fn one_receiver(ix, iy) {
+    var rs = vec_new();
+    vec_push(rs, fdtd_receiver_new(ix, iy));
+    return rs;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("cfl_violation_returns_empty");
+var c_cfl = small_config();
+FdtdConfig_set_dx(c_cfl, milli(1));   # shrink dx so CFL > 1/sqrt(2)
+var src_cfl = fdtd_source_gaussian_pulse(20, 20, 5, F64_TWO, F64_ONE);
+var r_cfl = solve_fdtd_2d(c_cfl, src_cfl, vec_new());
+assert_eq(vec_len(FdtdResult_receiver_signals(r_cfl)), 0, "cfl: receiver_signals empty");
+assert_eq(FdtdResult_time_steps(r_cfl), 0, "cfl: time_steps 0");
+
+# ================================================================
+test_group("zero_dx_returns_empty");
+var c_zdx = small_config();
+FdtdConfig_set_dx(c_zdx, 0);
+var src_zdx = fdtd_source_gaussian_pulse(20, 20, 5, F64_TWO, F64_ONE);
+var r_zdx = solve_fdtd_2d(c_zdx, src_zdx, vec_new());
+assert_eq(FdtdResult_time_steps(r_zdx), 0, "zero dx: time_steps 0");
+
+# ================================================================
+test_group("source_out_of_grid_returns_empty");
+var c_oog = small_config();
+var sig_oog = vec_new();
+vec_push(sig_oog, F64_ONE);
+var src_oog = fdtd_source_new(1000, 5, sig_oog);
+var r_oog = solve_fdtd_2d(c_oog, src_oog, vec_new());
+assert_eq(FdtdResult_time_steps(r_oog), 0, "source out of grid: time_steps 0");
+
+# ================================================================
+test_group("tiny_grid_returns_empty");
+var c_tiny = small_config();
+FdtdConfig_set_nx(c_tiny, 1);
+FdtdConfig_set_ny(c_tiny, 1);
+var sig_tiny = vec_new();
+vec_push(sig_tiny, F64_ONE);
+var src_tiny = fdtd_source_new(0, 0, sig_tiny);
+var r_tiny = solve_fdtd_2d(c_tiny, src_tiny, vec_new());
+assert_eq(FdtdResult_time_steps(r_tiny), 0, "tiny grid: time_steps 0");
+
+# ================================================================
+test_group("pulse_propagates_to_receiver");
+var c_pp = small_config();
+var src_pp = fdtd_source_gaussian_pulse(20, 20, 5, F64_TWO, F64_ONE);
+var r_pp = solve_fdtd_2d(c_pp, src_pp, one_receiver(30, 20));
+assert_eq(vec_len(FdtdResult_receiver_signals(r_pp)), 1, "pulse: one receiver signal");
+var trace_pp = vec_get(FdtdResult_receiver_signals(r_pp), 0);
+assert(vec_len(trace_pp) > 0, "pulse: trace non-empty");
+assert(f64_gt(sum_sq_vec(trace_pp), 0), "pulse: receiver picks up energy");
+
+# ================================================================
+test_group("receiver_out_of_grid_silent");
+var c_rs = small_config();
+var src_rs = fdtd_source_gaussian_pulse(20, 20, 5, F64_TWO, F64_ONE);
+var r_rs = solve_fdtd_2d(c_rs, src_rs, one_receiver(1000, 1000));
+var trace_rs = vec_get(FdtdResult_receiver_signals(r_rs), 0);
+assert_eq(vec_len(trace_rs), 0, "out-of-grid receiver silent");
+
+# ================================================================
+test_group("rigid_box_energy_bounded");
+var c_rb = small_config();
+FdtdConfig_set_duration_seconds(c_rb, pct(20));   # 0.2 s
+var src_rb = fdtd_source_gaussian_pulse(20, 20, 5, F64_TWO, F64_ONE);
+var r_rb = solve_fdtd_2d(c_rb, src_rb, vec_new());
+var energy_rb = sum_sq_vec(FdtdResult_final_pressure(r_rb));
+assert(f64_lt(energy_rb, BIG_1E6), "rigid box energy stays bounded");
+
+# ================================================================
+test_group("first_axial_mode_in_response");
+# 2 m x 2 m rigid box (40 cells x 0.05 m), c = 343. First axial mode
+# f1 = c/(2L) = 343/4 ~ 85.75 Hz -> lands in the 63/125/250 Hz bands.
+var c_fa = fdtd_config_new(22050, pct(5), f64_from(343), 40, 40, F64_HALF);
+var src_fa = fdtd_source_gaussian_pulse(8, 20, 5, F64_ONE, F64_ONE);
+var r_fa = solve_fdtd_2d(c_fa, src_fa, one_receiver(32, 20));
+var trace_fa = vec_get(FdtdResult_receiver_signals(r_fa), 0);
+var energies_fa = band_energies(trace_fa, FdtdConfig_sample_rate(c_fa));
+assert(argmax_bands(energies_fa) <= 2, "first-mode energy lands in 63/125/250 Hz");
+
+# ================================================================
+test_group("band_energies_returns_eight");
+var sig_be = vec_new();
+var ibe = 0;
+while (ibe < 1000) {
+    vec_push(sig_be, f64_sin(f64_mul(f64_from(ibe), milli(100))));
+    ibe = ibe + 1;
+}
+var en_be = band_energies(sig_be, 22050);
+assert_eq(NUM_BANDS, 8, "band_energies returns eight bands");
+var jbe = 0;
+while (jbe < NUM_BANDS) {
+    assert(f64_ge(load64(en_be + jbe * 8), 0), "band energy >= 0 finite");
+    jbe = jbe + 1;
+}
+
+# ================================================================
+test_group("band_energies_pure_tone_concentrated");
+# 250 Hz pure tone -> the 250-Hz band (index 2) dominates.
+var sr_pt = 22050;
+var f_pt = f64_from(250);
+var sig_pt = vec_new();
+var ipt = 0;
+while (ipt < 2205) {
+    var ph = f64_div(f64_mul(f64_mul(F64_TAU, f_pt), f64_from(ipt)), f64_from(sr_pt));
+    vec_push(sig_pt, f64_sin(ph));
+    ipt = ipt + 1;
+}
+var en_pt = band_energies(sig_pt, sr_pt);
+assert_eq(argmax_bands(en_pt), 2, "250 Hz tone peaks in band 2");
+
+# ================================================================
+test_group("band_energies_empty_signal_zero");
+var en_empty = band_energies(vec_new(), 22050);
+var ke = 0;
+while (ke < NUM_BANDS) {
+    assert_eq(f64_to(load64(en_empty + ke * 8)), 0, "empty signal band 0");
+    ke = ke + 1;
+}
+
+# ================================================================
+test_group("band_energies_zero_sample_rate_zero");
+var sig_zsr = vec_new();
+vec_push(sig_zsr, F64_ONE);
+vec_push(sig_zsr, F64_TWO);
+vec_push(sig_zsr, f64_from(3));
+var en_zsr = band_energies(sig_zsr, 0);
+var kz = 0;
+while (kz < NUM_BANDS) {
+    assert_eq(f64_to(load64(en_zsr + kz * 8)), 0, "zero sample rate band 0");
+    kz = kz + 1;
+}
+
+# ================================================================
+test_group("grid_cap_returns_empty");
+var c_gc = small_config();
+FdtdConfig_set_nx(c_gc, 5000);
+FdtdConfig_set_ny(c_gc, 5000);
+var sig_gc = vec_new();
+vec_push(sig_gc, F64_ONE);
+var src_gc = fdtd_source_new(0, 0, sig_gc);
+var r_gc = solve_fdtd_2d(c_gc, src_gc, vec_new());
+assert_eq(FdtdResult_time_steps(r_gc), 0, "grid cap: time_steps 0");
+
+# ================================================================
+test_group("integrates_with_hybrid_crossover");
+# End-to-end: solve FDTD, derive band energies, blend via hybrid.
+var c_hc = small_config();
+var src_hc = fdtd_source_gaussian_pulse(20, 20, 5, F64_TWO, F64_ONE);
+var r_hc = solve_fdtd_2d(c_hc, src_hc, one_receiver(25, 25));
+var wave_hc = band_energies(vec_get(FdtdResult_receiver_signals(r_hc), 0), FdtdConfig_sample_rate(c_hc));
+var geom_hc = alloc(NUM_BANDS * 8);
+var ig = 0;
+while (ig < NUM_BANDS) {
+    store64(geom_hc + ig * 8, F64_ONE);
+    ig = ig + 1;
+}
+var blended_hc = blend_results(wave_hc, geom_hc, crossover_config_default());
+var b0 = load64(blended_hc);
+var b7 = load64(blended_hc + 7 * 8);
+var ok_hc = 0;
+if (f64_lt(b0, b7) == 1) {
+    ok_hc = 1;
+}
+if (f64_ge(b7, pct(90)) == 1) {
+    ok_hc = 1;
+}
+assert(ok_hc == 1, "low bands lean wave, high bands lean geometric");
+
+var rc = assert_summary();
+syscall(60, rc);

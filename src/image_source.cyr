@@ -1,0 +1,355 @@
+# image_source.cyr -- image-source method for exact early specular
+# reflections. Allen & Berkeley analytic mirror method for shoebox rooms
+# plus a general recursive wall-reflection method for convex rooms; then
+# arrival time + per-band amplitude for each image source.
+#
+# Ports rust-old/src/image_source.rs. f32 → f64 throughout (hisab is
+# f64-only). Rust's `serde` derive is dropped (no serde in Cyrius); it has
+# no test to port here. The `[f32; NUM_BANDS]` attenuation / amplitude
+# arrays become inline 8×f64 blocks via manual struct layout (enum offsets
+# + store64/load64). `Vec3` → hisab HVec3; `Vec<ImageSource>` /
+# `Vec<EarlyReflection>` → stdlib `vec` holding struct pointers. The
+# `[AcousticMaterial; 6]` materials array is a 6-slot pointer block.
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON), material.cyr
+# (NUM_BANDS, am_absorption_band), room.cyr (Wall_*, RoomGeometry_*,
+# AcousticRoom_*), stdlib math/ganita (F64_ONE, f64_*), vec, and hisab
+# (hvec3_*). alloc_init() must have run.
+
+# +inf / -inf sentinels for the bounding-box scan (f64 bit patterns).
+var IS_POS_INF = 0x7FF0000000000000;   # +inf
+var IS_NEG_INF = 0xFFF0000000000000;   # -inf
+
+# ImageSource inline layout: position ptr | order | 8×f64 attenuation.
+enum IsLayout {
+    IS_POS   = 0,
+    IS_ORDER = 8,
+    IS_ATTEN = 16,    # offsets 16..80 (8 f64)
+    IS_SIZE  = 80,
+}
+
+# EarlyReflection inline layout: delay | 8×f64 amplitude | dir | order | dist.
+enum ErLayout {
+    ER_DELAY = 0,
+    ER_AMP   = 8,     # offsets 8..72 (8 f64)
+    ER_DIR   = 72,
+    ER_ORDER = 80,
+    ER_DIST  = 88,
+    ER_SIZE  = 96,
+}
+
+# ================================================================
+# Small integer helpers
+# ================================================================
+# Absolute value of an integer (Rust's `i32::unsigned_abs`).
+#must_use
+fn _is_uabs(n) {
+    if (n < 0) { return 0 - n; }
+    return n;
+}
+
+# base^k for integer k >= 0 (Rust's `f32::powi`; powi(0) = 1).
+#must_use
+fn _is_ipow(base, k) {
+    var result = F64_ONE;
+    var i = 0;
+    while (i < k) {
+        result = f64_mul(result, base);
+        i = i + 1;
+    }
+    return result;
+}
+
+# ================================================================
+# ImageSource accessors + constructor
+# ================================================================
+fn image_source_position(s)        { return load64(s + IS_POS); }
+fn image_source_order(s)           { return load64(s + IS_ORDER); }
+fn image_source_atten_band(s, band) { return load64(s + IS_ATTEN + band * 8); }
+
+# Allocate an image source at `position`/`order` with all-1.0 attenuation.
+#must_use
+fn _image_source_new(position, order) {
+    var s = alloc(IS_SIZE);
+    store64(s + IS_POS, position);
+    store64(s + IS_ORDER, order);
+    var i = 0;
+    while (i < NUM_BANDS) {
+        store64(s + IS_ATTEN + i * 8, F64_ONE);
+        i = i + 1;
+    }
+    return s;
+}
+
+# ================================================================
+# EarlyReflection accessors + constructor
+# ================================================================
+fn early_reflection_delay_seconds(r)    { return load64(r + ER_DELAY); }
+fn early_reflection_amplitude_band(r, b) { return load64(r + ER_AMP + b * 8); }
+fn early_reflection_direction(r)        { return load64(r + ER_DIR); }
+fn early_reflection_order(r)            { return load64(r + ER_ORDER); }
+fn early_reflection_distance(r)         { return load64(r + ER_DIST); }
+
+# Allocate an early reflection; amplitude bands are filled by the caller.
+#must_use
+fn _early_reflection_new(delay, direction, order, distance) {
+    var r = alloc(ER_SIZE);
+    store64(r + ER_DELAY, delay);
+    store64(r + ER_DIR, direction);
+    store64(r + ER_ORDER, order);
+    store64(r + ER_DIST, distance);
+    return r;
+}
+
+# ================================================================
+# Geometry helpers
+# ================================================================
+# Reflect a point across a plane (point on plane + normal).
+# d = (point - plane_point)·normal ; result = point - 2·d·normal.
+#must_use
+fn reflect_point(point, plane_point, plane_normal) {
+    var d = hvec3_dot(hvec3_sub(point, plane_point), plane_normal);
+    return hvec3_sub(point, hvec3_scale(plane_normal, f64_mul(f64_from(2), d)));
+}
+
+# Image coordinate along one axis for reflection count `n`.
+# Even n: n·dim + source (same-parity). Odd n>0: n·dim + (dim - source).
+# Odd n<0: n·dim - (dim - source).
+#must_use
+fn image_coordinate(source_coord, dimension, n) {
+    var nd = f64_mul(f64_from(n), dimension);
+    if (n % 2 == 0) { return f64_add(nd, source_coord); }
+    if (n > 0) { return f64_add(nd, f64_sub(dimension, source_coord)); }
+    return f64_sub(nd, f64_sub(dimension, source_coord));
+}
+
+# Apply per-band attenuation for reflections along one axis, multiplying
+# into `atten` (pointer to 8 f64). `neg_wall` sits at coordinate 0,
+# `pos_wall` at coordinate = dimension; bounces alternate between them.
+fn apply_axis_attenuation(atten, materials, neg_wall, pos_wall, n) {
+    if (n == 0) { return 0; }
+    var abs_n = _is_uabs(n);
+    var neg_hits = 0;
+    var pos_hits = 0;
+    if (n > 0) {
+        # Positive: pos wall ceil(n/2) times, neg wall floor(n/2) times.
+        neg_hits = abs_n / 2;
+        pos_hits = (abs_n + 1) / 2;
+    } else {
+        # Negative: neg wall ceil(|n|/2) times, pos wall floor(|n|/2) times.
+        neg_hits = (abs_n + 1) / 2;
+        pos_hits = abs_n / 2;
+    }
+    var neg_mat = load64(materials + neg_wall * 8);
+    var pos_mat = load64(materials + pos_wall * 8);
+    var band = 0;
+    while (band < NUM_BANDS) {
+        var neg_factor = _is_ipow(f64_sub(F64_ONE, am_absorption_band(neg_mat, band)), neg_hits);
+        var pos_factor = _is_ipow(f64_sub(F64_ONE, am_absorption_band(pos_mat, band)), pos_hits);
+        var cur = load64(atten + band * 8);
+        store64(atten + band * 8, f64_mul(cur, f64_mul(neg_factor, pos_factor)));
+        band = band + 1;
+    }
+    return 0;
+}
+
+# ================================================================
+# Shoebox analytic mirror method
+# ================================================================
+# Image sources for a shoebox room (length=x, width=z, height=y). The
+# `materials` block is [floor, ceiling, front, back, left, right]. Caps
+# max_order at 20 to bound the O(n³) source count.
+#must_use
+fn compute_image_sources_shoebox(source, length, width, height, materials, max_order) {
+    var mo = max_order;
+    if (mo > 20) { mo = 20; }
+    var max_n = mo;
+    var sources = vec_new();
+
+    # Order 0 = direct path (the source itself), unit attenuation.
+    vec_push(sources, _image_source_new(source, 0));
+
+    var nx = 0 - max_n;
+    while (nx <= max_n) {
+        var ny = 0 - max_n;
+        while (ny <= max_n) {
+            var nz = 0 - max_n;
+            while (nz <= max_n) {
+                var order = _is_uabs(nx) + _is_uabs(ny) + _is_uabs(nz);
+                var skip = 0;
+                if (order == 0) { skip = 1; }
+                if (order > mo) { skip = 1; }
+                if (skip == 0) {
+                    var x = image_coordinate(HVec3_x(source), length, nx);
+                    var y = image_coordinate(HVec3_y(source), height, ny);
+                    var z = image_coordinate(HVec3_z(source), width, nz);
+                    var img = _image_source_new(hvec3_new(x, y, z), order);
+                    # left(4)/right(5) = x, floor(0)/ceiling(1) = y, front(2)/back(3) = z.
+                    apply_axis_attenuation(img + IS_ATTEN, materials, 4, 5, nx);
+                    apply_axis_attenuation(img + IS_ATTEN, materials, 0, 1, ny);
+                    apply_axis_attenuation(img + IS_ATTEN, materials, 2, 3, nz);
+                    vec_push(sources, img);
+                }
+                nz = nz + 1;
+            }
+            ny = ny + 1;
+        }
+        nx = nx + 1;
+    }
+    return sources;
+}
+
+# ================================================================
+# General recursive method (arbitrary convex room)
+# ================================================================
+# Image sources by recursive reflection across each wall. Caps max_order
+# at 6 to bound the O(W^N) growth.
+#must_use
+fn compute_image_sources_general(source, walls, max_order) {
+    var mo = max_order;
+    if (mo > 6) { mo = 6; }
+    var sources = vec_new();
+    var direct = _image_source_new(source, 0);
+    vec_push(sources, direct);
+
+    # Working set: sources at the current order to be reflected.
+    var current_order = vec_new();
+    vec_push(current_order, direct);
+
+    var nw = vec_len(walls);
+    var order = 1;
+    while (order <= mo) {
+        var next_order = vec_new();
+        var pi = 0;
+        var ncur = vec_len(current_order);
+        while (pi < ncur) {
+            var parent = vec_get(current_order, pi);
+            var wi = 0;
+            while (wi < nw) {
+                var wall = vec_get(walls, wi);
+                var v0 = vec_get(Wall_vertices(wall), 0);
+                var reflected_pos = reflect_point(image_source_position(parent), v0, Wall_normal(wall));
+                var img = _image_source_new(reflected_pos, image_source_order(parent) + 1);
+                var mat = Wall_material(wall);
+                var band = 0;
+                while (band < NUM_BANDS) {
+                    var pa = image_source_atten_band(parent, band);
+                    var factor = f64_sub(F64_ONE, am_absorption_band(mat, band));
+                    store64(img + IS_ATTEN + band * 8, f64_mul(pa, factor));
+                    band = band + 1;
+                }
+                vec_push(next_order, img);
+                wi = wi + 1;
+            }
+            pi = pi + 1;
+        }
+        var ei = 0;
+        var nnext = vec_len(next_order);
+        while (ei < nnext) {
+            vec_push(sources, vec_get(next_order, ei));
+            ei = ei + 1;
+        }
+        current_order = next_order;
+        order = order + 1;
+    }
+    return sources;
+}
+
+# ================================================================
+# Early reflections
+# ================================================================
+# Ascending insertion sort of an EarlyReflection vec by delay (Rust's
+# `sort_by` on partial_cmp, NaN treated as Equal).
+fn _er_sort_by_delay(v) {
+    var n = vec_len(v);
+    var i = 1;
+    while (i < n) {
+        var key = vec_get(v, i);
+        var key_delay = early_reflection_delay_seconds(key);
+        var j = i - 1;
+        var go = 1;
+        while (go == 1) {
+            if (j < 0) { go = 0; }
+            if (go == 1) {
+                if (f64_gt(early_reflection_delay_seconds(vec_get(v, j)), key_delay) == 1) {
+                    vec_set(v, j + 1, vec_get(v, j));
+                    j = j - 1;
+                } else {
+                    go = 0;
+                }
+            }
+        }
+        vec_set(v, j + 1, key);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Early reflections for a shoebox room: image sources up to max_order, each
+# with arrival time and per-band amplitude (attenuation × inverse distance),
+# returned sorted by arrival time. Empty geometry or non-positive speed → [].
+#must_use
+fn compute_early_reflections(source, listener, room, max_order, c_sound) {
+    var geom = AcousticRoom_geometry(room);
+    var walls = RoomGeometry_walls(geom);
+    var reflections = vec_new();
+    if (vec_len(walls) == 0) { return reflections; }
+    if (f64_le(c_sound, 0) == 1) { return reflections; }
+
+    # Room dimensions from the bounding box of all wall vertices.
+    var mn = hvec3_splat(IS_POS_INF);
+    var mx = hvec3_splat(IS_NEG_INF);
+    var nw = vec_len(walls);
+    var i = 0;
+    while (i < nw) {
+        var verts = Wall_vertices(vec_get(walls, i));
+        var nv = vec_len(verts);
+        var j = 0;
+        while (j < nv) {
+            var vtx = vec_get(verts, j);
+            mn = hvec3_min(mn, vtx);
+            mx = hvec3_max(mx, vtx);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    var dims = hvec3_sub(mx, mn);
+
+    # Materials [floor, ceiling, front, back, left, right]; fall back to the
+    # first wall's material if there are fewer than six walls.
+    var materials = alloc(6 * 8);
+    var k = 0;
+    while (k < 6) {
+        var src_idx = 0;
+        if (nw >= 6) { src_idx = k; }
+        store64(materials + k * 8, Wall_material(vec_get(walls, src_idx)));
+        k = k + 1;
+    }
+
+    var image_sources = compute_image_sources_shoebox(
+    source, HVec3_x(dims), HVec3_z(dims), HVec3_y(dims), materials, max_order);
+
+    var ns = vec_len(image_sources);
+    var s = 0;
+    while (s < ns) {
+        var img = vec_get(image_sources, s);
+        var diff = hvec3_sub(listener, image_source_position(img));
+        var distance = hvec3_length(diff);
+        if (f64_ge(distance, GOONJ_EPSILON) == 1) {
+            var delay = f64_div(distance, c_sound);
+            var inv_dist = f64_div(F64_ONE, distance);
+            var direction = hvec3_scale(diff, inv_dist);
+            var r = _early_reflection_new(delay, direction, image_source_order(img), distance);
+            var band = 0;
+            while (band < NUM_BANDS) {
+                store64(r + ER_AMP + band * 8,
+                f64_mul(image_source_atten_band(img, band), inv_dist));
+                band = band + 1;
+            }
+            vec_push(reflections, r);
+        }
+        s = s + 1;
+    }
+    _er_sort_by_delay(reflections);
+    return reflections;
+}

@@ -1,0 +1,96 @@
+# scattering.cyr -- vector-based scattering model for diffuse reflections.
+#
+# Ports rust-old/src/scattering.rs. Cosine-weighted hemisphere sampling
+# (Malley's method) for Lambert diffuse reflection, plus the ODEON-style
+# vector-based scatter direction that blends specular and diffuse:
+#   dir = (1 - s) * specular + s * random_hemisphere.
+# f32 → f64 throughout (hisab's HVec3 is f64-only). u1/u2 are
+# caller-supplied uniform randoms in [0, 1) — there is no internal RNG.
+# orthonormal_basis returns a Basis struct (replaces Rust's (Vec3, Vec3)
+# tuple, like propagation's RayStep).
+#
+# Self-contained: no `include` lines. Relies on error.cyr (GOONJ_EPSILON),
+# hisab HVec3 (hvec3_*/HVec3_*), and stdlib math (F64_ONE, F64_TAU,
+# f64_sqrt/sin/cos/max/abs/…) being present in the build/test unit.
+
+# Helper-axis threshold for the basis: pick X unless |n.x| >= 0.9, then Y.
+var SCAT_HELPER_THRESHOLD = 0x3FECCCCCCCCCCCCD;   # 0.9
+
+# Orthonormal basis result — replaces Rust's `(Vec3, Vec3)` tuple return.
+#derive(accessors)
+struct Basis { tangent; bitangent; }
+
+#must_use
+fn _basis_make(tangent, bitangent) {
+    var b = alloc(sizeof(Basis));
+    Basis_set_tangent(b, tangent);
+    Basis_set_bitangent(b, bitangent);
+    return b;
+}
+
+# Build an orthonormal basis from a single normal vector. Returns a Basis
+# whose tangent and bitangent are perpendicular to the normal.
+#must_use
+fn orthonormal_basis(n) {
+    # Choose a helper vector not parallel to n.
+    var helper = hvec3_unit_x();
+    if (f64_ge(f64_abs(HVec3_x(n)), SCAT_HELPER_THRESHOLD) == 1) { helper = hvec3_unit_y(); }
+    var tangent = hvec3_cross(n, helper);
+    var len = hvec3_length(tangent);
+    if (f64_gt(len, GOONJ_EPSILON) == 1) {
+        tangent = hvec3_scale(tangent, f64_div(F64_ONE, len));
+    } else {
+        tangent = hvec3_unit_x();
+    }
+    var bitangent = hvec3_cross(n, tangent);
+    return _basis_make(tangent, bitangent);
+}
+
+# Generate a cosine-weighted random direction on the hemisphere around
+# `normal` via Malley's method: a uniform disk sample projected up to the
+# hemisphere (probability ∝ cos θ, Lambert's law). u1/u2 ∈ [0, 1).
+#must_use
+fn cosine_hemisphere_sample(normal, u1, u2) {
+    # Malley's method: uniform disk → hemisphere projection.
+    var r = f64_sqrt(u1);
+    var theta = f64_mul(F64_TAU, u2);
+    var x = f64_mul(r, f64_cos(theta));
+    var y = f64_mul(r, f64_sin(theta));
+    var z = f64_sqrt(f64_max(f64_sub(F64_ONE, u1), 0));   # cos(elevation)
+
+    # Build orthonormal basis from the normal.
+    var basis = orthonormal_basis(normal);
+    var tangent = Basis_tangent(basis);
+    var bitangent = Basis_bitangent(basis);
+
+    var dir = hvec3_add(
+    hvec3_add(hvec3_scale(tangent, x), hvec3_scale(bitangent, y)),
+    hvec3_scale(normal, z));
+    var len = hvec3_length(dir);
+    if (f64_gt(len, GOONJ_EPSILON) == 1) {
+        return hvec3_scale(dir, f64_div(F64_ONE, len));
+    }
+    return normal;
+}
+
+# Compute the scattered reflection direction (ODEON-style vector-based
+# scattering): blend specular and a cosine-weighted random direction by
+# the scattering coefficient, dir = (1 - s)*specular + s*diffuse, then
+# normalize. u1/u2 ∈ [0, 1).
+#must_use
+fn scatter_direction(specular, normal, scattering, u1, u2) {
+    if (f64_lt(scattering, GOONJ_EPSILON) == 1) { return specular; }
+    if (f64_ge(scattering, f64_sub(F64_ONE, GOONJ_EPSILON)) == 1) {
+        return cosine_hemisphere_sample(normal, u1, u2);
+    }
+
+    var diffuse = cosine_hemisphere_sample(normal, u1, u2);
+    var blended = hvec3_add(
+    hvec3_scale(specular, f64_sub(F64_ONE, scattering)),
+    hvec3_scale(diffuse, scattering));
+    var len = hvec3_length(blended);
+    if (f64_gt(len, GOONJ_EPSILON) == 1) {
+        return hvec3_scale(blended, f64_div(F64_ONE, len));
+    }
+    return specular;
+}

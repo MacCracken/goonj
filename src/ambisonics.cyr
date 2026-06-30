@@ -1,0 +1,209 @@
+# ambisonics.cyr -- Ambisonics encoding: spatial sound-field
+# representation. B-Format (1st order) and Higher-Order Ambisonics
+# (up to 3rd order) encode a direction (HVec3) into channel gains via
+# real spherical harmonics (ACN ordering, SN3D normalization).
+#
+# Ports rust-old/src/ambisonics.rs. f32 -> f64 throughout (hisab is
+# f64-only). Rust's `serde` derive is dropped (no serde in Cyrius); the
+# serde round-trip test is therefore omitted. The `Vec<f32>` channels
+# (BFormatIr) and `Vec<Vec<f32>>` channel set (HoaIr) become stdlib `vec`
+# handles holding f64 bit patterns / nested vec pointers. The fixed
+# `[f32; 16]` spherical-harmonic array becomes a 16-slot f64 buffer.
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON), stdlib
+# math/ganita (F64_ONE/TWO/HALF, f64_*, f64_sin/cos/acos/atan2/sqrt),
+# vec (vec_new/push/len/get/set), and hisab (hvec3_*, HVec3_x/y/z).
+# alloc_init() must have run.
+
+# Maximum supported order and the (3+1)^2 = 16 channel count.
+enum HoaConst {
+    MAX_HOA_ORDER    = 3,
+    MAX_HOA_CHANNELS = 16,
+}
+
+# ================================================================
+# IR structs
+# ================================================================
+# 1st-order Ambisonics (B-Format) IR: W, X, Y, Z channels (each a vec
+# of f64 samples) + sample rate (Hz).
+#derive(accessors)
+struct BFormatIr { w; x; y; z; sample_rate; }
+
+# 3rd-order Ambisonics IR: ACN-ordered channels (vec of vecs) + order +
+# sample rate (Hz).
+#derive(accessors)
+struct HoaIr { channels; order; sample_rate; }
+
+# A vec of `n` zero samples (0 == +0.0 bit pattern).
+#must_use
+fn _zeros_vec(n) {
+    var v = vec_new();
+    var i = 0;
+    while (i < n) {
+        vec_push(v, 0);
+        i = i + 1;
+    }
+    return v;
+}
+
+# ================================================================
+# B-Format (1st order) encoding
+# ================================================================
+# Encode a single reflection into B-Format (1st-order Ambisonics).
+# W receives the amplitude directly; X/Y/Z receive amplitude scaled by
+# the direction cosines (SN3D/ACN AmbiX: W = 1.0, X/Y/Z = cosines).
+fn encode_bformat(amplitude, direction, delay_samples, ir) {
+    if (delay_samples >= vec_len(BFormatIr_w(ir))) { return 0; }
+    if (f64_lt(f64_abs(amplitude), GOONJ_EPSILON) == 1) { return 0; }
+
+    var w = BFormatIr_w(ir);
+    var x = BFormatIr_x(ir);
+    var y = BFormatIr_y(ir);
+    var z = BFormatIr_z(ir);
+    vec_set(w, delay_samples, f64_add(vec_get(w, delay_samples), amplitude));
+    vec_set(x, delay_samples, f64_add(vec_get(x, delay_samples), f64_mul(amplitude, HVec3_x(direction))));
+    vec_set(y, delay_samples, f64_add(vec_get(y, delay_samples), f64_mul(amplitude, HVec3_y(direction))));
+    vec_set(z, delay_samples, f64_add(vec_get(z, delay_samples), f64_mul(amplitude, HVec3_z(direction))));
+    return 0;
+}
+
+# ================================================================
+# Higher-Order Ambisonics encoding
+# ================================================================
+# Encode a single reflection into HOA (ACN/SN3D). Computes real
+# spherical-harmonic coefficients up to the IR's order.
+fn encode_hoa(amplitude, direction, delay_samples, ir) {
+    var order = HoaIr_order(ir);
+    var num_channels = (order + 1) * (order + 1);
+    var channels = HoaIr_channels(ir);
+
+    var first_len = 0;
+    if (vec_len(channels) > 0) { first_len = vec_len(vec_get(channels, 0)); }
+    if (delay_samples >= first_len) { return 0; }
+    if (f64_lt(f64_abs(amplitude), GOONJ_EPSILON) == 1) { return 0; }
+    if (vec_len(channels) < num_channels) { return 0; }
+
+    # Direction -> spherical coordinates.
+    var r = hvec3_length(direction);
+    if (f64_lt(r, GOONJ_EPSILON) == 1) { return 0; }
+    var theta = f64_acos(f64_div(HVec3_z(direction), r));     # inclination from +Z
+    var phi = f64_atan2(HVec3_y(direction), HVec3_x(direction)); # azimuth from +X
+
+    var sh = spherical_harmonics(order, theta, phi);
+    # Iterate over the 16 SH entries, taking the first num_channels.
+    var limit = num_channels;
+    if (limit > MAX_HOA_CHANNELS) { limit = MAX_HOA_CHANNELS; }
+    var ch = 0;
+    while (ch < limit) {
+        if (ch < vec_len(channels)) {
+            var chan = vec_get(channels, ch);
+            var coeff = load64(sh + ch * 8);
+            vec_set(chan, delay_samples, f64_add(vec_get(chan, delay_samples), f64_mul(amplitude, coeff)));
+        }
+        ch = ch + 1;
+    }
+    return 0;
+}
+
+# ================================================================
+# Real spherical harmonics (ACN ordering, SN3D normalization)
+# ================================================================
+# Compute real spherical harmonics up to `order` into a fresh 16-slot
+# f64 buffer (zero-filled above the requested order). SN3D factors from
+# Nachbar et al., "AmbiX -- A Suggested Ambisonics Format," AES 2011.
+#must_use
+fn spherical_harmonics(order, theta, phi) {
+    var sh = alloc(MAX_HOA_CHANNELS * 8);
+    var i = 0;
+    while (i < MAX_HOA_CHANNELS) {
+        store64(sh + i * 8, 0);
+        i = i + 1;
+    }
+    var ord = order;
+    if (ord > MAX_HOA_ORDER) { ord = MAX_HOA_ORDER; }
+
+    var cos_t = f64_cos(theta);
+    var sin_t = f64_sin(theta);
+
+    # Order 0: Y_0^0 = 1 (SN3D factor = 1).
+    store64(sh + 0 * 8, F64_ONE);
+
+    if (ord >= 1) {
+        # SN3D order-1 factors are all 1.0.
+        store64(sh + 1 * 8, f64_mul(sin_t, f64_sin(phi)));  # ACN 1: Y_1^{-1}
+        store64(sh + 2 * 8, cos_t);                         # ACN 2: Y_1^0
+        store64(sh + 3 * 8, f64_mul(sin_t, f64_cos(phi)));  # ACN 3: Y_1^1
+    }
+
+    if (ord >= 2) {
+        var sin2 = f64_mul(sin_t, sin_t);
+        var cos2 = f64_mul(cos_t, cos_t);
+        var sc = f64_mul(sin_t, cos_t);
+        var n2_2 = f64_div(f64_sqrt(f64_from(3)), F64_TWO);   # m=+-2: sqrt(3)/2
+        var n2_1 = f64_sqrt(f64_from(3));                     # m=+-1: sqrt(3)
+        var c1_5 = f64_div(f64_from(3), F64_TWO);             # 1.5
+        var two_phi = f64_mul(F64_TWO, phi);
+        store64(sh + 4 * 8, f64_mul(f64_mul(n2_2, sin2), f64_sin(two_phi)));  # ACN 4: Y_2^{-2}
+        store64(sh + 5 * 8, f64_mul(f64_mul(n2_1, sc), f64_sin(phi)));        # ACN 5: Y_2^{-1}
+        store64(sh + 6 * 8, f64_sub(f64_mul(c1_5, cos2), F64_HALF));          # ACN 6: Y_2^0
+        store64(sh + 7 * 8, f64_mul(f64_mul(n2_1, sc), f64_cos(phi)));        # ACN 7: Y_2^1
+        store64(sh + 8 * 8, f64_mul(f64_mul(n2_2, sin2), f64_cos(two_phi)));  # ACN 8: Y_2^2
+    }
+
+    if (ord >= 3) {
+        var sin2b = f64_mul(sin_t, sin_t);
+        var sin3 = f64_mul(sin2b, sin_t);
+        var cos2b = f64_mul(cos_t, cos_t);
+        var s2c = f64_mul(sin2b, cos_t);
+        var n3_3 = f64_sqrt(f64_div(f64_from(5), f64_from(8)));   # m=+-3: sqrt(5/8)
+        var n3_2 = f64_div(f64_sqrt(f64_from(15)), F64_TWO);      # m=+-2: sqrt(15)/2
+        var n3_1 = f64_sqrt(f64_div(f64_from(3), f64_from(8)));   # m=+-1: sqrt(3/8)
+        var c2_5 = f64_div(f64_from(5), F64_TWO);                 # 2.5
+        var c1_5b = f64_div(f64_from(3), F64_TWO);               # 1.5
+        var two_phi = f64_mul(F64_TWO, phi);
+        var three_phi = f64_mul(f64_from(3), phi);
+        var five_cos2_m1 = f64_sub(f64_mul(f64_from(5), cos2b), F64_ONE);
+        store64(sh + 9 * 8, f64_mul(f64_mul(n3_3, sin3), f64_sin(three_phi)));         # ACN 9
+        store64(sh + 10 * 8, f64_mul(f64_mul(n3_2, s2c), f64_sin(two_phi)));           # ACN 10
+        store64(sh + 11 * 8, f64_mul(f64_mul(n3_1, sin_t), f64_mul(five_cos2_m1, f64_sin(phi)))); # ACN 11
+        store64(sh + 12 * 8,
+        f64_sub(f64_mul(f64_mul(c2_5, cos2b), cos_t), f64_mul(c1_5b, cos_t)));     # ACN 12
+        store64(sh + 13 * 8, f64_mul(f64_mul(n3_1, sin_t), f64_mul(five_cos2_m1, f64_cos(phi)))); # ACN 13
+        store64(sh + 14 * 8, f64_mul(f64_mul(n3_2, s2c), f64_cos(two_phi)));           # ACN 14
+        store64(sh + 15 * 8, f64_mul(f64_mul(n3_3, sin3), f64_cos(three_phi)));        # ACN 15
+    }
+
+    return sh;
+}
+
+# ================================================================
+# IR constructors
+# ================================================================
+# Empty B-Format IR: four zero channels of `num_samples`.
+#must_use
+fn new_bformat_ir(num_samples, sample_rate) {
+    var ir = alloc(sizeof(BFormatIr));
+    BFormatIr_set_w(ir, _zeros_vec(num_samples));
+    BFormatIr_set_x(ir, _zeros_vec(num_samples));
+    BFormatIr_set_y(ir, _zeros_vec(num_samples));
+    BFormatIr_set_z(ir, _zeros_vec(num_samples));
+    BFormatIr_set_sample_rate(ir, sample_rate);
+    return ir;
+}
+
+# Empty HOA IR: (order+1)^2 zero channels of `num_samples`.
+#must_use
+fn new_hoa_ir(order, num_samples, sample_rate) {
+    var num_channels = (order + 1) * (order + 1);
+    var channels = vec_new();
+    var i = 0;
+    while (i < num_channels) {
+        vec_push(channels, _zeros_vec(num_samples));
+        i = i + 1;
+    }
+    var ir = alloc(sizeof(HoaIr));
+    HoaIr_set_channels(ir, channels);
+    HoaIr_set_order(ir, order);
+    HoaIr_set_sample_rate(ir, sample_rate);
+    return ir;
+}

@@ -1,0 +1,262 @@
+# dark_velvet_noise.cyr -- Dark Velvet Noise reverb: non-exponential late
+# reverberation synthesized from sparse stochastic pulse sequences.
+#
+# Ports rust-old/src/dark_velvet_noise.rs. f32 -> f64 throughout. Rust's
+# serde derive on DvnConfig/DecayEnvelope is dropped (no serde in Cyrius);
+# the serde round-trip test is therefore omitted. The DecayEnvelope sum
+# type (an enum with payloads) becomes a tagged struct: kind 0 =
+# Exponential (rt60 field), kind 1 = PiecewiseDb (breakpoints field). The
+# Vec<(f32, f32)> breakpoints become a stdlib vec holding interleaved
+# (time, level_db) f64 pairs; the returned Vec<f32> IR becomes a stdlib
+# vec of f64 bit patterns. The private Xorshift64 PRNG keeps its C-style
+# bit ops (^ << >> &). Reference: Fagerstrom et al., "Non-Exponential
+# Reverberation with Dark Velvet Noise," JAES 72(6), 2024.
+#
+# Requires (from the build/test unit): stdlib alloc/vec (alloc_init,
+# vec_*), math/ganita (F64_ONE/TWO/HALF/TAU, f64_*), and error.cyr
+# (GOONJ_EPSILON). The module file itself has no `include` lines.
+
+# Maximum allowed IR length in samples (192_000 * 600), matching the
+# impulse generator's saturation cap.
+var MAX_IR_SAMPLES = 115200000;
+
+# Default xorshift64 seed (0xCAFE_BABE_F00D_D15C) from Rust's Default impl.
+var DVN_DEFAULT_SEED = 0xCAFEBABEF00DD15C;
+
+# ================================================================
+# DecayEnvelope -- decay-envelope shape for the velvet-noise tail.
+#   kind        : 0 = Exponential, 1 = PiecewiseDb
+#   rt60        : reverberation time (s), used when kind == 0
+#   breakpoints : stdlib vec of interleaved (time_s, level_db) f64 pairs,
+#                 sorted ascending by time, used when kind == 1
+# ================================================================
+#derive(accessors)
+struct DecayEnvelope { kind; rt60; breakpoints; }
+
+# Exponential decay: 60 dB amplitude drop over rt60_seconds.
+#must_use
+fn decay_exponential(rt60_seconds) {
+    var e = alloc(sizeof(DecayEnvelope));
+    DecayEnvelope_set_kind(e, 0);
+    DecayEnvelope_set_rt60(e, rt60_seconds);
+    DecayEnvelope_set_breakpoints(e, 0);
+    return e;
+}
+
+# Piecewise-linear-in-dB envelope from interleaved (time_s, level_db) pairs.
+#must_use
+fn decay_piecewise_db(breakpoints) {
+    var e = alloc(sizeof(DecayEnvelope));
+    DecayEnvelope_set_kind(e, 1);
+    DecayEnvelope_set_rt60(e, 0);
+    DecayEnvelope_set_breakpoints(e, breakpoints);
+    return e;
+}
+
+# Breakpoint helpers over the interleaved (time, level_db) layout.
+#must_use
+fn _bp_count(bp) { return vec_len(bp) / 2; }
+#must_use
+fn _bp_time(bp, i) { return vec_get(bp, i * 2); }
+#must_use
+fn _bp_db(bp, i) { return vec_get(bp, i * 2 + 1); }
+
+# ================================================================
+# DvnConfig -- configuration for Dark Velvet Noise IR synthesis.
+#   sample_rate                  : u32 Hz
+#   pulse_density_hz             : f32 pulses/second (typical 1000-4000)
+#   duration_seconds             : f32 total IR duration
+#   decay                        : DecayEnvelope pointer
+#   coloration_initial_cutoff_hz : f32 low-pass cutoff at t = 0
+#   coloration_final_cutoff_hz   : f32 low-pass cutoff at t = duration
+#   seed                         : u64 xorshift64 seed
+# ================================================================
+#derive(accessors)
+struct DvnConfig {
+    sample_rate;
+    pulse_density_hz;
+    duration_seconds;
+    decay;
+    coloration_initial_cutoff_hz;
+    coloration_final_cutoff_hz;
+    seed;
+}
+
+#must_use
+fn dvn_config_new(sample_rate, pulse_density_hz, duration_seconds, decay, init_cutoff, final_cutoff, seed) {
+    var c = alloc(sizeof(DvnConfig));
+    DvnConfig_set_sample_rate(c, sample_rate);
+    DvnConfig_set_pulse_density_hz(c, pulse_density_hz);
+    DvnConfig_set_duration_seconds(c, duration_seconds);
+    DvnConfig_set_decay(c, decay);
+    DvnConfig_set_coloration_initial_cutoff_hz(c, init_cutoff);
+    DvnConfig_set_coloration_final_cutoff_hz(c, final_cutoff);
+    DvnConfig_set_seed(c, seed);
+    return c;
+}
+
+# Default configuration (mirrors Rust's Default impl): 48 kHz, 2000
+# pulses/s, 2 s, exponential RT60 = 1.5 s, 16 kHz -> 800 Hz coloration.
+#must_use
+fn dvn_config_default() {
+    var decay = decay_exponential(f64_div(f64_from(3), f64_from(2)));
+    return dvn_config_new(48000, f64_from(2000), f64_from(2), decay, f64_from(16000), f64_from(800),
+    DVN_DEFAULT_SEED);
+}
+
+# ================================================================
+# Xorshift64 -- private PRNG (no external rand dependency).
+# ================================================================
+#derive(accessors)
+struct Xorshift64 { state; }
+
+#must_use
+fn xorshift64_new(seed) {
+    var r = alloc(sizeof(Xorshift64));
+    if (seed == 0) {
+        Xorshift64_set_state(r, 0x5555555555555555);
+    } else {
+        Xorshift64_set_state(r, seed);
+    }
+    return r;
+}
+
+# One xorshift64 step. Bit ops are C-style on the i64 state; the shift
+# semantics only need internal consistency for determinism.
+fn xorshift64_next_u64(rng) {
+    var x = Xorshift64_state(rng);
+    x = x ^ (x << 13);
+    x = x ^ (x >> 7);
+    x = x ^ (x << 17);
+    Xorshift64_set_state(rng, x);
+    return x;
+}
+
+# ================================================================
+# Envelope evaluation.
+# ================================================================
+
+# Piecewise-linear-in-dB envelope value at time t. Outside the breakpoint
+# range the endpoint level is held; empty breakpoints are silent.
+#must_use
+fn piecewise_db_value(bp, t) {
+    var count = _bp_count(bp);
+    if (count == 0) { return 0; }
+    var db0 = _bp_db(bp, 0);
+    if (count == 1) { return f64_pow(f64_from(10), f64_div(db0, f64_from(20))); }
+    if (f64_le(t, _bp_time(bp, 0)) == 1) {
+        return f64_pow(f64_from(10), f64_div(db0, f64_from(20)));
+    }
+    var last_db = _bp_db(bp, count - 1);
+    if (f64_ge(t, _bp_time(bp, count - 1)) == 1) {
+        return f64_pow(f64_from(10), f64_div(last_db, f64_from(20)));
+    }
+    var w = 0;
+    while (w < count - 1) {
+        var t_a = _bp_time(bp, w);
+        var t_b = _bp_time(bp, w + 1);
+        if (f64_ge(t, t_a) == 1) {
+            if (f64_le(t, t_b) == 1) {
+                var db_a = _bp_db(bp, w);
+                var db_b = _bp_db(bp, w + 1);
+                var span = f64_max(f64_sub(t_b, t_a), GOONJ_EPSILON);
+                var frac = f64_div(f64_sub(t, t_a), span);
+                var db = f64_add(db_a, f64_mul(f64_sub(db_b, db_a), frac));
+                return f64_pow(f64_from(10), f64_div(db, f64_from(20)));
+            }
+        }
+        w = w + 1;
+    }
+    return 0;
+}
+
+# Envelope amplitude at time t for the configured decay shape.
+#must_use
+fn envelope_value(env, t) {
+    if (DecayEnvelope_kind(env) == 0) {
+        var rt60 = DecayEnvelope_rt60(env);
+        if (f64_le(rt60, 0) == 1) { return 0; }
+        var expo = f64_div(f64_mul(f64_neg(f64_from(3)), t), rt60);
+        return f64_pow(f64_from(10), expo);
+    }
+    return piecewise_db_value(DecayEnvelope_breakpoints(env), t);
+}
+
+# ================================================================
+# synthesize_dvn_ir -- Dark Velvet Noise impulse response.
+# Returns an empty vec for degenerate configs (sample_rate == 0,
+# duration_seconds <= 0, pulse_density_hz <= 0).
+# ================================================================
+#must_use
+fn synthesize_dvn_ir(config) {
+    var sample_rate = DvnConfig_sample_rate(config);
+    var pulse_density_hz = DvnConfig_pulse_density_hz(config);
+    var duration_seconds = DvnConfig_duration_seconds(config);
+
+    if (sample_rate == 0) { return vec_new(); }
+    if (f64_le(duration_seconds, 0) == 1) { return vec_new(); }
+    if (f64_le(pulse_density_hz, 0) == 1) { return vec_new(); }
+
+    var num_samples = f64_to(f64_mul(duration_seconds, f64_from(sample_rate)));
+    if (num_samples > MAX_IR_SAMPLES) { num_samples = MAX_IR_SAMPLES; }
+    if (num_samples == 0) { return vec_new(); }
+
+    var out = vec_new();
+    var z = 0;
+    while (z < num_samples) {
+        vec_push(out, 0);
+        z = z + 1;
+    }
+
+    # Cell size in samples; saturate at one pulse per sample.
+    var td = f64_max(f64_div(f64_from(sample_rate), pulse_density_hz), F64_ONE);
+    var td_int = f64_to(td);
+    if (td_int < 1) { td_int = 1; }
+
+    var rng = xorshift64_new(DvnConfig_seed(config));
+    var inv_sr = f64_div(F64_ONE, f64_from(sample_rate));
+    var decay = DvnConfig_decay(config);
+
+    # Stage 1: place sparse pulses with envelope amplitude.
+    var cell_start = 0;
+    while (cell_start < num_samples) {
+        var cell_end = cell_start + td_int;
+        if (cell_end > num_samples) { cell_end = num_samples; }
+        var cell_len = cell_end - cell_start;
+        var r = xorshift64_next_u64(rng);
+        # Unsigned-style index in [0, cell_len): C modulo can go negative.
+        var k = r % cell_len;
+        if (k < 0) { k = k + cell_len; }
+        var bit = (r >> 32) & 1;
+        var sign = F64_ONE;
+        if (bit == 1) { sign = f64_neg(F64_ONE); }
+        var idx = cell_start + k;
+        var t = f64_mul(f64_from(idx), inv_sr);
+        var env = envelope_value(decay, t);
+        vec_set(out, idx, f64_mul(sign, env));
+        cell_start = cell_end;
+    }
+
+    # Stage 2: time-varying 1-pole low-pass for "dark" coloration.
+    # a[n] = 1 - exp(-2*pi*fc[n]/fs); fc interpolated linearly between the
+    # initial and final cutoffs (linear-in-a perceptual approximation).
+    var f0 = f64_max(DvnConfig_coloration_initial_cutoff_hz(config), F64_ONE);
+    var f1 = f64_max(DvnConfig_coloration_final_cutoff_hz(config), F64_ONE);
+    var twopi_inv_sr = f64_mul(F64_TAU, inv_sr);
+    var a0 = f64_sub(F64_ONE, f64_exp(f64_mul(f64_neg(twopi_inv_sr), f0)));
+    var a1 = f64_sub(F64_ONE, f64_exp(f64_mul(f64_neg(twopi_inv_sr), f1)));
+    var inv_n = f64_div(F64_ONE, f64_from(num_samples));
+    var y_prev = 0;
+    var n = 0;
+    while (n < num_samples) {
+        var frac = f64_mul(f64_from(n), inv_n);
+        var a = f64_add(a0, f64_mul(f64_sub(a1, a0), frac));
+        var s = vec_get(out, n);
+        var y = f64_add(f64_mul(a, s), f64_mul(f64_sub(F64_ONE, a), y_prev));
+        vec_set(out, n, y);
+        y_prev = y;
+        n = n + 1;
+    }
+
+    return out;
+}

@@ -1,0 +1,259 @@
+# radiosity.cyr -- acoustic radiosity: diffuse energy exchange between
+# surface patches. View factors between wall patches drive an iterative
+# energy-exchange solve until convergence. Source/receiver-independent:
+# once patch-to-patch coupling is computed, moving sources/listeners is
+# nearly free.
+#
+# Ports rust-old/src/radiosity.rs. f32 -> f64 throughout (hisab is
+# f64-only). Rust's `serde` derive is dropped (no serde in Cyrius); the
+# oracle has no serde round-trip test to port. The `Patch` struct carries
+# two inline `[f32; 8]` arrays (reflectance, energy), so it uses the
+# manual struct layout (PatchLayout offsets + store64/load64) the way
+# material.cyr lays out AcousticMaterial. `Vec<Patch>` becomes a stdlib
+# `vec` of Patch pointers; the `(Vec<Patch>, u32, bool)` result becomes a
+# `#derive(accessors)` RadiosityResult struct (converged as 0/1).
+#
+# Requires (from the build/test unit): stdlib math/ganita (F64_*, f64_*),
+# vec (vec_new/push/len/get/set), hisab (hvec3_*), error.cyr
+# (GOONJ_EPSILON), material.cyr (NUM_BANDS, am_absorption_band), and
+# room.cyr (Wall_vertices/material/normal, wall_area). alloc_init() must
+# have run.
+
+# Patch inline layout: centre ptr | normal ptr | area | 8xf64 reflectance
+# | 8xf64 energy.
+enum PatchLayout {
+    PA_CENTRE = 0,
+    PA_NORMAL = 8,
+    PA_AREA   = 16,
+    PA_REFL   = 24,    # offsets 24..88  (8 f64, per-band reflectance)
+    PA_ENERGY = 88,    # offsets 88..152 (8 f64, per-band radiosity energy)
+    PA_SIZE   = 152,
+}
+
+# ================================================================
+# Patch
+# ================================================================
+fn patch_centre(p) { return load64(p + PA_CENTRE); }
+fn patch_normal(p) { return load64(p + PA_NORMAL); }
+fn patch_area(p) { return load64(p + PA_AREA); }
+fn patch_reflectance_band(p, band) { return load64(p + PA_REFL + band * 8); }
+fn patch_energy_band(p, band) { return load64(p + PA_ENERGY + band * 8); }
+
+fn _patch_set_centre(p, v) { store64(p + PA_CENTRE, v); return 0; }
+fn _patch_set_normal(p, v) { store64(p + PA_NORMAL, v); return 0; }
+fn _patch_set_area(p, v) { store64(p + PA_AREA, v); return 0; }
+fn _patch_set_reflectance(p, band, v) { store64(p + PA_REFL + band * 8, v); return 0; }
+fn _patch_set_energy(p, band, v) { store64(p + PA_ENERGY + band * 8, v); return 0; }
+
+# Build a patch from centre/normal (HVec3 ptrs), area, and a reflectance
+# buffer (8 f64). Per-band energy is initialised to zero.
+#must_use
+fn patch_new(centre, normal, area, reflectance) {
+    var p = alloc(PA_SIZE);
+    _patch_set_centre(p, centre);
+    _patch_set_normal(p, normal);
+    _patch_set_area(p, area);
+    var b = 0;
+    while (b < NUM_BANDS) {
+        _patch_set_reflectance(p, b, load64(reflectance + b * 8));
+        _patch_set_energy(p, b, 0);
+        b = b + 1;
+    }
+    return p;
+}
+
+# ================================================================
+# Patch generation
+# ================================================================
+# Subdivide room walls into patches for radiosity. Each wall becomes a
+# grid of approximately `patches_per_wall` patches (capped at 100/wall).
+# `walls` is a vec of Wall pointers; returns a vec of Patch pointers.
+#must_use
+fn create_patches(walls, patches_per_wall) {
+    var ppw = patches_per_wall;
+    if (ppw > 100) { ppw = 100; }
+    var patches = vec_new();
+
+    var nw = vec_len(walls);
+    var wi = 0;
+    while (wi < nw) {
+        var wall = vec_get(walls, wi);
+        var area = wall_area(wall);
+        var verts = Wall_vertices(wall);
+        var nverts = vec_len(verts);
+
+        var skip = 0;
+        if (f64_lt(area, GOONJ_EPSILON) == 1) { skip = 1; }
+        if (nverts < 3) { skip = 1; }
+
+        if (skip == 0) {
+            # Grid side n = ceil(sqrt(patches_per_wall)), at least 1.
+            var n = f64_to(f64_ceil(f64_sqrt(f64_from(ppw))));
+            if (n < 1) { n = 1; }
+            var patch_area = f64_div(area, f64_from(n * n));
+
+            # Quad corners (degenerate walls clamp toward v0 / v2).
+            var v0 = vec_get(verts, 0);
+            var v1 = v0;
+            if (nverts > 1) { v1 = vec_get(verts, 1); }
+            var v2 = v0;
+            if (nverts > 2) { v2 = vec_get(verts, 2); }
+            var v3 = v2;
+            if (nverts > 3) { v3 = vec_get(verts, 3); }
+
+            # Per-band reflectance = 1 - absorption.
+            var material = Wall_material(wall);
+            var refl = alloc(NUM_BANDS * 8);
+            var band = 0;
+            while (band < NUM_BANDS) {
+                store64(refl + band * 8, f64_sub(F64_ONE, am_absorption_band(material, band)));
+                band = band + 1;
+            }
+
+            var normal = Wall_normal(wall);
+            var iy = 0;
+            while (iy < n) {
+                var ix = 0;
+                while (ix < n) {
+                    # Bilinear patch centre on the quad.
+                    var u = f64_div(f64_add(f64_from(ix), F64_HALF), f64_from(n));
+                    var v = f64_div(f64_add(f64_from(iy), F64_HALF), f64_from(n));
+                    var w0 = f64_mul(f64_sub(F64_ONE, u), f64_sub(F64_ONE, v));
+                    var w1 = f64_mul(u, f64_sub(F64_ONE, v));
+                    var w2 = f64_mul(u, v);
+                    var w3 = f64_mul(f64_sub(F64_ONE, u), v);
+                    var centre = hvec3_add(
+                    hvec3_add(hvec3_scale(v0, w0), hvec3_scale(v1, w1)),
+                    hvec3_add(hvec3_scale(v2, w2), hvec3_scale(v3, w3)));
+                    vec_push(patches, patch_new(centre, normal, patch_area, refl));
+                    ix = ix + 1;
+                }
+                iy = iy + 1;
+            }
+        }
+        wi = wi + 1;
+    }
+    return patches;
+}
+
+# ================================================================
+# Form factor
+# ================================================================
+# Form factor between two patches:
+#   F_ij = (cos t_i * cos t_j) / (pi * r^2) * A_j
+# where t_i/t_j are the angles from the patch normals to the connecting
+# line and r is the centre-to-centre distance.
+#must_use
+fn _form_factor(p_i, p_j) {
+    var diff = hvec3_sub(patch_centre(p_j), patch_centre(p_i));
+    var r2 = hvec3_dot(diff, diff);
+    if (f64_lt(r2, GOONJ_EPSILON) == 1) { return 0; }
+    var r = f64_sqrt(r2);
+    var dir = hvec3_scale(diff, f64_div(F64_ONE, r));
+
+    var cos_i = f64_max(hvec3_dot(dir, patch_normal(p_i)), 0);
+    var cos_j = f64_max(hvec3_dot(hvec3_neg(dir), patch_normal(p_j)), 0);
+
+    return f64_div(f64_mul(f64_mul(cos_i, cos_j), patch_area(p_j)), f64_mul(F64_PI, r2));
+}
+
+# ================================================================
+# RadiosityResult
+# ================================================================
+# Final per-patch energy distribution, iteration count, and convergence
+# flag (1 = converged within tolerance, 0 = hit max_iterations).
+#derive(accessors)
+struct RadiosityResult { patches; iterations; converged; }
+
+#must_use
+fn _radiosity_result(patches, iterations, converged) {
+    var r = alloc(sizeof(RadiosityResult));
+    RadiosityResult_set_patches(r, patches);
+    RadiosityResult_set_iterations(r, iterations);
+    RadiosityResult_set_converged(r, converged);
+    return r;
+}
+
+# ================================================================
+# Solver
+# ================================================================
+# Solve acoustic radiosity for `patches` (vec of Patch ptrs) with a
+# source patch emitting `source_energy` (a buffer of 8 f64). Iterates
+# energy exchange until max_change < tolerance or `max_iterations`.
+#must_use
+fn solve_radiosity(patches, source_patch, source_energy, max_iterations, tolerance) {
+    var n = vec_len(patches);
+    if (n == 0) { return _radiosity_result(patches, 0, 1); }
+    if (source_patch >= n) { return _radiosity_result(patches, 0, 1); }
+
+    # Initialise source patch energy.
+    var src = vec_get(patches, source_patch);
+    var sb = 0;
+    while (sb < NUM_BANDS) {
+        _patch_set_energy(src, sb, load64(source_energy + sb * 8));
+        sb = sb + 1;
+    }
+
+    # Pre-allocate the incoming buffer (n x NUM_BANDS f64) once.
+    var incoming = alloc(n * NUM_BANDS * 8);
+
+    var iteration = 0;
+    while (iteration < max_iterations) {
+        var max_change = 0;
+
+        # Clear the incoming buffer.
+        var ci = 0;
+        while (ci < n * NUM_BANDS) {
+            store64(incoming + ci * 8, 0);
+            ci = ci + 1;
+        }
+
+        # Gather: accumulate incoming energy through form factors.
+        var i = 0;
+        while (i < n) {
+            var j = 0;
+            while (j < n) {
+                if (i != j) {
+                    var ff = _form_factor(vec_get(patches, i), vec_get(patches, j));
+                    if (f64_ge(ff, GOONJ_EPSILON) == 1) {
+                        var pj = vec_get(patches, j);
+                        var bg = 0;
+                        while (bg < NUM_BANDS) {
+                            var slot = incoming + (i * NUM_BANDS + bg) * 8;
+                            var contrib = f64_mul(load64(pj + PA_ENERGY + bg * 8), ff);
+                            store64(slot, f64_add(load64(slot), contrib));
+                            bg = bg + 1;
+                        }
+                    }
+                }
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+
+        # Scatter: update patch energies (source re-emits each iteration).
+        i = 0;
+        while (i < n) {
+            var pi = vec_get(patches, i);
+            var bs = 0;
+            while (bs < NUM_BANDS) {
+                var base = 0;
+                if (i == source_patch) { base = load64(source_energy + bs * 8); }
+                var inc = load64(incoming + (i * NUM_BANDS + bs) * 8);
+                var new_energy = f64_add(base, f64_mul(inc, patch_reflectance_band(pi, bs)));
+                var change = f64_abs(f64_sub(new_energy, patch_energy_band(pi, bs)));
+                max_change = f64_max(max_change, change);
+                _patch_set_energy(pi, bs, new_energy);
+                bs = bs + 1;
+            }
+            i = i + 1;
+        }
+
+        if (f64_lt(max_change, tolerance) == 1) {
+            return _radiosity_result(patches, iteration + 1, 1);
+        }
+        iteration = iteration + 1;
+    }
+
+    return _radiosity_result(patches, max_iterations, 0);
+}

@@ -42,9 +42,9 @@ the relevant row whenever a module's status changes.
 | error             |  60 | ✅ | Integer codes + `goonj_is_err`/`goonj_err_name`; shared `GOONJ_EPSILON`, `F64_NEG_INF`. |
 | propagation       | 831 | ✅ | Scalar core + Vec3 wind/temp profiles + Snell ray tracers (`refract_ray_step`, `trace_ray_atmospheric`). 44 tests green. Established the closure → fn-pointer+ctx pattern (`TraceCtx`) and tuple→struct (`RayStep`). |
 | resonance         | 194 | ✅ | Room modes, Schroeder freq, modal density. `Vec<f32>` mode lists → stdlib `vec` (f64 in 8-byte slots) + f64 insertion sort. 15 tests green. Established the dynamic-array idiom. |
-| ambisonics        | 259 | ⬜ | B-format + 3rd-order HOA. |
-| dark_velvet_noise | 405 | ⬜ | Sparse stochastic late reverb (RNG state needed). |
-| scattering        | 165 | ⬜ | Cosine-weighted hemisphere sampling (RNG). |
+| ambisonics        | 259 | ✅ | B-format + 3rd-order HOA (real SH, ACN/SN3D). 20 tests. |
+| dark_velvet_noise | 405 | ✅ | Sparse stochastic late reverb. Self-contained **xorshift64** PRNG (C-style bit ops `^ << >> &`) — no stdlib `random` needed. 18 tests. |
+| scattering        | 165 | ✅ | Cosine-weighted hemisphere sampling. **Randoms are caller-supplied params** (`u1,u2`) — no internal RNG. orthonormal_basis tuple → struct. 211 tests (100-sample sweep). |
 | logging           |  33 | ⬜ | Tracing shim → `sakshi`. |
 
 ### L1 — the spine
@@ -68,7 +68,7 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 | fdn            | 252 | ✅ | 14 | propagation |
 | gfpe           | 589 | ✅ | 23 | propagation |
 | diffusion      | 220 | ✅ |  7 | propagation |
-| fdtd           | 513 | ⬜ | — | hybrid, material |
+| fdtd           | 513 | ✅ | 39 | hybrid, material |
 | outdoor        | 262 | ✅ | 28 | material, propagation |
 | portal         | 203 | ✅ | 14 | material, propagation |
 | udfa           | 202 | ✅ | 15 | material, propagation |
@@ -78,12 +78,12 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 
 ### L3 — acceleration & sources
 
-| Module       |  LOC | Status | Deps |
-|--------------|-----:|--------|------|
-| ray          | 1146 | ⬜ | material, room — **hot path**, benchmark |
-| radiosity    |  283 | ⬜ | material, room |
-| image_source |  634 | ⬜ | material, propagation, room |
-| dwm          | 1407 | ⬜ | fdtd, hybrid, material — largest module |
+| Module       |  LOC | Status | Tests | Deps |
+|--------------|-----:|--------|------:|------|
+| ray          | 1146 | ⬜ | — | material, room — **hot path**, benchmark; solo |
+| radiosity    |  283 | ✅ | 7 | material, room |
+| image_source |  634 | ✅ | 30 | material, propagation, room |
+| dwm          | 1407 | ⬜ | — | fdtd ✅, hybrid, material — largest module |
 
 ### L4 — energy & metrics
 
@@ -106,10 +106,18 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 | integration/kiran   | 168 | ⬜ | (consumer API) |
 | integration/soorat  | 165 | ⬜ | (consumer API) |
 
-**Totals:** 17 / 37 done, 20 pending · 14,630 Rust lines · 415 parity assertions green.
-Done: error, propagation, material, resonance + the L2 batch (hybrid, directivity,
-metamaterial, room, fdn, gfpe, diffusion, outdoor, portal, udfa, underwater,
-vibroacoustics, bridge).
+**Totals:** 23 / 37 done, 14 pending · 14,630 Rust lines · **740 parity assertions green**.
+Toolchain: cyrius **6.3.13**. Two parallel workflows landed the bulk: the L2 batch
+(13 modules) and wave 2 (ambisonics, scattering, dark_velvet_noise, fdtd,
+radiosity, image_source). Remaining: ray (hot path, solo), dwm (needs nothing more
+— fdtd done), logging (→ sakshi); then L4 (diffuse, diffraction, analysis, beam),
+L5 (impulse, coupled), L6 (wav, binaural, integration ×3).
+
+### RNG / randomness (no new pattern needed)
+- **scattering** takes `u1,u2` uniform randoms as **parameters** (caller's RNG).
+- **dark_velvet_noise** ships its own **xorshift64** via C-style bit ops
+  (`^ << >> &`); determinism tests don't depend on exact shift semantics.
+No stdlib `random` dependency was introduced.
 
 ## Note on the parallel workflow
 

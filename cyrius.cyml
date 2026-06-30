@@ -5,7 +5,7 @@ description = "goonj — acoustics engine (sound propagation, room simulation, i
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/goonj"
 language = "cyrius"
-cyrius = "6.3.12"
+cyrius = "6.3.13"
 
 [build]
 entry = "src/main.cyr"

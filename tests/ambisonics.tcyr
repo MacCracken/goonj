@@ -1,0 +1,105 @@
+# ambisonics.tcyr -- parity tests for src/ambisonics.cyr
+# Ported from the #[test] blocks in rust-old/src/ambisonics.rs.
+# (bformat_ir_serializes omitted -- no serde in Cyrius.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/ambisonics.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+# pointer is non-null
+fn nz(p) {
+    if (p == 0) { return 0; }
+    return 1;
+}
+
+# All slots of vec `v` exactly zero?
+fn all_zero(v) {
+    var n = vec_len(v);
+    var i = 0;
+    while (i < n) {
+        if (vec_get(v, i) == 0) {
+            i = i + 1;
+        } else {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("bformat_front_direction");
+var ir_front = new_bformat_ir(100, 48000);
+encode_bformat(F64_ONE, hvec3_unit_x(), 0, ir_front);
+# SN3D: W = 1.0, X = direction.x = 1.0, Y/Z = 0.
+assert(approx(vec_get(BFormatIr_w(ir_front), 0), F64_ONE, TOL_1E2), "W should be 1.0");
+assert(approx(vec_get(BFormatIr_x(ir_front), 0), F64_ONE, TOL_1E2), "X should be 1.0");
+assert(approx(vec_get(BFormatIr_y(ir_front), 0), 0, TOL_1E2), "Y ~ 0");
+assert(approx(vec_get(BFormatIr_z(ir_front), 0), 0, TOL_1E2), "Z ~ 0");
+
+# ================================================================
+test_group("bformat_up_direction");
+var ir_up = new_bformat_ir(100, 48000);
+encode_bformat(F64_ONE, hvec3_unit_y(), 0, ir_up);
+assert(approx(vec_get(BFormatIr_w(ir_up), 0), F64_ONE, TOL_1E2), "W should be 1.0");
+assert(approx(vec_get(BFormatIr_x(ir_up), 0), 0, TOL_1E2), "X ~ 0");
+assert(approx(vec_get(BFormatIr_y(ir_up), 0), F64_ONE, TOL_1E2), "Y should be 1.0");
+assert(approx(vec_get(BFormatIr_z(ir_up), 0), 0, TOL_1E2), "Z ~ 0");
+
+# ================================================================
+test_group("bformat_out_of_bounds_safe");
+var ir_oob = new_bformat_ir(10, 48000);
+encode_bformat(F64_ONE, hvec3_unit_x(), 100, ir_oob);  # past end -> no write
+assert(all_zero(BFormatIr_w(ir_oob)), "no data written past end");
+
+# ================================================================
+test_group("hoa_order_1_has_4_channels");
+var ir_o1 = new_hoa_ir(1, 100, 48000);
+assert_eq(vec_len(HoaIr_channels(ir_o1)), 4, "order 1 -> 4 channels");
+
+# ================================================================
+test_group("hoa_order_3_has_16_channels");
+var ir_o3 = new_hoa_ir(3, 100, 48000);
+assert_eq(vec_len(HoaIr_channels(ir_o3)), 16, "order 3 -> 16 channels");
+
+# ================================================================
+test_group("hoa_encode_front");
+var ir_hf = new_hoa_ir(1, 100, 48000);
+encode_hoa(F64_ONE, hvec3_unit_z(), 0, ir_hf);
+# ACN 0 (W) should have contribution.
+var w0 = vec_get(vec_get(HoaIr_channels(ir_hf), 0), 0);
+assert(f64_gt(f64_abs(w0), 0), "W should have content");
+
+# ================================================================
+test_group("spherical_harmonics_order_0");
+var sh0 = spherical_harmonics(0, 0, 0);
+assert(nz(sh0), "sh buffer allocated (len 16)");
+assert(approx(load64(sh0 + 0 * 8), F64_ONE, TOL_1E2), "sh[0] ~ 1.0");
+# Higher orders zero for order=0 input.
+assert_eq(load64(sh0 + 1 * 8), 0, "sh[1] = 0 for order 0");
+assert_eq(load64(sh0 + 15 * 8), 0, "sh[15] = 0 for order 0");
+
+# ================================================================
+test_group("spherical_harmonics_order_1_has_values");
+var d05 = f64_div(F64_ONE, F64_TWO);            # 0.5
+var d03 = f64_div(f64_from(3), f64_from(10));    # 0.3
+var sh1 = spherical_harmonics(1, d05, d03);
+assert(nz(sh1), "sh buffer allocated (len 16)");
+assert(f64_gt(f64_abs(load64(sh1 + 0 * 8)), 0), "sh[0] nonzero");
+
+# ================================================================
+test_group("spherical_harmonics_order_3_all_populated");
+var sh3 = spherical_harmonics(3, d05, d03);
+assert(nz(sh3), "sh buffer allocated (len 16)");
+assert(approx(load64(sh3 + 0 * 8), F64_ONE, TOL_1E2), "sh[0] ~ 1.0");
+
+var rc = assert_summary();
+syscall(60, rc);

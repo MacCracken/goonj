@@ -1,0 +1,196 @@
+# dark_velvet_noise.tcyr -- parity tests for src/dark_velvet_noise.cyr
+# Ported from the #[test] blocks in rust-old/src/dark_velvet_noise.rs.
+# (config_serialization_roundtrip omitted -- no serde in Cyrius.)
+
+include "src/error.cyr"
+include "src/dark_velvet_noise.cyr"
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# 1.5 s, the canonical RT60 used across several tests.
+fn rt60_15() { return f64_div(f64_from(3), f64_from(2)); }
+
+# config_2s analogue with a chosen seed: 48 kHz, 2000 pulses/s, 2 s,
+# exponential RT60 = 1.5 s, 16 kHz -> 800 Hz coloration.
+fn config_seed(seed) {
+    var decay = decay_exponential(rt60_15());
+    return dvn_config_new(48000, f64_from(2000), f64_from(2), decay, f64_from(16000), f64_from(800), seed);
+}
+
+fn config_2s() { return config_seed(42); }
+
+alloc_init();
+
+# ================================================================
+test_group("synthesize length & content");
+assert_eq(vec_len(synthesize_dvn_ir(config_2s())), 96000, "2 s @ 48 kHz -> 96000 samples");
+
+var ir_e = synthesize_dvn_ir(config_2s());
+var energy = 0;
+var ei = 0;
+var en = vec_len(ir_e);
+while (ei < en) {
+    var s = vec_get(ir_e, ei);
+    energy = f64_add(energy, f64_mul(s, s));
+    ei = ei + 1;
+}
+assert(f64_gt(energy, 0), "synthesized IR has nonzero energy");
+
+# Default config also yields a 96000-sample IR.
+assert_eq(vec_len(synthesize_dvn_ir(dvn_config_default())), 96000, "default config -> 96000 samples");
+
+# ================================================================
+test_group("rt60_recovery_within_4_percent");
+var target_rt60 = rt60_15();
+var rt_decay = decay_exponential(target_rt60);
+var rt_dur = f64_mul(target_rt60, f64_div(f64_from(3), f64_from(2)));
+var rt_cfg = dvn_config_new(48000, f64_from(4000), rt_dur, rt_decay, f64_from(20000), f64_from(20000), 1);
+var rt_ir = synthesize_dvn_ir(rt_cfg);
+var rt_n = vec_len(rt_ir);
+
+var edc = vec_new();
+var fi = 0;
+while (fi < rt_n) { vec_push(edc, 0); fi = fi + 1; }
+var cum = 0;
+var ri = rt_n - 1;
+while (ri >= 0) {
+    var sv = vec_get(rt_ir, ri);
+    cum = f64_add(cum, f64_mul(sv, sv));
+    vec_set(edc, ri, cum);
+    ri = ri - 1;
+}
+var maxv = f64_max(vec_get(edc, 0), GOONJ_EPSILON);
+var rt_target = f64_mul(maxv, f64_div(F64_ONE, f64_from(1000000)));
+var t60_sample = rt_n;
+var found = 0;
+var ci = 0;
+while (ci < rt_n) {
+    if (found == 0) {
+        if (f64_le(vec_get(edc, ci), rt_target) == 1) {
+            t60_sample = ci;
+            found = 1;
+        }
+    }
+    ci = ci + 1;
+}
+assert(t60_sample < rt_n, "EDC reached -60 dB before IR end");
+var measured = f64_div(f64_from(t60_sample), f64_from(48000));
+var rt_err = f64_div(f64_abs(f64_sub(measured, target_rt60)), target_rt60);
+assert(f64_lt(rt_err, f64_div(f64_from(4), f64_from(100))), "RT60 error < 4%");
+
+# ================================================================
+test_group("coloration_darkens_tail");
+var col_decay = decay_exponential(f64_div(f64_from(8), f64_from(10)));
+var col_cfg = dvn_config_new(48000, f64_from(4000), f64_from(1), col_decay, f64_from(16000), f64_from(500), 7);
+var col_ir = synthesize_dvn_ir(col_cfg);
+var col_n = vec_len(col_ir);
+var early = 0;
+var di = 0;
+while (di < 4800) {
+    var de = f64_sub(vec_get(col_ir, di + 1), vec_get(col_ir, di));
+    early = f64_add(early, f64_mul(de, de));
+    di = di + 1;
+}
+var late = 0;
+var lj = col_n - 4801;
+while (lj <= col_n - 2) {
+    var dl = f64_sub(vec_get(col_ir, lj + 1), vec_get(col_ir, lj));
+    late = f64_add(late, f64_mul(dl, dl));
+    lj = lj + 1;
+}
+assert(f64_gt(early, late), "early HF energy exceeds late under darkening");
+
+# ================================================================
+test_group("deterministic_for_same_seed");
+var det_a = synthesize_dvn_ir(config_2s());
+var det_b = synthesize_dvn_ir(config_2s());
+var mismatches = 0;
+var mi = 0;
+var mn = vec_len(det_a);
+while (mi < mn) {
+    var eq = 0;
+    if (vec_get(det_a, mi) == vec_get(det_b, mi)) { eq = 1; }
+    if (eq == 0) { mismatches = mismatches + 1; }
+    mi = mi + 1;
+}
+assert_eq(mismatches, 0, "same seed -> identical IR");
+
+# ================================================================
+test_group("different_seeds_differ");
+var ds_a = synthesize_dvn_ir(config_seed(1));
+var ds_b = synthesize_dvn_ir(config_seed(2));
+var diffsum = 0;
+var xi = 0;
+var xn = vec_len(ds_a);
+while (xi < xn) {
+    diffsum = f64_add(diffsum, f64_abs(f64_sub(vec_get(ds_a, xi), vec_get(ds_b, xi))));
+    xi = xi + 1;
+}
+assert(f64_gt(diffsum, 0), "different seeds -> different IRs");
+
+# ================================================================
+test_group("degenerate configs return empty");
+var d_decay = decay_exponential(rt60_15());
+var zero_dur = dvn_config_new(48000, f64_from(2000), f64_from(0), d_decay, f64_from(16000), f64_from(800), 42);
+assert_eq(vec_len(synthesize_dvn_ir(zero_dur)), 0, "zero duration -> empty");
+var zero_sr = dvn_config_new(0, f64_from(2000), f64_from(2), d_decay, f64_from(16000), f64_from(800), 42);
+assert_eq(vec_len(synthesize_dvn_ir(zero_sr)), 0, "zero sample rate -> empty");
+var neg_dens = dvn_config_new(48000, f64_neg(F64_ONE), f64_from(2), d_decay, f64_from(16000), f64_from(800), 42);
+assert_eq(vec_len(synthesize_dvn_ir(neg_dens)), 0, "negative pulse density -> empty");
+
+# ================================================================
+test_group("saturation_density_does_not_panic");
+var sat_decay = decay_exponential(rt60_15());
+var sat_cfg = dvn_config_new(48000, f64_from(100000), f64_from(2), sat_decay, f64_from(16000), f64_from(800), 42);
+assert_eq(vec_len(synthesize_dvn_ir(sat_cfg)), 96000, "saturation density still 96000 samples");
+
+# ================================================================
+test_group("piecewise_envelope_double_slope");
+var bp = vec_new();
+vec_push(bp, f64_from(0));
+vec_push(bp, f64_from(0));
+vec_push(bp, f64_div(f64_from(3), f64_from(10)));
+vec_push(bp, f64_neg(f64_from(10)));
+vec_push(bp, f64_from(1));
+vec_push(bp, f64_neg(f64_from(60)));
+var pw_decay = decay_piecewise_db(bp);
+var pw_cfg = dvn_config_new(48000, f64_from(4000), f64_from(1), pw_decay, f64_from(20000), f64_from(20000), 9);
+var pw_ir = synthesize_dvn_ir(pw_cfg);
+assert_eq(vec_len(pw_ir), 48000, "1 s @ 48 kHz -> 48000 samples");
+var nonzero = 0;
+var pi = 0;
+var pn = vec_len(pw_ir);
+while (pi < pn) {
+    if (f64_gt(f64_abs(vec_get(pw_ir, pi)), 0) == 1) { nonzero = 1; }
+    pi = pi + 1;
+}
+assert(nonzero, "piecewise IR has nonzero content");
+
+# ================================================================
+test_group("piecewise envelope edge cases");
+# Empty breakpoints are silent.
+var empty_env = decay_piecewise_db(vec_new());
+assert_eq(f64_to(envelope_value(empty_env, F64_HALF)), 0, "empty breakpoints -> silent");
+# Single breakpoint holds its level (-20 dB -> 0.1).
+var one_bp = vec_new();
+vec_push(one_bp, f64_from(0));
+vec_push(one_bp, f64_neg(f64_from(20)));
+var single_env = decay_piecewise_db(one_bp);
+var single_v = envelope_value(single_env, F64_ONE);
+assert(approx(single_v, f64_div(F64_ONE, f64_from(10)), f64_div(F64_ONE, f64_from(1000))), "single bp holds -20 dB");
+
+# ================================================================
+test_group("exponential envelope");
+# Amplitude at t = RT60 is 10^-3 (-60 dB).
+var exp_env = decay_exponential(rt60_15());
+var exp_v = envelope_value(exp_env, rt60_15());
+assert(approx(exp_v, f64_div(F64_ONE, f64_from(1000)), f64_div(F64_ONE, f64_from(10000))), "amp at RT60 = 10^-3");
+# Zero RT60 returns zero.
+var zero_env = decay_exponential(f64_from(0));
+assert_eq(f64_to(envelope_value(zero_env, F64_ONE)), 0, "zero RT60 -> 0");
+
+var rc = assert_summary();
+syscall(60, rc);

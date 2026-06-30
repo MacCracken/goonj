@@ -1,5 +1,17 @@
+# Cyrius build output (regenerated per-build; never committed)
+build/
+
+# Claude Code state + transient workflow worktrees
+.claude/
+
+# Core dumps
+*.core
+
+# Rust-era (rust-old/ reference tree)
 target/
 Cargo.lock
+
+# Editors / OS
 *.swp
 .DS_Store
 coverage/

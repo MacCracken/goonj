@@ -1,0 +1,64 @@
+# radiosity.tcyr -- parity tests for src/radiosity.cyr
+# Ported from the #[test] blocks in rust-old/src/radiosity.rs.
+# (No serde_roundtrip test exists in the oracle; nothing to drop.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/room.cyr"
+include "src/radiosity.cyr"
+
+# Tolerances (f64 bit patterns).
+var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+
+# Fill an 8xf64 buffer with one value.
+fn fill8(buf, v) {
+    var i = 0;
+    while (i < 8) { store64(buf + i * 8, v); i = i + 1; }
+    return buf;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("create_patches_shoebox");
+# 10 x 8 x 3 m concrete shoebox, 4 patches/wall.
+var geom = room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+var sp = create_patches(RoomGeometry_walls(geom), 4);
+assert(vec_len(sp) > 0, "patches non-empty");
+# 6 walls x ceil(sqrt(4))^2 = 4 patches each -> at least 6.
+assert(vec_len(sp) >= 6, "at least 6 patches");
+
+# ================================================================
+test_group("form_factor_facing_patches");
+var refl = fill8(alloc(64), pct(90));
+# p1 at origin facing +X, p2 5 m along +X facing -X.
+var fp1 = patch_new(hvec3_zero(), hvec3_unit_x(), F64_ONE, refl);
+var fp2 = patch_new(hvec3_new(f64_from(5), 0, 0), hvec3_neg(hvec3_unit_x()), F64_ONE, refl);
+assert(f64_gt(_form_factor(fp1, fp2), 0), "facing patches have positive form factor");
+
+# ================================================================
+test_group("form_factor_perpendicular_zero");
+# p1 at origin facing +X, p2 5 m along +Y facing +Y -> near-zero FF.
+var pp1 = patch_new(hvec3_zero(), hvec3_unit_x(), F64_ONE, refl);
+var pp2 = patch_new(hvec3_new(0, f64_from(5), 0), hvec3_unit_y(), F64_ONE, refl);
+assert(f64_lt(_form_factor(pp1, pp2), TOL_1E3), "perpendicular patches have near-zero FF");
+
+# ================================================================
+test_group("radiosity_converges");
+var geom2 = room_geometry_shoebox(f64_from(5), f64_from(4), f64_from(3), acoustic_material_concrete());
+var patches = create_patches(RoomGeometry_walls(geom2), 1);
+var se = fill8(alloc(64), F64_ONE);
+var result = solve_radiosity(patches, 0, se, 50, TOL_1E2);
+assert(RadiosityResult_iterations(result) > 0, "performed at least one iteration");
+
+# ================================================================
+test_group("radiosity_empty_patches");
+var se2 = fill8(alloc(64), F64_ONE);
+var empty = solve_radiosity(vec_new(), 0, se2, 10, TOL_1E2);
+assert_eq(RadiosityResult_converged(empty), 1, "empty patches -> converged");
+assert_eq(RadiosityResult_iterations(empty), 0, "empty patches -> 0 iterations");
+
+var rc = assert_summary();
+syscall(60, rc);

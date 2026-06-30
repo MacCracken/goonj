@@ -1,0 +1,96 @@
+# scattering.tcyr -- parity tests for src/scattering.cyr
+# Ported from the #[test] blocks in rust-old/src/scattering.rs.
+# serde_roundtrip: none in the oracle (nothing to drop).
+# Stdlib (math/ganita/vec) auto-included via cyrius.cyml.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/scattering.cyr"
+
+# Tolerances / literals (f64 bit patterns)
+var TOL_1E2  = 0x3F847AE147AE147B;   # 0.01
+var NEG_0_01 = 0xBF847AE147AE147B;   # -0.01
+var V_0_707  = 0x3FE69FBE76C8B439;   # 0.707
+var V_0_618  = 0x3FE3C6A7EF9DB22D;   # 0.618
+var V_0_3    = 0x3FD3333333333333;   # 0.3
+var V_0_7    = 0x3FE6666666666666;   # 0.7
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# 1 if tangent/bitangent of orthonormal_basis(n) are mutually perpendicular
+# to n and each other (each |dot| < 0.01).
+fn basis_perp(n) {
+    var basis = orthonormal_basis(n);
+    var t = Basis_tangent(basis);
+    var b = Basis_bitangent(basis);
+    if (f64_lt(f64_abs(hvec3_dot(n, t)), TOL_1E2) == 0) { return 0; }
+    if (f64_lt(f64_abs(hvec3_dot(n, b)), TOL_1E2) == 0) { return 0; }
+    if (f64_lt(f64_abs(hvec3_dot(t, b)), TOL_1E2) == 0) { return 0; }
+    return 1;
+}
+
+# 1 if scatter_direction is unit length at the given scattering coefficient.
+fn scatter_is_unit(specular, normal, s) {
+    var dir = scatter_direction(specular, normal, s, V_0_3, V_0_7);
+    return approx(hvec3_length(dir), F64_ONE, TOL_1E2);
+}
+
+alloc_init();
+
+# ================================================================
+test_group("cosine_hemisphere_above_surface");
+# Sweep 100 (u1, u2) pairs; every sample is above the surface and unit length.
+var normal_y = hvec3_unit_y();
+var i = 0;
+while (i < 100) {
+    var u1 = f64_div(f64_from(i), f64_from(100));
+    # u2 = (i * 0.618) % 1.0  (non-negative, so fmod == v - floor(v)).
+    var raw = f64_mul(f64_from(i), V_0_618);
+    var u2 = f64_sub(raw, f64_floor(raw));
+    var dir = cosine_hemisphere_sample(normal_y, u1, u2);
+    assert(f64_ge(hvec3_dot(dir, normal_y), NEG_0_01) == 1, "sample above surface");
+    assert(approx(hvec3_length(dir), F64_ONE, TOL_1E2), "sample unit length");
+    i = i + 1;
+}
+
+# ================================================================
+test_group("scatter_zero_returns_specular");
+# Zero scattering returns the specular direction unchanged.
+var spec_z = hvec3_new(F64_HALF, F64_HALF, V_0_707);
+var res_z = scatter_direction(spec_z, normal_y, 0, F64_HALF, F64_HALF);
+assert(f64_lt(hvec3_length(hvec3_sub(res_z, spec_z)), TOL_1E2) == 1, "zero scattering -> specular");
+
+# ================================================================
+test_group("scatter_one_ignores_specular");
+# Full scatter with specular pointing into the surface still samples the
+# hemisphere above the surface.
+var spec_into = hvec3_neg(hvec3_unit_y());
+var res_one = scatter_direction(spec_into, normal_y, F64_ONE, F64_HALF, F64_HALF);
+assert(f64_ge(hvec3_dot(res_one, normal_y), NEG_0_01) == 1, "full scatter above surface");
+
+# ================================================================
+test_group("scatter_direction_normalized");
+# Normalized over the full scattering range [0, 0.25, 0.5, 0.75, 1.0].
+var spec_n = hvec3_normalize(hvec3_new(F64_ONE, 0, f64_neg(F64_ONE)));
+var s_025 = f64_div(F64_ONE, f64_from(4));
+var s_075 = f64_div(f64_from(3), f64_from(4));
+assert(scatter_is_unit(spec_n, normal_y, 0), "normalized at s=0");
+assert(scatter_is_unit(spec_n, normal_y, s_025), "normalized at s=0.25");
+assert(scatter_is_unit(spec_n, normal_y, F64_HALF), "normalized at s=0.5");
+assert(scatter_is_unit(spec_n, normal_y, s_075), "normalized at s=0.75");
+assert(scatter_is_unit(spec_n, normal_y, F64_ONE), "normalized at s=1.0");
+
+# ================================================================
+test_group("orthonormal_basis_perpendicular");
+# Tangent and bitangent are perpendicular to the normal and each other.
+assert(basis_perp(hvec3_unit_x()), "basis perpendicular for X");
+assert(basis_perp(hvec3_unit_y()), "basis perpendicular for Y");
+assert(basis_perp(hvec3_unit_z()), "basis perpendicular for Z");
+assert(basis_perp(hvec3_normalize(hvec3_new(F64_ONE, F64_ONE, F64_ONE))), "basis perpendicular for (1,1,1)");
+
+var rc = assert_summary();
+syscall(60, rc);

@@ -153,6 +153,29 @@ enum SysNrAgnosNet {
 }
 
 # ================================================================
+# Process-exec / framebuffer / input / sched band — the AGNOS base-system
+# enabler. As kavach, bote, t-ron, thoth, phylax, aegis port to --agnos they
+# land on the process/exec syscalls (spawn + capture tool subprocesses) and the
+# klug ring (read the audit/log). Filed proactively so the named wrappers exist
+# before each consumer hits a one-at-a-time link error. ABI: rax=num,
+# rdi/rsi/rdx/r10 = a1..a4 (#39 blit rides a4=r10). Numbers verified from agnos
+# kernel/core/syscall.cyr + syscall_hw.cyr (the kernel dispatches 0–63
+# contiguous; these are the 8 the peer previously omitted: 36–39, 42–44, 62).
+# It is `klug`, NOT `klog` (the subsystem is core/klug.cyr; klog is dead).
+# See issue 2026-06-30-agnos-syscall-peer-incomplete-8-wrappers.md.
+# ================================================================
+enum SysNrAgnosProc {
+    SYS_KLUG = 36;          # klug(buf, len) → bytes/-1; copy the klug log ring (dmesg tail)
+    SYS_EXECWAIT = 37;      # execwait(path, pathlen) → child exit code/-1; load+run a static ELF64 (ring 3)
+    SYS_FBINFO = 38;        # fbinfo(buf, len) → bytes/-1; write the 24-byte framebuffer geometry struct
+    SYS_BLIT = 39;          # blit(src, w, h, dstxy) → 0/-1; copy a w×h 32bpp block to the framebuffer (a4=r10)
+    SYS_KBSCAN = 42;        # kbscan(buf, max) → count/-1; NON-blocking raw-scancode drain for ring-3
+    SYS_SPAWN_PATH = 43;    # spawn_path(path, len) → pid/-1; NON-blocking from-disk spawn (returns now)
+    SYS_SCHED_YIELD = 44;   # sched_yield() → 0; cooperative yield (in the SYSCALL entry stub)
+    SYS_EXEC_REDIRECT = 62; # exec_redirect(src_fd, dst_fd) → 0/-1; arm a one-shot fd redirect before exec
+}
+
+# ================================================================
 # Signals — agnos kernel uses POSIX/Linux numbering (SIGCHLD=17 is
 # hard-coded in the kernel; kill#16 sets `1<<sig`; signalfd#18 returns
 # the bit position AS the signal number — kernel vfs_read_signalfd).
@@ -425,6 +448,35 @@ fn sys_link(target, targetlen, linkpath, linkpathlen): i64 {
 fn sys_symlink(target, targetlen, linkpath, linkpathlen): i64 {
     return syscall(SYS_SYMLINK, target, targetlen, linkpath, linkpathlen);
 }
+
+# ---- Process-exec / framebuffer / input / sched band (36–39, 42–44, 62) ----
+# The AGNOS base-system peers — see the SysNrAgnosProc enum + issue
+# 2026-06-30-agnos-syscall-peer-incomplete-8-wrappers.md. ABI rdi/rsi/rdx/r10.
+
+# Copy the unified klug log ring (oldest→newest, dmesg tail) into `buf` (`len` cap).
+fn sys_klug(buf, len): i64 { return syscall(SYS_KLUG, buf, len); }
+
+# Load a static ELF64 at `path` and run it to completion in ring 3; returns its exit code.
+fn sys_execwait(path, pathlen): i64 { return syscall(SYS_EXECWAIT, path, pathlen); }
+
+# Write the 24-byte framebuffer geometry struct into `buf` (`len` cap).
+fn sys_fbinfo(buf, len): i64 { return syscall(SYS_FBINFO, buf, len); }
+
+# Copy a w×h 32bpp block from `src` to the framebuffer at `dstxy` (4-arg, a4=r10).
+fn sys_blit(src, w, h, dstxy): i64 { return syscall(SYS_BLIT, src, w, h, dstxy); }
+
+# Non-blocking drain of raw keyboard scancodes into `buf` (`max` cap); returns the count.
+fn sys_kbscan(buf, max): i64 { return syscall(SYS_KBSCAN, buf, max); }
+
+# Non-blocking from-disk spawn of `path`; scheduled, returns its pid immediately.
+fn sys_spawn_path(path, len): i64 { return syscall(SYS_SPAWN_PATH, path, len); }
+
+# Cooperative yield to the scheduler.
+fn sys_sched_yield(): i64 { return syscall(SYS_SCHED_YIELD); }
+
+# Arm a one-shot fd redirect (`src_fd`→`dst_fd`) consumed by the next execwait/spawn —
+# capture a child's stdout/stderr.
+fn sys_exec_redirect(src_fd, dst_fd): i64 { return syscall(SYS_EXEC_REDIRECT, src_fd, dst_fd); }
 
 # Map `length` bytes (anonymous, zero-filled, 2 MB-granular). Returns
 # the base vaddr, or 0 on failure. lib/alloc.cyr's agnos heap builds on this.

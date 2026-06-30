@@ -1,0 +1,308 @@
+# image_source.tcyr -- parity tests for src/image_source.cyr
+# Ported from the #[test] blocks in rust-old/src/image_source.rs.
+# (No serde tests exist in the oracle.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/image_source.cyr"
+
+var TOL_1E1 = 0x3FB999999999999A;   # 0.1
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
+var V_1_5   = 0x3FF8000000000000;   # 1.5  (listener/source y in the oracle)
+
+# |a - b| < tol -> 1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# A concrete shoebox room (10 × 8 × 3), matching the oracle's test_room().
+fn test_room() {
+    return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+}
+
+# Six-slot materials block, all the same material pointer.
+fn make_materials6(mat) {
+    var arr = alloc(6 * 8);
+    var i = 0;
+    while (i < 6) {
+        store64(arr + i * 8, mat);
+        i = i + 1;
+    }
+    return arr;
+}
+
+# First reflection with the given order, or 0 if none.
+fn find_order(refs, ord) {
+    var n = vec_len(refs);
+    var i = 0;
+    while (i < n) {
+        var r = vec_get(refs, i);
+        if (early_reflection_order(r) == ord) { return r; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# First image source with the given order, or 0 if none.
+fn find_is_order(srcs, ord) {
+    var n = vec_len(srcs);
+    var i = 0;
+    while (i < n) {
+        var s = vec_get(srcs, i);
+        if (image_source_order(s) == ord) { return s; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# 1 if any reflection has order > 0.
+fn any_order_gt0(refs) {
+    var n = vec_len(refs);
+    var i = 0;
+    while (i < n) {
+        if (early_reflection_order(vec_get(refs, i)) > 0) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Average per-band amplitude across reflections of `ord`; 0 if none.
+fn avg_amp(refs, ord) {
+    var n = vec_len(refs);
+    var total = 0;
+    var count = 0;
+    var i = 0;
+    while (i < n) {
+        var r = vec_get(refs, i);
+        if (early_reflection_order(r) == ord) {
+            var bsum = 0;
+            var b = 0;
+            while (b < NUM_BANDS) {
+                bsum = f64_add(bsum, early_reflection_amplitude_band(r, b));
+                b = b + 1;
+            }
+            total = f64_add(total, f64_div(bsum, f64_from(NUM_BANDS)));
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    if (count == 0) { return 0; }
+    return f64_div(total, f64_from(count));
+}
+
+# Sum of all amplitude bands over reflections of `ord`.
+fn sum_order_amp(refs, ord) {
+    var n = vec_len(refs);
+    var total = 0;
+    var i = 0;
+    while (i < n) {
+        var r = vec_get(refs, i);
+        if (early_reflection_order(r) == ord) {
+            var b = 0;
+            while (b < NUM_BANDS) {
+                total = f64_add(total, early_reflection_amplitude_band(r, b));
+                b = b + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
+# Build a wall from four vertices, a material, and an outward normal.
+fn mk_wall(a, b, c, d, mat, normal) {
+    var verts = vec_new();
+    vec_push(verts, a);
+    vec_push(verts, b);
+    vec_push(verts, c);
+    vec_push(verts, d);
+    return wall_new(verts, mat, normal);
+}
+
+alloc_init();
+
+# ================================================================
+test_group("direct_path_is_order_zero");
+var src1 = hvec3_new(f64_from(3), V_1_5, f64_from(4));
+var lis1 = hvec3_new(f64_from(7), V_1_5, f64_from(4));
+var c20 = speed_of_sound(f64_from(20));
+var refl1 = compute_early_reflections(src1, lis1, test_room(), 3, c20);
+assert(vec_len(refl1) > 0, "reflections non-empty");
+var direct1 = find_order(refl1, 0);
+assert(direct1 != 0, "should have direct path (order 0)");
+var expected_dist = hvec3_length(hvec3_sub(lis1, src1));
+assert(approx(early_reflection_distance(direct1), expected_dist, TOL_1E1), "direct distance ~ |listener-source|");
+
+# ================================================================
+test_group("direct_path_arrives_first");
+var refl2 = compute_early_reflections(src1, lis1, test_room(), 3, c20);
+assert(vec_len(refl2) > 1, "more than one reflection");
+assert_eq(early_reflection_order(vec_get(refl2, 0)), 0, "direct path arrives first");
+
+# ================================================================
+test_group("first_order_arrives_after_direct");
+var refl3 = compute_early_reflections(src1, lis1, test_room(), 1, c20);
+var direct_delay = early_reflection_delay_seconds(vec_get(refl3, 0));
+var i3 = 1;
+var n3 = vec_len(refl3);
+var after_ok = 1;
+while (i3 < n3) {
+    if (f64_ge(early_reflection_delay_seconds(vec_get(refl3, i3)), direct_delay) == 0) { after_ok = 0; }
+    i3 = i3 + 1;
+}
+assert(after_ok, "every reflection arrives at or after the direct path");
+
+# ================================================================
+test_group("amplitude_decreases_with_order");
+var src4 = hvec3_new(f64_from(5), V_1_5, f64_from(4));
+var lis4 = hvec3_new(f64_from(5), V_1_5, f64_add(f64_from(4), pct(1)));
+var refl4 = compute_early_reflections(src4, lis4, test_room(), 3, c20);
+var amp1 = avg_amp(refl4, 1);
+var amp2 = avg_amp(refl4, 2);
+var amp3 = avg_amp(refl4, 3);
+assert(f64_gt(amp1, amp2), "order 1 avg amp exceeds order 2");
+assert(f64_gt(amp2, amp3), "order 2 avg amp exceeds order 3");
+
+# ================================================================
+test_group("image_source_count_shoebox_order_1");
+var mats5 = make_materials6(acoustic_material_concrete());
+var srcs5 = compute_image_sources_shoebox(src4, f64_from(10), f64_from(8), f64_from(3), mats5, 1);
+assert_eq(vec_len(srcs5), 7, "order 1 has 7 image sources (1 direct + 6 first-order)");
+
+# ================================================================
+test_group("image_coordinate_even_n");
+assert(approx(image_coordinate(f64_from(3), f64_from(10), 0), f64_from(3), TOL_1E3), "n=0 returns source");
+assert(approx(image_coordinate(f64_from(3), f64_from(10), 2), f64_from(23), TOL_1E3), "n=2 -> 23");
+assert(approx(image_coordinate(f64_from(3), f64_from(10), 0 - 2), f64_neg(f64_from(17)), TOL_1E3), "n=-2 -> -17");
+
+# ================================================================
+test_group("image_coordinate_odd_n");
+assert(approx(image_coordinate(f64_from(3), f64_from(10), 1), f64_from(17), TOL_1E3), "n=1 -> 17");
+assert(approx(image_coordinate(f64_from(3), f64_from(10), 0 - 1), f64_neg(f64_from(17)), TOL_1E3), "n=-1 -> -17");
+
+# ================================================================
+test_group("reflections_sorted_by_delay");
+var refl8 = compute_early_reflections(src1, lis1, test_room(), 3, c20);
+var i8 = 1;
+var n8 = vec_len(refl8);
+var sorted8 = 1;
+while (i8 < n8) {
+    var d_prev = early_reflection_delay_seconds(vec_get(refl8, i8 - 1));
+    var d_cur = early_reflection_delay_seconds(vec_get(refl8, i8));
+    if (f64_le(d_prev, d_cur) == 0) { sorted8 = 0; }
+    i8 = i8 + 1;
+}
+assert(sorted8, "reflections sorted by delay");
+
+# ================================================================
+test_group("general_method_produces_correct_order_count");
+var walls9 = RoomGeometry_walls(AcousticRoom_geometry(test_room()));
+var srcs9 = compute_image_sources_general(src4, walls9, 1);
+assert_eq(vec_len(srcs9), 7, "order 0 + 6 walls -> 7 sources");
+
+# ================================================================
+test_group("reflect_point_across_plane");
+var reflp = reflect_point(hvec3_new(F64_ONE, 0, 0), hvec3_zero(), hvec3_unit_x());
+assert(approx(HVec3_x(reflp), f64_neg(F64_ONE), TOL_1E3), "x reflected to -1");
+assert(approx(HVec3_y(reflp), 0, TOL_1E3), "y unchanged ~0");
+assert(approx(HVec3_z(reflp), 0, TOL_1E3), "z unchanged ~0");
+
+# ================================================================
+test_group("carpet_room_attenuates_more");
+var concrete_room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+var carpet_room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_carpet());
+var concrete_refs = compute_early_reflections(src1, lis1, concrete_room, 2, c20);
+var carpet_refs = compute_early_reflections(src1, lis1, carpet_room, 2, c20);
+var concrete_first = sum_order_amp(concrete_refs, 1);
+var carpet_first = sum_order_amp(carpet_refs, 1);
+assert(f64_gt(concrete_first, carpet_first), "concrete reflections stronger than carpet");
+
+# ================================================================
+test_group("direct_path_attenuation_is_one");
+var mats12 = make_materials6(acoustic_material_concrete());
+var srcs12 = compute_image_sources_shoebox(src4, f64_from(10), f64_from(8), f64_from(3), mats12, 1);
+var direct12 = find_is_order(srcs12, 0);
+assert(direct12 != 0, "direct source exists");
+var atten_ok = 1;
+var b12 = 0;
+while (b12 < NUM_BANDS) {
+    if (approx(image_source_atten_band(direct12, b12), F64_ONE, TOL_1E3) == 0) { atten_ok = 0; }
+    b12 = b12 + 1;
+}
+assert(atten_ok, "direct path has unit attenuation");
+
+# ================================================================
+test_group("empty_geometry_returns_empty");
+var empty_geom = alloc(sizeof(RoomGeometry));
+RoomGeometry_set_walls(empty_geom, vec_new());
+var empty_room = alloc(sizeof(AcousticRoom));
+AcousticRoom_set_geometry(empty_room, empty_geom);
+AcousticRoom_set_temperature_celsius(empty_room, f64_from(20));
+AcousticRoom_set_humidity_percent(empty_room, f64_from(50));
+var refl13 = compute_early_reflections(
+hvec3_new(F64_ONE, F64_ONE, F64_ONE), hvec3_new(f64_from(2), F64_ONE, F64_ONE),
+empty_room, 3, f64_from(343));
+assert_eq(vec_len(refl13), 0, "empty geometry produces no reflections");
+
+# ================================================================
+test_group("zero_speed_of_sound_returns_empty");
+var refl14 = compute_early_reflections(src1, lis1, test_room(), 3, 0);
+assert_eq(vec_len(refl14), 0, "zero speed produces no reflections");
+
+# ================================================================
+test_group("max_order_zero_direct_only");
+var refl15 = compute_early_reflections(src1, lis1, test_room(), 0, c20);
+assert_eq(vec_len(refl15), 1, "order 0 only has direct path");
+assert_eq(early_reflection_order(vec_get(refl15, 0)), 0, "the single path is order 0");
+
+# ================================================================
+test_group("collocated_source_listener");
+var pos16 = hvec3_new(f64_from(5), V_1_5, f64_from(4));
+var refl16 = compute_early_reflections(pos16, pos16, test_room(), 2, c20);
+assert(any_order_gt0(refl16), "collocated still produces reflections");
+
+# ================================================================
+test_group("general_method_empty_walls");
+var srcs17 = compute_image_sources_general(hvec3_zero(), vec_new(), 3);
+assert_eq(vec_len(srcs17), 1, "only the direct source");
+assert_eq(image_source_order(vec_get(srcs17, 0)), 0, "direct source is order 0");
+
+# ================================================================
+test_group("early_reflections_non_shoebox_room");
+var matn = acoustic_material_concrete();
+var walls18 = vec_new();
+vec_push(walls18, mk_wall(
+hvec3_new(0, 0, 0), hvec3_new(f64_from(10), 0, 0),
+hvec3_new(f64_from(10), f64_from(3), 0), hvec3_new(0, f64_from(3), 0),
+matn, hvec3_new(0, 0, f64_neg(F64_ONE))));
+vec_push(walls18, mk_wall(
+hvec3_new(0, 0, f64_from(8)), hvec3_new(f64_from(10), 0, f64_from(8)),
+hvec3_new(f64_from(10), f64_from(3), f64_from(8)), hvec3_new(0, f64_from(3), f64_from(8)),
+matn, hvec3_new(0, 0, F64_ONE)));
+vec_push(walls18, mk_wall(
+hvec3_new(0, 0, 0), hvec3_new(0, 0, f64_from(8)),
+hvec3_new(0, f64_from(3), f64_from(8)), hvec3_new(0, f64_from(3), 0),
+matn, hvec3_new(f64_neg(F64_ONE), 0, 0)));
+vec_push(walls18, mk_wall(
+hvec3_new(f64_from(10), 0, 0), hvec3_new(f64_from(10), 0, f64_from(8)),
+hvec3_new(f64_from(10), f64_from(3), f64_from(8)), hvec3_new(f64_from(10), f64_from(3), 0),
+matn, hvec3_new(F64_ONE, 0, 0)));
+var geom18 = alloc(sizeof(RoomGeometry));
+RoomGeometry_set_walls(geom18, walls18);
+var room18 = alloc(sizeof(AcousticRoom));
+AcousticRoom_set_geometry(room18, geom18);
+AcousticRoom_set_temperature_celsius(room18, f64_from(20));
+AcousticRoom_set_humidity_percent(room18, f64_from(50));
+var refl18 = compute_early_reflections(
+hvec3_new(f64_from(5), V_1_5, f64_from(4)),
+hvec3_new(f64_from(5), V_1_5, f64_add(f64_from(4), F64_HALF)),
+room18, 2, c20);
+assert(vec_len(refl18) > 0, "non-shoebox geometry still produces reflections");
+
+var rc = assert_summary();
+syscall(60, rc);

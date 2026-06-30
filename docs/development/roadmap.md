@@ -61,13 +61,15 @@ Acceptance: every L0 module + `material` ported with a green parity suite.
 room, hybrid, directivity, metamaterial, fdn, gfpe, diffusion, outdoor,
 portal, udfa, underwater, vibroacoustics, bridge — **ported in one 13-agent
 parallel workflow** (worktree-isolated), then integrated + re-verified in main
-(291 assertions). `fdtd` remains (gated on `hybrid`, now done) → fold into the
-next wave with `dwm`. The workflow proved the recipe scales: no new patterns,
-all gates green after an integration fmt-cleanup pass.
+(291 assertions). **fdtd** later landed in wave 2, completing L2 (14/14).
+The workflow proved the recipe scales: no new patterns, all gates green.
 
-### M3 — Acceleration & sources (L3)
+### M3 — Acceleration & sources (L3) — 🟡 2/4
 
-ray (BVH-accelerated; hot path → benchmark), radiosity, image_source, dwm.
+radiosity ✅ + image_source ✅ landed in wave 2 (a 6-module parallel batch that
+also took ambisonics, scattering, dark_velvet_noise, fdtd). Remaining: **ray**
+(BVH-accelerated; **hot path → solo with a `.bcyr` benchmark**) and **dwm**
+(largest module; deps now all done). Both too large/important to fan out — solo.
 
 ### M4 — Energy & metrics (L4)
 

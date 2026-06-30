@@ -42,8 +42,18 @@ milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md
   (each in an isolated git worktree), then integrated and independently
   re-verified in main: **291 parity assertions across 13 suites, all green**;
   fmt + lint clean. No new language patterns required. Added `fnptr` to the
-  stdlib deps (closure→callback). `fdtd` (gated on `hybrid`) is the one L2
-  module still pending.
+  stdlib deps (closure→callback).
+- **Wave 2 (6 modules)** — `ambisonics` (real spherical harmonics, ACN/SN3D),
+  `scattering` (cosine-hemisphere sampling; randoms are caller params),
+  `dark_velvet_noise` (self-contained **xorshift64** PRNG via bit ops),
+  `fdtd` (completing L2 14/14), `radiosity`, `image_source`. Second parallel
+  workflow: **325 assertions across 6 suites, all green**; zero integration
+  cleanup (the canonical-fmt-diff self-check was baked into the agent brief).
+  Confirmed RNG needs no stdlib `random` dependency.
+
+### Changed
+- Toolchain pin **6.3.12 → 6.3.13** (`cyrius.cyml`); stdlib re-vendored. No
+  source changes required — all 740 assertions stay green.
 
 #### Changed (port-wide conventions)
 - **f32 → f64** throughout — hisab's `HVec3` is f64-only.
