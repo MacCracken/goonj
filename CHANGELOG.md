@@ -19,9 +19,12 @@ milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md
   and `F64_NEG_INF`.
 - **propagation** — `src/propagation.cyr`. Scalar core (speed of sound,
   inverse-square law, SPL↔pressure, ISO 9613-1 atmospheric absorption,
-  Doppler, Miki 1990 ground reflection) plus the `HVec3` wind/temperature
-  profiles (`refracted_speed`, `speed_at_height`). 35 parity assertions in
-  `tests/propagation.tcyr`, all green.
+  Doppler, Miki 1990 ground reflection), the `HVec3` wind/temperature
+  profiles (`refracted_speed`, `speed_at_height`), and the Snell-law
+  atmospheric ray tracers (`refract_ray_step`, `trace_ray_atmospheric`).
+  44 parity assertions in `tests/propagation.tcyr`, all green. Establishes
+  the closure → fn-pointer + context-pointer idiom (`fncall2` + `TraceCtx`,
+  stdlib `fnptr`) and the tuple→struct return (`RayStep`).
 - **material** — `src/material.cyr`. `AcousticMaterial` (7 named tables,
   validated constructor, average/per-band absorption), `WallConstruction`
   (mass-law transmission loss + coefficient), and the `JcalMaterial` JCAL

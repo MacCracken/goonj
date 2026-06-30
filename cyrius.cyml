@@ -28,6 +28,7 @@ stdlib = [
     "assert",
     "math",
     "ganita",
+    "fnptr",
 ]
 
 # hisab — math/geometry (HVec3 and friends). goonj consumes the single

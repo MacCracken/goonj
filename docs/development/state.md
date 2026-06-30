@@ -29,7 +29,7 @@ Per-module parity is tracked in [`port-audit.md`](port-audit.md). Summary:
 | Module        | Status            | Tests |
 |---------------|-------------------|-------|
 | error         | ✅ ported          | (via propagation suite) |
-| propagation   | 🟡 partial (scalar core + Vec3 profiles) | 35 ✓ |
+| propagation   | ✅ ported (full)   | 44 ✓  |
 | material      | ✅ ported          | 65 ✓  |
 | resonance     | ✅ ported          | 15 ✓  |
 | *(32 others)* | ⬜ pending          | —     |
@@ -40,10 +40,11 @@ fnptr/callback pattern; see roadmap M1.
 
 ## Tests
 
-- `tests/propagation.tcyr` — **35 assertions, all green**. Covers
+- `tests/propagation.tcyr` — **44 assertions, all green**. Covers
   speed-of-sound, inverse-square, SPL/pressure, atmospheric absorption
-  (ISO 9613-1), Doppler, Miki ground reflection, and the Vec3 wind/
-  temperature profiles.
+  (ISO 9613-1), Doppler, Miki ground reflection, the Vec3 wind/temperature
+  profiles, and the Snell-law ray tracers (refract_ray_step,
+  trace_ray_atmospheric).
 - `tests/material.tcyr` — **65 assertions, all green**. Covers the 7
   named-material absorption tables, average/band access, validated
   constructor, WallConstruction transmission loss/coefficient, and the
@@ -51,7 +52,7 @@ fnptr/callback pattern; see roadmap M1.
 - `tests/resonance.tcyr` — **15 assertions, all green**. Covers room_mode,
   axial/all-axial mode lists (Vec + sort), Schroeder frequency, modal density.
 
-All ported one-for-one from the Rust `#[test]` blocks. **115 assertions
+All ported one-for-one from the Rust `#[test]` blocks. **124 assertions
 total across 3 suites, all green.**
 
 ## Dependencies
@@ -71,7 +72,8 @@ port yet* (gated on the distlib bundle, roadmap M5).
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). M1 remaining: the L0 leaves `resonance`,
-`ambisonics`, `dark_velvet_noise` (needs RNG), `scattering` (needs RNG),
-`logging`; plus closing `propagation` (the two `speed_fn`-closure ray
-tracers — resolves the fnptr/callback pattern). `error` ✅, `material` ✅.
+See [`roadmap.md`](roadmap.md). M1 remaining L0 leaves: `ambisonics`,
+`dark_velvet_noise` (needs RNG), `scattering` (needs RNG), `logging`
+(→ `sakshi`). Done: `error`, `propagation` (full), `material`, `resonance`.
+The closure/`Vec`/manual-layout/string patterns are all proven — the L2
+spine (gated only on `material`, already done) is now unblocked.

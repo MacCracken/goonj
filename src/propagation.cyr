@@ -3,11 +3,11 @@
 # ground reflection (Miki 1990).
 #
 # Ports rust-old/src/propagation.rs. f32 → f64 throughout (hisab is
-# f64-only). Vec3 wind/temperature profiles use hisab's HVec3. The two
-# closure-based ray-tracing functions (refract_ray_step,
-# trace_ray_atmospheric) remain on the roadmap (M1,
-# docs/development/roadmap.md): they need the fnptr/callback pattern for
-# the speed_fn closure argument.
+# f64-only). Vec3 wind/temperature profiles use hisab's HVec3. The Rust
+# `speed_fn` closure (a captured `impl Fn(f32)->f32`) becomes the
+# fn-pointer + context-pointer pattern: refract_ray_step takes
+# `(speed_fn, ctx)` and calls `fncall2(speed_fn, ctx, height)`;
+# trace_ray_atmospheric threads a mutable TraceCtx (wind, temp, dir).
 #
 # Self-contained: no `include` lines. Relies on error.cyr (GOONJ_EPSILON,
 # F64_NEG_INF) and stdlib math/ganita (F64_PI, F64_ONE, F64_LN10,
@@ -234,4 +234,134 @@ fn speed_at_height(profile, height) {
     var temp = f64_add(TemperatureProfile_ground_temp_celsius(profile),
         f64_mul(TemperatureProfile_lapse_rate(profile), height));
     return speed_of_sound(temp);
+}
+
+# ================================================================
+# Stratified-atmosphere ray refraction (Snell's law).
+# ================================================================
+
+# Result of one refraction step: new origin + new direction (HVec3 ptrs).
+# Replaces Rust's `(Vec3, Vec3)` tuple return.
+#derive(accessors)
+struct RayStep { origin; direction; }
+
+#must_use
+fn _ray_step_make(origin, direction) {
+    var rs = alloc(sizeof(RayStep));
+    RayStep_set_origin(rs, origin);
+    RayStep_set_direction(rs, direction);
+    return rs;
+}
+
+# Advance a ray one step through a stratified medium, bending its
+# direction per Snell's law from the local speed gradient.
+#   speed_fn : fn(ctx, height) -> f64   (ctx may be 0 if unused)
+# Returns a RayStep.
+#must_use
+fn refract_ray_step(origin, direction, speed_fn, ctx, step_size) {
+    var height = HVec3_y(origin);
+    var c_current = fncall2(speed_fn, ctx, height);
+
+    var new_origin = hvec3_add(origin, hvec3_scale(direction, step_size));
+    var new_height = HVec3_y(new_origin);
+    var c_new = fncall2(speed_fn, ctx, new_height);
+
+    if (f64_lt(f64_abs(c_current), GOONJ_EPSILON) == 1) {
+        return _ray_step_make(new_origin, direction);
+    }
+
+    # Horizontal component is conserved; adjust the vertical part.
+    var horizontal = hvec3_new(HVec3_x(direction), 0, HVec3_z(direction));
+    var h_len = hvec3_length(horizontal);
+    if (f64_lt(h_len, GOONJ_EPSILON) == 1) {
+        # Purely vertical ray — no refraction.
+        return _ray_step_make(new_origin, direction);
+    }
+
+    var sin_ratio = f64_div(h_len, c_current);
+    var new_sin = f64_mul(sin_ratio, c_new);
+    if (f64_ge(new_sin, F64_ONE) == 1) {
+        # Total internal reflection — ray turns horizontal.
+        return _ray_step_make(new_origin, hvec3_scale(horizontal, f64_div(F64_ONE, h_len)));
+    }
+
+    var new_cos = f64_sqrt(f64_sub(F64_ONE, f64_mul(new_sin, new_sin)));
+    var vert_sign = F64_ONE;
+    if (f64_lt(HVec3_y(direction), 0) == 1) { vert_sign = f64_neg(F64_ONE); }
+    var nd = hvec3_new(
+        f64_mul(f64_div(HVec3_x(direction), h_len), new_sin),
+        f64_mul(vert_sign, new_cos),
+        f64_mul(f64_div(HVec3_z(direction), h_len), new_sin));
+
+    var len = hvec3_length(nd);
+    var new_dir = direction;
+    if (f64_gt(len, GOONJ_EPSILON) == 1) { new_dir = hvec3_scale(nd, f64_div(F64_ONE, len)); }
+    return _ray_step_make(new_origin, new_dir);
+}
+
+# Context for the atmospheric speed callback: captures the wind and
+# temperature profiles plus the current ray direction (mutated per step).
+#derive(accessors)
+struct TraceCtx { wind; temp; current_dir; }
+
+# Speed callback for trace_ray_atmospheric — the ported `speed_fn` closure.
+#must_use
+fn _trace_speed_fn(ctx, h) {
+    var base = speed_at_height(TraceCtx_temp(ctx), h);
+    return refracted_speed(base, TraceCtx_wind(ctx), TraceCtx_current_dir(ctx), h);
+}
+
+# Trace a ray through a stratified atmosphere; returns a vec of HVec3
+# positions (the path). Replaces Rust's `Vec<Vec3>`.
+#must_use
+fn trace_ray_atmospheric(source, direction, wind, temp, max_distance, step_size) {
+    var path = vec_new();
+    var len = hvec3_length(direction);
+    if (f64_le(len, GOONJ_EPSILON) == 1) {
+        vec_push(path, source);
+        return path;
+    }
+    var dir = hvec3_scale(direction, f64_div(F64_ONE, len));
+    var pos = source;
+
+    # max_iterations = min((max_distance / max(step_size, 0.001)) as u32, 1_000_000)
+    var step_floor = f64_max(step_size, f64_div(F64_ONE, f64_from(1000)));
+    var max_iter = f64_to(f64_div(max_distance, step_floor));
+    if (max_iter > 1000000) { max_iter = 1000000; }
+
+    vec_push(path, pos);
+    var total_distance = 0;
+    var iteration = 0;
+
+    var ctx = alloc(sizeof(TraceCtx));
+    TraceCtx_set_wind(ctx, wind);
+    TraceCtx_set_temp(ctx, temp);
+
+    var go = 1;
+    while (go == 1) {
+        if (f64_ge(total_distance, max_distance) == 1) { go = 0; }
+        if (iteration >= max_iter) { go = 0; }
+        if (go == 1) {
+            iteration = iteration + 1;
+            var step = f64_min(step_size, f64_sub(max_distance, total_distance));
+            TraceCtx_set_current_dir(ctx, dir);
+            var rs = refract_ray_step(pos, dir, &_trace_speed_fn, ctx, step);
+            var new_pos = RayStep_origin(rs);
+            if (f64_lt(HVec3_y(new_pos), 0) == 1) {
+                # Ray crosses the ground: interpolate to y = 0 and stop.
+                if (f64_gt(f64_abs(HVec3_y(dir)), GOONJ_EPSILON) == 1) {
+                    var t = f64_div(f64_neg(HVec3_y(pos)), HVec3_y(dir));
+                    var ground = hvec3_add(pos, hvec3_scale(dir, f64_max(t, 0)));
+                    vec_push(path, ground);
+                }
+                go = 0;
+            } else {
+                pos = new_pos;
+                dir = RayStep_direction(rs);
+                total_distance = f64_add(total_distance, step);
+                vec_push(path, pos);
+            }
+        }
+    }
+    return path;
 }

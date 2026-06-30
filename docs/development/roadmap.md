@@ -44,13 +44,13 @@ stdlib are available to every layer.
 Acceptance: every L0 module + `material` ported with a green parity suite.
 
 - [x] **error** — integer error codes (ports `GoonjError`)
-- [~] **propagation** — scalar core + Vec3 profiles done (35 tests green).
-      Remaining: `refract_ray_step`, `trace_ray_atmospheric` — both take a
-      `speed_fn` closure; needs the **fnptr/callback** pattern (study
-      `lib/fnptr.cyr` / `lib/callback.cyr`; hisab `calc`/`ode` use bare fn
-      pointers). First abstraction decision of the port — capture in an ADR.
-- [ ] **material** — frequency-dependent absorption/scattering/transmission
-- [ ] **resonance** — room modes, Schroeder frequency, modal density
+- [x] **propagation** — full: scalar core + Vec3 profiles + Snell ray
+      tracers (44 tests). Resolved the **closure → fn-pointer+ctx** pattern
+      (`fncall2` + `TraceCtx`) and tuple→struct (`RayStep`).
+- [x] **material** — absorption tables, wall TL, JCAL porous model (65 tests).
+      Resolved manual struct layout (inline arrays) + string fields.
+- [x] **resonance** — room modes, Schroeder freq, modal density (15 tests).
+      Resolved the `Vec<T>` dynamic-array pattern (stdlib `vec` + f64 sort).
 - [ ] **ambisonics** — B-format + 3rd-order HOA encoding
 - [ ] **dark_velvet_noise** — sparse stochastic late reverb
 - [ ] **scattering** — cosine-weighted hemisphere sampling
@@ -78,10 +78,13 @@ green a downstream consumer, tag **2.0.0**.
 
 ## Known port challenges (capture as ADRs when resolved)
 
-- **Closures → fnptr/callback** (refract_ray_step, ray tracers, diffuse rain,
-  optimizers). The first one sets the pattern for all.
-- **`Vec<T>` / dynamic arrays** — Rust returns `Vec<Vec3>` paths, hit lists,
-  etc. Map to `vec.cyr` or manual `alloc` + length-prefixed buffers.
+- ~~**Closures → fnptr/callback**~~ — RESOLVED in `propagation`: fn-pointer +
+  context-pointer (`fncall2` + `TraceCtx`). Reuse for ray tracers, diffuse
+  rain, optimizers.
+- ~~**`Vec<T>` / dynamic arrays**~~ — RESOLVED in `resonance`: stdlib `vec`
+  (f64 in 8-byte slots). Reuse for paths, hit lists, IR sample buffers.
+- ~~**Fixed arrays / String fields in structs**~~ — RESOLVED in `material`:
+  manual `alloc` + `store64`/`load64` offset layout; cstring + `streq`.
 - **f32 → f64 widening** — forced by hisab (HVec3 is f64). Loosen test
   tolerances vs the f32 oracle where bit-exactness isn't meaningful.
 - **`serde` derive** — Rust types derive Serialize/Deserialize. No serde in

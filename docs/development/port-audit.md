@@ -23,6 +23,11 @@ the relevant row whenever a module's status changes.
 - **`Vec<T>` → stdlib `vec`** (`vec_new`/`vec_push`/`vec_len`/`vec_get`/`vec_set`);
   f64 elements store directly in the 8-byte slots. Sorting f64 vecs uses a local
   insertion sort comparing with `f64_gt` (`resonance._vec_sort_f64`).
+- **Closures → fn-pointer + context-pointer** (stdlib `fnptr`): `&fn_name` yields
+  a pointer; `fncallN(fp, …)` invokes it. A captured closure becomes
+  `callback(ctx, args…)` + a `ctx` struct holding the captures (mutated in place
+  if the capture changes per call). Tuple returns become a small struct.
+  Reference: `propagation.refract_ray_step` / `trace_ray_atmospheric` + `TraceCtx`.
 - **structs** via `#derive(accessors)` + `alloc(sizeof(T))`; methods become
   free functions `type_verb(self, …)`.
 - **Module files do not `include` each other** — the build/test entry includes
@@ -35,7 +40,7 @@ the relevant row whenever a module's status changes.
 | Module            | LOC | Status | Notes |
 |-------------------|----:|--------|-------|
 | error             |  60 | ✅ | Integer codes + `goonj_is_err`/`goonj_err_name`; shared `GOONJ_EPSILON`, `F64_NEG_INF`. |
-| propagation       | 831 | 🟡 | Scalar core + Vec3 wind/temp profiles ported, 35 tests green. Pending: `refract_ray_step`, `trace_ray_atmospheric` (closure `speed_fn` → fnptr/callback). |
+| propagation       | 831 | ✅ | Scalar core + Vec3 wind/temp profiles + Snell ray tracers (`refract_ray_step`, `trace_ray_atmospheric`). 44 tests green. Established the closure → fn-pointer+ctx pattern (`TraceCtx`) and tuple→struct (`RayStep`). |
 | resonance         | 194 | ✅ | Room modes, Schroeder freq, modal density. `Vec<f32>` mode lists → stdlib `vec` (f64 in 8-byte slots) + f64 insertion sort. 15 tests green. Established the dynamic-array idiom. |
 | ambisonics        | 259 | ⬜ | B-format + 3rd-order HOA. |
 | dark_velvet_noise | 405 | ⬜ | Sparse stochastic late reverb (RNG state needed). |
@@ -97,4 +102,4 @@ the relevant row whenever a module's status changes.
 | integration/kiran   | 168 | ⬜ | (consumer API) |
 | integration/soorat  | 165 | ⬜ | (consumer API) |
 
-**Totals:** 3 / 37 done (error, material, resonance), 1 partial (propagation), 33 pending · 14,630 Rust lines.
+**Totals:** 4 / 37 done (error, propagation, material, resonance), 33 pending · 14,630 Rust lines.

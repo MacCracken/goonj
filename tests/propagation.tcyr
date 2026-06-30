@@ -22,6 +22,15 @@ fn approx(a, b, tol) {
     return 0;
 }
 
+# speed_fn callbacks (signature: fn(ctx, height) -> f64; ctx ignored here).
+fn _spd_lapse(ctx, h) { return speed_of_sound(f64_add(f64_from(20), f64_mul(LAPSE_STD, h))); }
+fn _spd_343(ctx, h)   { return f64_from(343); }
+fn _spd_zero(ctx, h)  { return 0; }
+fn _spd_step1000(ctx, h) {
+    if (f64_gt(h, f64_from(99)) == 1) { return f64_from(1000); }
+    return F64_ONE;
+}
+
 alloc_init();
 
 # ================================================================
@@ -130,6 +139,48 @@ var prof_inv = temperature_profile_new(f64_from(10), TOL_1E2);
 assert(f64_lt(speed_at_height(prof_inv, 0), speed_at_height(prof_inv, f64_from(100))), "inversion increases with height");
 # Zero height → ground speed.
 assert(approx(speed_at_height(prof, 0), speed_of_sound(f64_from(20)), TOL_1E3), "zero height -> ground speed");
+
+# ================================================================
+test_group("refract_ray_step / trace_ray_atmospheric");
+var d06 = f64_div(f64_from(6), f64_from(10));
+var d08 = f64_div(f64_from(8), f64_from(10));
+var d099 = f64_div(f64_from(99), f64_from(100));
+var d001 = f64_div(f64_from(1), f64_from(100));
+
+# Lapse gradient bends the ray but keeps |dir| ≈ 1.
+var rs1 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(d06, f64_neg(d08), 0), &_spd_lapse, 0, f64_from(10));
+assert(approx(hvec3_length(RayStep_direction(rs1)), F64_ONE, TOL_1E2), "refract keeps |dir| ~1");
+
+# Vertical ray: no refraction; advances straight down to y = 90.
+var rs2 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(0, f64_neg(F64_ONE), 0), &_spd_343, 0, f64_from(10));
+assert(approx(HVec3_y(RayStep_direction(rs2)), f64_neg(F64_ONE), TOL_1E2), "vertical stays vertical");
+assert(approx(HVec3_y(RayStep_origin(rs2)), f64_from(90), TOL_1E1), "advanced to y=90");
+
+# Zero local speed → original direction retained (still unit length).
+var rs3 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(d06, f64_neg(d08), 0), &_spd_zero, 0, f64_from(10));
+assert(f64_gt(hvec3_length(RayStep_direction(rs3)), F64_HALF), "zero speed keeps valid dir");
+
+# Extreme speed ratio still yields a valid direction.
+var rs4 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(d099, f64_neg(d001), 0), &_spd_step1000, 0, f64_from(10));
+assert(f64_gt(hvec3_length(RayStep_direction(rs4)), F64_HALF), "extreme ratio valid dir");
+
+# Trace: flat atmosphere, horizontal ray → multi-point path.
+var wcalm = wind_profile_new(hvec3_unit_x(), 0, 0);
+var tflat = temperature_profile_new(f64_from(20), 0);
+var path1 = trace_ray_atmospheric(hvec3_new(0, f64_from(10), 0), hvec3_unit_x(), wcalm, tflat, f64_from(100), F64_ONE);
+assert(f64_gt(f64_from(vec_len(path1)), F64_ONE), "trace produces path");
+
+# Downward ray hits the ground: last point y ≤ 0.01.
+var ddown = hvec3_new(F64_ONE, f64_neg(F64_HALF), 0);
+var path2 = trace_ray_atmospheric(hvec3_new(0, f64_from(5), 0), ddown, wcalm, tflat, f64_from(1000), F64_HALF);
+var last = vec_get(path2, vec_len(path2) - 1);
+assert(f64_le(HVec3_y(last), TOL_1E2), "ray hits ground");
+
+# Zero distance / zero direction → path of just the source.
+var path3 = trace_ray_atmospheric(hvec3_new(0, f64_from(10), 0), hvec3_unit_x(), wcalm, tflat, 0, F64_ONE);
+assert_eq(vec_len(path3), 1, "zero distance -> source only");
+var path4 = trace_ray_atmospheric(hvec3_new(0, f64_from(10), 0), hvec3_zero(), wcalm, tflat, f64_from(100), F64_ONE);
+assert_eq(vec_len(path4), 1, "zero direction -> source only");
 
 var rc = assert_summary();
 syscall(60, rc);
