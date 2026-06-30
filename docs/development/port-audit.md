@@ -55,22 +55,26 @@ the relevant row whenever a module's status changes.
 
 ### L2 — geometric & wave (dep: material, ±propagation)
 
-| Module         | LOC | Status | Deps |
-|----------------|----:|--------|------|
-| room           | 320 | ⬜ | material |
-| hybrid         | 138 | ⬜ | material |
-| directivity    | 251 | ⬜ | material |
-| metamaterial   | 520 | ⬜ | error, material |
-| fdn            | 252 | ⬜ | propagation |
-| gfpe           | 589 | ⬜ | propagation |
-| diffusion      | 220 | ⬜ | propagation |
-| fdtd           | 513 | ⬜ | hybrid, material |
-| outdoor        | 262 | ⬜ | material, propagation |
-| portal         | 203 | ⬜ | material, propagation |
-| udfa           | 202 | ⬜ | material, propagation |
-| underwater     | 476 | ⬜ | material, propagation |
-| vibroacoustics | 358 | ⬜ | material, propagation |
-| bridge         | 329 | ⬜ | material, propagation |
+13 of 14 ported in one parallel workflow (worktree-isolated agents, one per
+module), then integrated + independently re-verified in main. Test counts are
+the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wave.
+
+| Module         | LOC | Status | Tests | Deps |
+|----------------|----:|--------|------:|------|
+| room           | 320 | ✅ | 10 | material |
+| hybrid         | 138 | ✅ | 20 | material |
+| directivity    | 251 | ✅ | 19 | material |
+| metamaterial   | 520 | ✅ | 51 | error, material |
+| fdn            | 252 | ✅ | 14 | propagation |
+| gfpe           | 589 | ✅ | 23 | propagation |
+| diffusion      | 220 | ✅ |  7 | propagation |
+| fdtd           | 513 | ⬜ | — | hybrid, material |
+| outdoor        | 262 | ✅ | 28 | material, propagation |
+| portal         | 203 | ✅ | 14 | material, propagation |
+| udfa           | 202 | ✅ | 15 | material, propagation |
+| underwater     | 476 | ✅ | 36 | material, propagation |
+| vibroacoustics | 358 | ✅ | 25 | material, propagation |
+| bridge         | 329 | ✅ | 29 | material, propagation |
 
 ### L3 — acceleration & sources
 
@@ -102,4 +106,16 @@ the relevant row whenever a module's status changes.
 | integration/kiran   | 168 | ⬜ | (consumer API) |
 | integration/soorat  | 165 | ⬜ | (consumer API) |
 
-**Totals:** 4 / 37 done (error, propagation, material, resonance), 33 pending · 14,630 Rust lines.
+**Totals:** 17 / 37 done, 20 pending · 14,630 Rust lines · 415 parity assertions green.
+Done: error, propagation, material, resonance + the L2 batch (hybrid, directivity,
+metamaterial, room, fdn, gfpe, diffusion, outdoor, portal, udfa, underwater,
+vibroacoustics, bridge).
+
+## Note on the parallel workflow
+
+The L2 batch was ported by a 13-agent workflow (each agent in its own git
+worktree). Agents self-verify, but **integration re-verification in main is the
+real gate** — it caught fmt continuation-line drift in 4 source + 6 test files
+that the agents' `cyrius fmt --check` missed (a 6.3.12 quirk: `--check` exits 1
+with empty output, so "no output" ≠ clean). Definitive fmt check:
+`cyrius fmt <file>` (writes canonical to stdout) diffed against the file.

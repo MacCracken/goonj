@@ -1,0 +1,124 @@
+# bridge.tcyr -- parity tests for src/bridge.cyr
+# Ported from the #[test] blocks in rust-old/src/bridge.rs.
+# bridge depends on propagation (speed_of_sound, atmospheric_absorption)
+# and material (frequency_band, NUM_BANDS); both are included below.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/bridge.cyr"
+
+# Tolerances (f64 bit patterns)
+var TOL_1E1 = 0x3FB999999999999A;   # 0.1
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
+var V_343_42 = 0x407576B851EB851F;  # 343.42
+var V_506_625 = 0x407FAA0000000000; # 506.625
+var PIEZO_COEFF = 0x3DDB7CDFD9D7BDBB; # 1e-10  piezoelectric coefficient
+var LAPSE_STD = 0xBF7A9FBE76C8B439;  # -0.0065  standard atmosphere lapse rate
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+# 0.5, 0.02, 0.01 as f64 (kept off the magic-literal path)
+fn half()   { return f64_div(F64_ONE, F64_TWO); }
+fn pct2()   { return f64_div(f64_from(2), f64_from(100)); }
+fn pct1()   { return f64_div(F64_ONE, f64_from(100)); }
+
+alloc_init();
+
+# ================================================================
+# ── Pavan bridges ──
+test_group("wind_attenuation_factor");
+# Zero wind → zero attenuation.
+assert_eq(f64_to(wind_attenuation_factor(0)), 0, "zero wind -> 0");
+# Attenuation increases with wind speed.
+var wlow = wind_attenuation_factor(f64_from(5));
+var whigh = wind_attenuation_factor(f64_from(10));
+assert(f64_gt(whigh, wlow), "attenuation rises with speed");
+# Negative wind speed is clamped to zero.
+assert_eq(f64_to(wind_attenuation_factor(f64_neg(f64_from(5)))), 0, "neg wind clamped -> 0");
+
+# ================================================================
+test_group("doppler_ratio_from_mach");
+# Approaching source raises pitch (ratio > 1).
+assert(f64_gt(doppler_ratio_from_mach(half(), 1), F64_ONE), "approaching higher pitch");
+# Receding source lowers pitch (ratio < 1).
+assert(f64_lt(doppler_ratio_from_mach(half(), 0), F64_ONE), "receding lower pitch");
+# Zero Mach → unity ratio.
+assert(approx(doppler_ratio_from_mach(0, 1), F64_ONE, TOL_1E3), "zero mach unity");
+
+# ================================================================
+test_group("effective_speed_of_sound");
+# Downwind adds the wind component to the still-air speed.
+var still = speed_of_sound(f64_from(20));
+var downwind = effective_speed_of_sound(f64_from(20), f64_from(10));
+assert(approx(f64_sub(f64_sub(downwind, still), f64_from(10)), 0, TOL_1E2), "downwind faster by wind");
+
+# ================================================================
+# ── Badal bridges ──
+test_group("air_absorption_from_weather");
+# Higher bands absorb more than lower bands.
+var coeffs = air_absorption_from_weather(f64_from(50), f64_from(20));
+assert(f64_gt(load64(coeffs + 7 * 8), load64(coeffs + 0 * 8)), "high band > low band");
+# Zero humidity → all bands non-negative (here zero).
+var coeffs0 = air_absorption_from_weather(0, f64_from(20));
+var bi = 0;
+while (bi < NUM_BANDS) {
+    assert(f64_ge(load64(coeffs0 + bi * 8), 0), "band coeff >= 0");
+    bi = bi + 1;
+}
+
+# ================================================================
+test_group("speed_of_sound_from_temperature");
+# c(20°C) ≈ 343.42 m/s.
+assert(approx(speed_of_sound_from_temperature(f64_from(20)), V_343_42, TOL_1E1), "c(20C) ~343.42");
+
+# ================================================================
+test_group("pressure_to_atm");
+# Standard pressure → 1.0 atm.
+assert(approx(pressure_to_atm(STD_PRESSURE_HPA), F64_ONE, TOL_1E3), "standard -> 1 atm");
+# Half standard pressure → 0.5 atm.
+assert(approx(pressure_to_atm(V_506_625), half(), TOL_1E3), "half -> 0.5 atm");
+
+# ================================================================
+# ── Ushma bridges ──
+test_group("absorption_temperature_scale");
+# Reference temperature (20°C) → scale ≈ 1.0.
+assert(approx(absorption_temperature_scale(f64_from(20)), F64_ONE, TOL_1E2), "20C -> ~1.0");
+# Hotter → scale > 1.0.
+assert(f64_gt(absorption_temperature_scale(f64_from(40)), F64_ONE), "40C increases scale");
+
+# ================================================================
+test_group("sound_speed_gradient");
+# Standard lapse (negative thermal gradient) → negative speed gradient.
+assert(f64_lt(sound_speed_gradient(LAPSE_STD), 0), "lapse -> negative gradient");
+# Temperature inversion (positive thermal gradient) → positive speed gradient.
+assert(f64_gt(sound_speed_gradient(pct1()), 0), "inversion -> positive gradient");
+
+# ================================================================
+# ── Bijli bridges ──
+test_group("em_resonance_coupling");
+# At resonance, amplification = 1/(2·zeta) = 25 > 20.
+assert(f64_gt(em_resonance_coupling(f64_from(100), f64_from(100), pct2()), f64_from(20)), "at resonance amp > 20");
+# Far off frequency → low amplification.
+assert(f64_lt(em_resonance_coupling(f64_from(100), f64_from(1000), pct2()), F64_TWO), "off frequency amp < 2");
+# Zero structural frequency → unity.
+assert(approx(em_resonance_coupling(f64_from(100), 0, pct2()), F64_ONE, TOL_1E3), "zero structural freq -> 1");
+
+# ================================================================
+test_group("piezo_acoustic_power");
+# Zero field → zero power.
+assert_eq(f64_to(piezo_acoustic_power(0, f64_from(1000), PIEZO_COEFF, pct1())), 0, "zero field -> 0 power");
+# Non-zero field → positive power.
+assert(f64_gt(piezo_acoustic_power(f64_from(1000), f64_from(1000), PIEZO_COEFF, pct1()), 0), "field -> positive power");
+# Power rises with frequency (∝ f²).
+var plow = piezo_acoustic_power(f64_from(1000), f64_from(100), PIEZO_COEFF, pct1());
+var phigh = piezo_acoustic_power(f64_from(1000), f64_from(1000), PIEZO_COEFF, pct1());
+assert(f64_gt(phigh, plow), "power rises with frequency");
+
+var rc = assert_summary();
+syscall(60, rc);

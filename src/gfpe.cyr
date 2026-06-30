@@ -1,0 +1,435 @@
+# gfpe.cyr -- Green's Function Parabolic Equation (GFPE) outdoor
+# propagation: one-way Helmholtz in a 2D vertical slice (range x height),
+# marched by dr with the analytic PE Green's function plus a ground image
+# source, an atmospheric phase screen, and a terrain staircase.
+#
+# Ports rust-old/src/gfpe.rs. f32 -> f64 throughout. Rust's `serde` derive
+# is dropped (no serde in Cyrius); the two serialization round-trip tests
+# are omitted. The complex field psi (Rust `Vec<(f32,f32)>`) becomes two
+# parallel f64 buffers (real / imag) indexed by load64/store64; complex
+# arithmetic is inlined to keep the O(N^2) convolution allocation-free.
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON),
+# propagation.cyr (GroundImpedance + GroundImpedance_flow_resistivity),
+# and stdlib math/ganita (F64_*, f64_cos/sin/sqrt/exp/pow/ln/atan) and
+# vec (vec_new/push/len/get/set); alloc_init() must have run.
+
+# ================================================================
+# Constants (f64 bit patterns; decimal in comments for traceability)
+# ================================================================
+var GFPE_MIKI_ZR  = 0x3FB1E4F765FD8ADB;   # 0.0699   Miki Z_real coefficient
+var GFPE_MIKI_EXP = 0xBFE4395810624DD3;   # -0.632   Miki frequency exponent
+var GFPE_MIKI_ZI  = 0xBFBB6AE7D566CF42;   # -0.1071  Miki Z_imag coefficient
+var GFPE_1E3      = 0x3F50624DD2F1A9FC;   # 0.001    minimum grazing angle
+var GFPE_POS_INF  = 0x7FF0000000000000;   # +inf     blocked / out-of-range EA
+
+# Maximum allowed grid cells (height x range), to bound memory.
+var MAX_GRID_CELLS = 10000000;
+
+# log10(x) = ln(x) / ln(10)
+fn _gfpe_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
+
+# ================================================================
+# GfpeAtmosphere -- linear sound-speed gradient c(z) = ref + grad*z.
+# ================================================================
+#derive(accessors)
+struct GfpeAtmosphere { gradient_per_m; reference_speed; }
+
+#must_use
+fn gfpe_atmosphere_new(gradient_per_m, reference_speed) {
+    var a = alloc(sizeof(GfpeAtmosphere));
+    GfpeAtmosphere_set_gradient_per_m(a, gradient_per_m);
+    GfpeAtmosphere_set_reference_speed(a, reference_speed);
+    return a;
+}
+
+# Default: flat atmosphere, 343 m/s reference.
+#must_use
+fn gfpe_atmosphere_default() { return gfpe_atmosphere_new(0, f64_from(343)); }
+
+# ================================================================
+# GfpeTerrain -- elevation profile along the range axis (two vecs).
+# ================================================================
+#derive(accessors)
+struct GfpeTerrain { ranges_m; heights_m; }
+
+#must_use
+fn gfpe_terrain_new(ranges_m, heights_m) {
+    var t = alloc(sizeof(GfpeTerrain));
+    GfpeTerrain_set_ranges_m(t, ranges_m);
+    GfpeTerrain_set_heights_m(t, heights_m);
+    return t;
+}
+
+# Flat ground at z=0 over [0, max_range].
+#must_use
+fn gfpe_terrain_flat(max_range_m) {
+    var r = vec_new();
+    vec_push(r, 0);
+    vec_push(r, f64_max(max_range_m, 0));
+    var h = vec_new();
+    vec_push(h, 0);
+    vec_push(h, 0);
+    return gfpe_terrain_new(r, h);
+}
+
+# Linearly interpolated ground height at range_m; endpoint held outside.
+#must_use
+fn gfpe_terrain_height_at(t, range_m) {
+    var ranges = GfpeTerrain_ranges_m(t);
+    var heights = GfpeTerrain_heights_m(t);
+    var nr = vec_len(ranges);
+    var nh = vec_len(heights);
+    if (nr == 0) { return 0; }
+    if (nr != nh) { return 0; }
+    if (f64_le(range_m, vec_get(ranges, 0)) == 1) { return vec_get(heights, 0); }
+    var last = nr - 1;
+    if (f64_ge(range_m, vec_get(ranges, last)) == 1) { return vec_get(heights, last); }
+    var i = 0;
+    while (i < last) {
+        var r0 = vec_get(ranges, i);
+        var r1 = vec_get(ranges, i + 1);
+        # range_m >= r0 && range_m <= r1
+        var in_seg = 0;
+        if (f64_ge(range_m, r0) == 1) {
+            if (f64_le(range_m, r1) == 1) { in_seg = 1; }
+        }
+        if (in_seg == 1) {
+            var span = f64_max(f64_sub(r1, r0), GOONJ_EPSILON);
+            var frac = f64_div(f64_sub(range_m, r0), span);
+            var h0 = vec_get(heights, i);
+            var h1 = vec_get(heights, i + 1);
+            return f64_add(h0, f64_mul(f64_sub(h1, h0), frac));
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ================================================================
+# GfpeConfig -- simulation parameters.
+# ================================================================
+#derive(accessors)
+struct GfpeConfig {
+    frequency_hz;
+    source_height_m;
+    max_range_m;
+    max_height_m;
+    range_step_m;
+    height_step_m;
+    ground_impedance;
+    atmosphere;
+}
+
+#must_use
+fn gfpe_config_new(frequency_hz, source_height_m, max_range_m, max_height_m,
+range_step_m, height_step_m, ground_impedance, atmosphere) {
+    var c = alloc(sizeof(GfpeConfig));
+    GfpeConfig_set_frequency_hz(c, frequency_hz);
+    GfpeConfig_set_source_height_m(c, source_height_m);
+    GfpeConfig_set_max_range_m(c, max_range_m);
+    GfpeConfig_set_max_height_m(c, max_height_m);
+    GfpeConfig_set_range_step_m(c, range_step_m);
+    GfpeConfig_set_height_step_m(c, height_step_m);
+    GfpeConfig_set_ground_impedance(c, ground_impedance);
+    GfpeConfig_set_atmosphere(c, atmosphere);
+    return c;
+}
+
+# ================================================================
+# GfpeResult -- excess attenuation (dB) on the (range x height) grid.
+# ================================================================
+#derive(accessors)
+struct GfpeResult { ranges_m; heights_m; excess_attenuation_db; }
+
+#must_use
+fn gfpe_result_new(ranges_m, heights_m, excess_attenuation_db) {
+    var r = alloc(sizeof(GfpeResult));
+    GfpeResult_set_ranges_m(r, ranges_m);
+    GfpeResult_set_heights_m(r, heights_m);
+    GfpeResult_set_excess_attenuation_db(r, excess_attenuation_db);
+    return r;
+}
+
+#must_use
+fn gfpe_result_num_ranges(r) { return vec_len(GfpeResult_ranges_m(r)); }
+#must_use
+fn gfpe_result_num_heights(r) { return vec_len(GfpeResult_heights_m(r)); }
+
+# Excess attenuation (dB) at (range_idx, height_idx); +inf if out of range.
+#must_use
+fn gfpe_result_at(r, range_idx, height_idx) {
+    var nz = gfpe_result_num_heights(r);
+    if (range_idx >= gfpe_result_num_ranges(r)) { return GFPE_POS_INF; }
+    if (height_idx >= nz) { return GFPE_POS_INF; }
+    return vec_get(GfpeResult_excess_attenuation_db(r), range_idx * nz + height_idx);
+}
+
+# ================================================================
+# GfpeCplx -- a complex number (real, imag) for the reflection coeff.
+# ================================================================
+#derive(accessors)
+struct GfpeCplx { re; im; }
+
+#must_use
+fn _gfpe_cplx_one() {
+    var c = alloc(sizeof(GfpeCplx));
+    GfpeCplx_set_re(c, F64_ONE);
+    GfpeCplx_set_im(c, 0);
+    return c;
+}
+
+# Complex Miki reflection coefficient at a given grazing angle.
+# Returns a GfpeCplx (1 + 0i for degenerate inputs).
+#must_use
+fn gfpe_ground_reflection_complex(frequency_hz, grazing_angle_rad, impedance) {
+    var resistivity = GroundImpedance_flow_resistivity(impedance);
+    if (f64_le(frequency_hz, 0) == 1) { return _gfpe_cplx_one(); }
+    if (f64_le(resistivity, 0) == 1) { return _gfpe_cplx_one(); }
+
+    var x = f64_div(frequency_hz, resistivity);
+    # Miki normalised surface impedance Z/rho c
+    var x_pow = f64_pow(x, GFPE_MIKI_EXP);
+    var z_real = f64_add(F64_ONE, f64_mul(GFPE_MIKI_ZR, x_pow));
+    var z_imag = f64_mul(GFPE_MIKI_ZI, x_pow);
+
+    var sin_theta = f64_sin(grazing_angle_rad);
+    var num_re = f64_sub(f64_mul(z_real, sin_theta), F64_ONE);
+    var num_im = f64_mul(z_imag, sin_theta);
+    var den_re = f64_add(f64_mul(z_real, sin_theta), F64_ONE);
+    var den_im = f64_mul(z_imag, sin_theta);
+    var den_mag2 = f64_add(f64_mul(den_re, den_re), f64_mul(den_im, den_im));
+    if (f64_lt(den_mag2, GOONJ_EPSILON) == 1) { return _gfpe_cplx_one(); }
+
+    # R = num / den = num * conj(den) / |den|^2
+    var r_re = f64_div(f64_add(f64_mul(num_re, den_re), f64_mul(num_im, den_im)), den_mag2);
+    var r_im = f64_div(f64_sub(f64_mul(num_im, den_re), f64_mul(num_re, den_im)), den_mag2);
+    var c = alloc(sizeof(GfpeCplx));
+    GfpeCplx_set_re(c, r_re);
+    GfpeCplx_set_im(c, r_im);
+    return c;
+}
+
+# ================================================================
+# Direct half-space PE convolution (in-place into out_re/out_im).
+# psi_new(z) = integral G(z,z';dr) psi(z') dz', G = free-space PE kernel
+# minus a ground-image term scaled by the reflection coefficient.
+# psi_re/psi_im/out_re/out_im are nz-long f64 buffers; heights is a vec.
+# ================================================================
+fn _gfpe_convolve_pe_step(psi_re, psi_im, heights, nz, dr, dz, k0, r_re, r_im, out_re, out_im) {
+    # Free-space kernel coeff: |coeff| = sqrt(k0/(2 pi dr)); phase = -pi/4.
+    var coeff_mag = f64_sqrt(f64_div(k0, f64_mul(F64_TAU, dr)));
+    var coeff_phase = f64_neg(f64_div(F64_PI, f64_from(4)));
+    var coeff_re = f64_mul(coeff_mag, f64_cos(coeff_phase));
+    var coeff_im = f64_mul(coeff_mag, f64_sin(coeff_phase));
+    var two_dr = f64_mul(F64_TWO, dr);
+
+    var i = 0;
+    while (i < nz) {
+        var z = vec_get(heights, i);
+        var acc_re = 0;
+        var acc_im = 0;
+        var j = 0;
+        while (j < nz) {
+            var z_prime = vec_get(heights, j);
+            # Direct term: g_d = coeff * exp(i*k0*(z-z')^2/(2 dr))
+            var dz_diff = f64_sub(z, z_prime);
+            var phase_d = f64_div(f64_mul(k0, f64_mul(dz_diff, dz_diff)), two_dr);
+            var ed_re = f64_cos(phase_d);
+            var ed_im = f64_sin(phase_d);
+            var gd_re = f64_sub(f64_mul(coeff_re, ed_re), f64_mul(coeff_im, ed_im));
+            var gd_im = f64_add(f64_mul(coeff_re, ed_im), f64_mul(coeff_im, ed_re));
+            # Image term: g_i = coeff * exp(i*k0*(z+z')^2/(2 dr)) * r_complex
+            var dz_sum = f64_add(z, z_prime);
+            var phase_i = f64_div(f64_mul(k0, f64_mul(dz_sum, dz_sum)), two_dr);
+            var ei_re = f64_cos(phase_i);
+            var ei_im = f64_sin(phase_i);
+            var gif_re = f64_sub(f64_mul(coeff_re, ei_re), f64_mul(coeff_im, ei_im));
+            var gif_im = f64_add(f64_mul(coeff_re, ei_im), f64_mul(coeff_im, ei_re));
+            var gi_re = f64_sub(f64_mul(gif_re, r_re), f64_mul(gif_im, r_im));
+            var gi_im = f64_add(f64_mul(gif_re, r_im), f64_mul(gif_im, r_re));
+            # G_total = direct - image
+            var gt_re = f64_sub(gd_re, gi_re);
+            var gt_im = f64_sub(gd_im, gi_im);
+            # contribution = G_total * psi[j], Riemann-summed with weight dz
+            var pr = load64(psi_re + j * 8);
+            var pim = load64(psi_im + j * 8);
+            var c_re = f64_sub(f64_mul(gt_re, pr), f64_mul(gt_im, pim));
+            var c_im = f64_add(f64_mul(gt_re, pim), f64_mul(gt_im, pr));
+            acc_re = f64_add(acc_re, f64_mul(c_re, dz));
+            acc_im = f64_add(acc_im, f64_mul(c_im, dz));
+            j = j + 1;
+        }
+        store64(out_re + i * 8, acc_re);
+        store64(out_im + i * 8, acc_im);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ================================================================
+# Record excess attenuation at the current range slice into ea_vec.
+# ================================================================
+fn _gfpe_record_ea(psi_re, psi_im, heights, range_m, terrain, ea_vec, r_idx, nz) {
+    var ground = gfpe_terrain_height_at(terrain, range_m);
+    var r_safe = f64_max(range_m, GOONJ_EPSILON);
+    # 2D free-field reference: |psi_free| proportional to 1/sqrt(r).
+    var free_ref = f64_div(F64_ONE, f64_sqrt(r_safe));
+    var h_idx = 0;
+    while (h_idx < nz) {
+        var z = vec_get(heights, h_idx);
+        var s_re = load64(psi_re + h_idx * 8);
+        var s_im = load64(psi_im + h_idx * 8);
+        var mag = f64_sqrt(f64_add(f64_mul(s_re, s_re), f64_mul(s_im, s_im)));
+        # z < ground || mag < eps || free_ref < eps  -> blocked (+inf)
+        var blocked = 0;
+        if (f64_lt(z, ground) == 1) { blocked = 1; }
+        if (f64_lt(mag, GOONJ_EPSILON) == 1) { blocked = 1; }
+        if (f64_lt(free_ref, GOONJ_EPSILON) == 1) { blocked = 1; }
+        var ea = GFPE_POS_INF;
+        if (blocked == 0) {
+            ea = f64_mul(f64_neg(f64_from(20)), _gfpe_log10(f64_div(mag, free_ref)));
+        }
+        vec_set(ea_vec, r_idx * nz + h_idx, ea);
+        h_idx = h_idx + 1;
+    }
+    return 0;
+}
+
+#must_use
+fn _gfpe_empty_result() { return gfpe_result_new(vec_new(), vec_new(), vec_new()); }
+
+# ================================================================
+# Solve GFPE over a terrain profile.
+# ================================================================
+#must_use
+fn solve_gfpe(terrain, config) {
+    var freq = GfpeConfig_frequency_hz(config);
+    var max_range = GfpeConfig_max_range_m(config);
+    var max_height = GfpeConfig_max_height_m(config);
+    var range_step = GfpeConfig_range_step_m(config);
+    var height_step = GfpeConfig_height_step_m(config);
+    var atmosphere = GfpeConfig_atmosphere(config);
+    var ref_speed = GfpeAtmosphere_reference_speed(atmosphere);
+    var gradient = GfpeAtmosphere_gradient_per_m(atmosphere);
+
+    if (f64_le(freq, 0) == 1) { return _gfpe_empty_result(); }
+    if (f64_le(max_range, 0) == 1) { return _gfpe_empty_result(); }
+    if (f64_le(max_height, 0) == 1) { return _gfpe_empty_result(); }
+    if (f64_le(range_step, 0) == 1) { return _gfpe_empty_result(); }
+    if (f64_le(height_step, 0) == 1) { return _gfpe_empty_result(); }
+    if (f64_le(ref_speed, 0) == 1) { return _gfpe_empty_result(); }
+
+    var nz = f64_to(f64_div(max_height, height_step));
+    if (nz < 2) { nz = 2; }
+    var num_ranges = f64_to(f64_div(max_range, range_step));
+    if (num_ranges < 1) { num_ranges = 1; }
+    num_ranges = num_ranges + 1;
+
+    # saturating_mul guard in f64 to avoid i64 overflow on huge grids.
+    var cells = f64_mul(f64_from(nz), f64_from(num_ranges));
+    if (f64_gt(cells, f64_from(MAX_GRID_CELLS)) == 1) { return _gfpe_empty_result(); }
+
+    var dz = f64_div(max_height, f64_from(nz));
+    var dr = range_step;
+    var k0 = f64_div(f64_mul(F64_TAU, freq), ref_speed);
+
+    # Grid coordinates.
+    var heights = vec_new();
+    var i = 0;
+    while (i < nz) {
+        vec_push(heights, f64_mul(f64_add(f64_from(i), F64_HALF), dz));
+        i = i + 1;
+    }
+    var ranges = vec_new();
+    i = 0;
+    while (i < num_ranges) {
+        vec_push(ranges, f64_mul(f64_from(i), dr));
+        i = i + 1;
+    }
+
+    # Initial field at r=0: Gaussian starter centred at source_height_m.
+    var src_h = GfpeConfig_source_height_m(config);
+    var sigma = f64_max(f64_div(f64_from(4), k0), dz);
+    var psi_re = alloc(nz * 8);
+    var psi_im = alloc(nz * 8);
+    i = 0;
+    while (i < nz) {
+        var z = vec_get(heights, i);
+        var arg = f64_div(f64_sub(z, src_h), sigma);
+        var amp = f64_exp(f64_mul(f64_neg(F64_HALF), f64_mul(arg, arg)));
+        store64(psi_re + i * 8, amp);
+        store64(psi_im + i * 8, 0);
+        i = i + 1;
+    }
+
+    # Excess-attenuation grid (row-major), zero-filled, then record r=0.
+    var ea = vec_new();
+    var total = num_ranges * nz;
+    i = 0;
+    while (i < total) {
+        vec_push(ea, 0);
+        i = i + 1;
+    }
+    _gfpe_record_ea(psi_re, psi_im, heights, vec_get(ranges, 0), terrain, ea, 0, nz);
+
+    # Reflection coefficient at a representative grazing angle.
+    var rep_angle = f64_max(
+    f64_atan(f64_div(f64_max(src_h, dz), f64_max(max_range, dr))),
+    GFPE_1E3);
+    var rcplx = gfpe_ground_reflection_complex(freq, rep_angle, GfpeConfig_ground_impedance(config));
+    var r_re = GfpeCplx_re(rcplx);
+    var r_im = GfpeCplx_im(rcplx);
+
+    # Scratch buffers for the convolution output (ping-ponged with psi).
+    var out_re = alloc(nz * 8);
+    var out_im = alloc(nz * 8);
+
+    var r_idx = 1;
+    while (r_idx < num_ranges) {
+        var range = vec_get(ranges, r_idx);
+
+        # 1. Phase screen for the atmosphere (in place on psi).
+        i = 0;
+        while (i < nz) {
+            var pz = vec_get(heights, i);
+            var c_z = f64_add(ref_speed, f64_mul(gradient, pz));
+            # n^2 - 1 ~ (c0/c)^2 - 1
+            var ratio = f64_div(ref_speed, f64_max(c_z, F64_ONE));
+            var n2_minus_1 = f64_sub(f64_mul(ratio, ratio), F64_ONE);
+            var phase = f64_mul(f64_mul(f64_mul(F64_HALF, k0), n2_minus_1), dr);
+            var e_re = f64_cos(phase);
+            var e_im = f64_sin(phase);
+            var s_re = load64(psi_re + i * 8);
+            var s_im = load64(psi_im + i * 8);
+            store64(psi_re + i * 8, f64_sub(f64_mul(s_re, e_re), f64_mul(s_im, e_im)));
+            store64(psi_im + i * 8, f64_add(f64_mul(s_re, e_im), f64_mul(s_im, e_re)));
+            i = i + 1;
+        }
+
+        # 2. Convolve with the PE Green's function, then swap psi <- out.
+        _gfpe_convolve_pe_step(psi_re, psi_im, heights, nz, dr, dz, k0, r_re, r_im, out_re, out_im);
+        var t_re = psi_re;
+        psi_re = out_re;
+        out_re = t_re;
+        var t_im = psi_im;
+        psi_im = out_im;
+        out_im = t_im;
+
+        # 3. Apply terrain: zero field below local ground.
+        var ground = gfpe_terrain_height_at(terrain, range);
+        i = 0;
+        while (i < nz) {
+            if (f64_lt(vec_get(heights, i), ground) == 1) {
+                store64(psi_re + i * 8, 0);
+                store64(psi_im + i * 8, 0);
+            }
+            i = i + 1;
+        }
+
+        _gfpe_record_ea(psi_re, psi_im, heights, range, terrain, ea, r_idx, nz);
+        r_idx = r_idx + 1;
+    }
+
+    return gfpe_result_new(ranges, heights, ea);
+}

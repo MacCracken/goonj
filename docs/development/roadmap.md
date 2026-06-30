@@ -56,12 +56,14 @@ Acceptance: every L0 module + `material` ported with a green parity suite.
 - [ ] **scattering** — cosine-weighted hemisphere sampling
 - [ ] **logging** — tracing shim (maps to `sakshi`)
 
-### M2 — Geometric & wave spine (L2)
+### M2 — Geometric & wave spine (L2) — ✅ 13/14 (parallel workflow)
 
-room, metamaterial, directivity, hybrid, fdn, gfpe, diffusion, fdtd,
-outdoor, portal, udfa, underwater, vibroacoustics, bridge. Each gated on
-material (+ propagation where used). Many are independent of one another →
-candidates for a parallel porting **workflow** once the L1 recipe is proven.
+room, hybrid, directivity, metamaterial, fdn, gfpe, diffusion, outdoor,
+portal, udfa, underwater, vibroacoustics, bridge — **ported in one 13-agent
+parallel workflow** (worktree-isolated), then integrated + re-verified in main
+(291 assertions). `fdtd` remains (gated on `hybrid`, now done) → fold into the
+next wave with `dwm`. The workflow proved the recipe scales: no new patterns,
+all gates green after an integration fmt-cleanup pass.
 
 ### M3 — Acceleration & sources (L3)
 

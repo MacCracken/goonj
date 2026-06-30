@@ -1,0 +1,139 @@
+# bridge.cyr -- cross-crate bridges: convert primitive values from other
+# AGNOS science crates (pavan/badal/ushma/bijli) into goonj acoustic
+# parameters. Always available — takes primitive f64 values, no science
+# crate deps.
+#
+# Ports rust-old/src/bridge.rs. f32 → f64 throughout. The Rust `bool`
+# `approaching` flag becomes an integer 1/0. The `[f32; NUM_BANDS]` return
+# of air_absorption_from_weather becomes a pointer to an 8×f64 buffer
+# (alloc 64 bytes; caller reads load64(buf + i*8)).
+#
+# Requires (from the build/test unit): propagation.cyr (speed_of_sound,
+# atmospheric_absorption), material.cyr (frequency_band, NUM_BANDS), stdlib
+# math/ganita (F64_ONE/F64_TWO/F64_HALF/F64_PI, f64_*). alloc_init() must
+# have run before air_absorption_from_weather (it allocs a buffer).
+
+# ================================================================
+# Constants (f64 bit patterns; decimal in comments for traceability).
+# Bridge-local names avoid colliding with propagation.cyr's globals.
+# ================================================================
+var WIND_TURB_COEFF  = 0x3F8A9FBE76C8B439;   # 0.013   turbulent-scatter coeff
+var MACH_CLAMP       = 0x3FEFAE147AE147AE;   # 0.99    sub-sonic Mach clamp
+var STD_PRESSURE_HPA = 0x408FAA0000000000;   # 1013.25 standard pressure (hPa)
+var BR_KELVIN        = 0x4071126666666666;   # 273.15  °C → K offset
+var BR_T_REF         = 0x4072526666666666;   # 293.15  K (20 °C reference)
+var BR_SOUND_TCOEFF  = 0x3FE3645A1CAC0831;   # 0.606   m/s per °C
+var ZETA_MIN         = 0x3F50624DD2F1A9FC;   # 0.001   min damping ratio
+var DENOM_THRESH     = 0x3DDB7CDFD9D7BDBB;   # 1e-10   transfer-fn denom floor
+var RHO_AIR          = 0x3FF399999999999A;   # 1.225   air density kg/m³
+
+# ── Pavan bridges (aerodynamics) ──
+
+# Wind speed (m/s) → outdoor propagation attenuation (dB/m, always ≥ 0).
+# Turbulent scattering grows ~ with wind speed squared (ISO 9613-2 approx):
+# (speed² · 0.013).min(5.0) / 1000.0.
+#must_use
+fn wind_attenuation_factor(wind_speed_ms) {
+    var speed = f64_max(wind_speed_ms, 0);
+    var scaled = f64_mul(f64_mul(speed, speed), WIND_TURB_COEFF);
+    return f64_div(f64_min(scaled, f64_from(5)), f64_from(1000));
+}
+
+# Mach number → Doppler frequency-shift ratio. `approaching` is 1 if the
+# source moves toward the listener, else 0. m = |Mach|.min(0.99):
+#   approaching: 1 / (1 - m);  receding: 1 / (1 + m).
+#must_use
+fn doppler_ratio_from_mach(mach_number, approaching) {
+    var m = f64_min(f64_abs(mach_number), MACH_CLAMP);
+    if (approaching == 1) {
+        return f64_div(F64_ONE, f64_sub(F64_ONE, m));
+    }
+    return f64_div(F64_ONE, f64_add(F64_ONE, m));
+}
+
+# Temperature (°C) + wind component (m/s) → effective speed of sound.
+# Downwind (positive component) speeds sound up; upwind slows it.
+#must_use
+fn effective_speed_of_sound(temperature_celsius, wind_component_ms) {
+    return f64_add(speed_of_sound(temperature_celsius), wind_component_ms);
+}
+
+# ── Badal bridges (weather/atmosphere) ──
+
+# Humidity (%) + temperature (°C) → per-band air absorption (dB/m) at the 8
+# standard octave-band centre frequencies (ISO 9613-1). Returns a pointer
+# to an 8×f64 buffer; caller reads load64(buf + band*8).
+#must_use
+fn air_absorption_from_weather(humidity_percent, temperature_celsius) {
+    var h = f64_clamp(humidity_percent, 0, f64_from(100));
+    var t = temperature_celsius;
+    var buf = alloc(NUM_BANDS * 8);
+    var band = 0;
+    while (band < NUM_BANDS) {
+        var a = atmospheric_absorption(frequency_band(band), h, t, F64_ONE);
+        store64(buf + band * 8, a);
+        band = band + 1;
+    }
+    return buf;
+}
+
+# Temperature (°C) → speed of sound (m/s). Thin wrapper over speed_of_sound.
+#must_use
+fn speed_of_sound_from_temperature(temperature_celsius) {
+    return speed_of_sound(temperature_celsius);
+}
+
+# Atmospheric pressure (hPa) → pressure ratio (atm). 1013.25 hPa = 1.0 atm.
+#must_use
+fn pressure_to_atm(pressure_hpa) {
+    return f64_div(pressure_hpa, STD_PRESSURE_HPA);
+}
+
+# ── Ushma bridges (thermodynamics) ──
+
+# Temperature (°C) → porous-absorber absorption scaling factor (1.0 at
+# 20 °C). Scales ~ sqrt(T/T_ref): sqrt(max(T_K, 1) / 293.15).
+#must_use
+fn absorption_temperature_scale(temperature_celsius) {
+    var t_kelvin = f64_max(f64_add(temperature_celsius, BR_KELVIN), F64_ONE);
+    return f64_sqrt(f64_div(t_kelvin, BR_T_REF));
+}
+
+# Thermal gradient (°C/m) → sound-speed gradient (m/s per m). Since
+# c = 331.3 + 0.606·T, dc/dz = 0.606 · dT/dz.
+#must_use
+fn sound_speed_gradient(thermal_gradient_c_per_m) {
+    return f64_mul(BR_SOUND_TCOEFF, thermal_gradient_c_per_m);
+}
+
+# ── Bijli bridges (electromagnetism) ──
+
+# EM drive frequency vs structural natural frequency → resonance
+# amplification factor (single-DOF transfer-function magnitude). Returns
+# 1.0 for a non-positive structural frequency, caps at 1000.0.
+#must_use
+fn em_resonance_coupling(em_frequency_hz, structural_freq_hz, damping_ratio) {
+    if (f64_le(structural_freq_hz, 0) == 1) { return F64_ONE; }
+    var r = f64_div(em_frequency_hz, structural_freq_hz);
+    var zeta = f64_max(damping_ratio, ZETA_MIN);
+    # denom = sqrt((1 - r²)² + (2·zeta·r)²)
+    var one_minus_r2 = f64_sub(F64_ONE, f64_mul(r, r));
+    var two_zeta_r = f64_mul(f64_mul(F64_TWO, zeta), r);
+    var denom = f64_sqrt(f64_add(f64_mul(one_minus_r2, one_minus_r2),
+    f64_mul(two_zeta_r, two_zeta_r)));
+    if (f64_lt(denom, DENOM_THRESH) == 1) { return f64_from(1000); }
+    return f64_min(f64_div(F64_ONE, denom), f64_from(1000));
+}
+
+# EM field amplitude (V/m) + frequency → radiated acoustic power (W) from a
+# piezoelectric transducer. Simplified: P = 0.5·ρ·c·A·v², with
+# v = d·E·2π·f and ρ = 1.225 kg/m³, c = 343 m/s. Clamped at 0.
+#must_use
+fn piezo_acoustic_power(e_field_v_per_m, frequency_hz, piezo_coefficient_m_per_v, transducer_area_m2) {
+    var c = f64_from(343);
+    var displacement = f64_mul(piezo_coefficient_m_per_v, e_field_v_per_m);
+    var velocity = f64_mul(f64_mul(f64_mul(displacement, F64_TWO), F64_PI), frequency_hz);
+    var power = f64_mul(f64_mul(f64_mul(f64_mul(F64_HALF, RHO_AIR), c),
+    transducer_area_m2), f64_mul(velocity, velocity));
+    return f64_max(power, 0);
+}

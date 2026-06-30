@@ -1,0 +1,236 @@
+# directivity.cyr -- source directivity patterns for frequency-dependent
+# sound radiation: analytical patterns (omni / cardioid / subcardioid /
+# supercardioid / figure-8) plus tabulated balloon data.
+#
+# Ports rust-old/src/directivity.rs. f32 → f64 throughout (hisab is
+# f64-only). Rust's `serde` derive is dropped (no serde in Cyrius); the
+# serde round-trip test is therefore omitted. The payload-carrying enum
+# `DirectivityPattern` becomes an integer `kind` tag + a `balloon`
+# pointer (0 for analytical patterns). The `[Vec<f32>; NUM_BANDS]`
+# balloon gain table is an inline 8×pointer block via manual layout.
+#
+# Requires (from the build/test unit): material.cyr (NUM_BANDS), stdlib
+# math/ganita (F64_*, f64_clamp/acos/abs/max/...) and vec
+# (vec_new/push/len/get), and hisab (hvec3_dot). alloc_init() must run.
+
+# -1.0 as an f64 bit pattern — the clamp lower bound for cos θ.
+var DIR_NEG_ONE = 0xBFF0000000000000;   # -1.0
+
+# Pattern kind tags (replaces Rust's payload-carrying enum variants).
+enum DirPatternKind {
+    PAT_OMNI = 0,
+    PAT_CARDIOID = 1,
+    PAT_SUBCARDIOID = 2,
+    PAT_SUPERCARDIOID = 3,
+    PAT_FIGURE8 = 4,
+    PAT_TABULATED = 5,
+}
+
+# DirectivityBalloon inline layout: azimuths vec | elevations vec |
+# 8 per-band gain vecs (offsets 16..80).
+enum DbLayout {
+    DB_AZ = 0,
+    DB_EL = 8,
+    DB_GAINS = 16,   # 8 pointers, offsets 16..80
+    DB_SIZE = 80,
+}
+
+# n/100 as f64 — cardioid coefficients are all exact hundredths.
+fn _dir_pct(n) { return f64_div(f64_from(n), f64_from(100)); }
+
+# ================================================================
+# DirectivityBalloon — measured per-band gain table
+# ================================================================
+fn directivity_balloon_azimuths(b)   { return load64(b + DB_AZ); }
+fn directivity_balloon_elevations(b) { return load64(b + DB_EL); }
+fn directivity_balloon_gain_band(b, band) { return load64(b + DB_GAINS + band * 8); }
+
+# Build a balloon from an azimuths vec, an elevations vec, and `gains`
+# (a pointer to NUM_BANDS vec handles, one per octave band).
+#must_use
+fn directivity_balloon_new(azimuths, elevations, gains) {
+    var b = alloc(DB_SIZE);
+    store64(b + DB_AZ, azimuths);
+    store64(b + DB_EL, elevations);
+    var i = 0;
+    while (i < NUM_BANDS) {
+        store64(b + DB_GAINS + i * 8, load64(gains + i * 8));
+        i = i + 1;
+    }
+    return b;
+}
+
+# Fill an 8×f64 output buffer with 1.0 (the [1.0; NUM_BANDS] fallback).
+fn _dir_fill_ones(out) {
+    var i = 0;
+    while (i < NUM_BANDS) {
+        store64(out + i * 8, F64_ONE);
+        i = i + 1;
+    }
+    return out;
+}
+
+# Nearest-neighbour index in `vals` to `target` (first minimum wins, as
+# Rust's `min_by(... partial_cmp ...).unwrap_or(0)`).
+#must_use
+fn _dir_nearest_idx(vals, target) {
+    var n = vec_len(vals);
+    if (n == 0) { return 0; }
+    var best = 0;
+    var best_diff = f64_abs(f64_sub(vec_get(vals, 0), target));
+    var i = 1;
+    while (i < n) {
+        var d = f64_abs(f64_sub(vec_get(vals, i), target));
+        if (f64_lt(d, best_diff) == 1) {
+            best = i;
+            best_diff = d;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+# Interpolate per-band gain via nearest-neighbour lookup. Returns a
+# pointer to NUM_BANDS f64 (replaces Rust's `[f32; NUM_BANDS]`).
+#must_use
+fn _dir_interpolate_per_band(balloon, direction, front) {
+    var out = alloc(NUM_BANDS * 8);
+    var az = directivity_balloon_azimuths(balloon);
+    var el = directivity_balloon_elevations(balloon);
+    if (vec_len(az) == 0) { return _dir_fill_ones(out); }
+    if (vec_len(el) == 0) { return _dir_fill_ones(out); }
+
+    # Polar angle from the front axis; axisymmetric fallback (el = 0).
+    var cos_theta = f64_clamp(hvec3_dot(direction, front), DIR_NEG_ONE, F64_ONE);
+    var theta = f64_acos(cos_theta);
+    var target_az = theta;
+    var target_el = 0;   # 0.0
+
+    var az_idx = _dir_nearest_idx(az, target_az);
+    var el_idx = _dir_nearest_idx(el, target_el);
+    var flat_idx = el_idx * vec_len(az) + az_idx;
+
+    var band = 0;
+    while (band < NUM_BANDS) {
+        var g = directivity_balloon_gain_band(balloon, band);
+        var v = F64_ONE;
+        if (flat_idx < vec_len(g)) {
+            v = vec_get(g, flat_idx);
+        }
+        store64(out + band * 8, v);
+        band = band + 1;
+    }
+    return out;
+}
+
+# Broadband gain = mean of the per-band gains.
+#must_use
+fn _dir_interpolate_broadband(balloon, direction, front) {
+    var pb = _dir_interpolate_per_band(balloon, direction, front);
+    var sum = 0;
+    var i = 0;
+    while (i < NUM_BANDS) {
+        sum = f64_add(sum, load64(pb + i * 8));
+        i = i + 1;
+    }
+    return f64_div(sum, f64_from(NUM_BANDS));
+}
+
+# ================================================================
+# DirectivityPattern — kind tag + optional balloon pointer
+# ================================================================
+#derive(accessors)
+struct DirectivityPattern { kind; balloon; }
+
+#must_use
+fn directivity_omnidirectional() {
+    var p = alloc(sizeof(DirectivityPattern));
+    DirectivityPattern_set_kind(p, PAT_OMNI);
+    DirectivityPattern_set_balloon(p, 0);
+    return p;
+}
+#must_use
+fn directivity_cardioid() {
+    var p = alloc(sizeof(DirectivityPattern));
+    DirectivityPattern_set_kind(p, PAT_CARDIOID);
+    DirectivityPattern_set_balloon(p, 0);
+    return p;
+}
+#must_use
+fn directivity_subcardioid() {
+    var p = alloc(sizeof(DirectivityPattern));
+    DirectivityPattern_set_kind(p, PAT_SUBCARDIOID);
+    DirectivityPattern_set_balloon(p, 0);
+    return p;
+}
+#must_use
+fn directivity_supercardioid() {
+    var p = alloc(sizeof(DirectivityPattern));
+    DirectivityPattern_set_kind(p, PAT_SUPERCARDIOID);
+    DirectivityPattern_set_balloon(p, 0);
+    return p;
+}
+#must_use
+fn directivity_figure8() {
+    var p = alloc(sizeof(DirectivityPattern));
+    DirectivityPattern_set_kind(p, PAT_FIGURE8);
+    DirectivityPattern_set_balloon(p, 0);
+    return p;
+}
+#must_use
+fn directivity_tabulated(balloon) {
+    var p = alloc(sizeof(DirectivityPattern));
+    DirectivityPattern_set_kind(p, PAT_TABULATED);
+    DirectivityPattern_set_balloon(p, balloon);
+    return p;
+}
+
+# Directivity gain for a direction relative to the front axis (linear,
+# 1.0 = on-axis reference). `direction` and `front` are HVec3 pointers.
+#must_use
+fn directivity_gain(pattern, direction, front) {
+    var kind = DirectivityPattern_kind(pattern);
+    if (kind == PAT_OMNI) { return F64_ONE; }
+    if (kind == PAT_CARDIOID) {
+        # gain = max(0.5·(1 + cos θ), 0)
+        var c = f64_clamp(hvec3_dot(direction, front), DIR_NEG_ONE, F64_ONE);
+        return f64_max(f64_mul(F64_HALF, f64_add(F64_ONE, c)), 0);
+    }
+    if (kind == PAT_SUBCARDIOID) {
+        # gain = 0.75 + 0.25·cos θ
+        var c = f64_clamp(hvec3_dot(direction, front), DIR_NEG_ONE, F64_ONE);
+        return f64_add(_dir_pct(75), f64_mul(_dir_pct(25), c));
+    }
+    if (kind == PAT_SUPERCARDIOID) {
+        # gain = max(0.37 + 0.63·cos θ, 0)
+        var c = f64_clamp(hvec3_dot(direction, front), DIR_NEG_ONE, F64_ONE);
+        return f64_max(f64_add(_dir_pct(37), f64_mul(_dir_pct(63), c)), 0);
+    }
+    if (kind == PAT_FIGURE8) {
+        # gain = |cos θ|
+        var c = f64_clamp(hvec3_dot(direction, front), DIR_NEG_ONE, F64_ONE);
+        return f64_abs(c);
+    }
+    if (kind == PAT_TABULATED) {
+        return _dir_interpolate_broadband(DirectivityPattern_balloon(pattern), direction, front);
+    }
+    return F64_ONE;
+}
+
+# Per-band directivity gain. Returns a pointer to NUM_BANDS f64. For
+# analytical patterns every band equals the broadband gain.
+#must_use
+fn directivity_gain_per_band(pattern, direction, front) {
+    var kind = DirectivityPattern_kind(pattern);
+    if (kind == PAT_TABULATED) {
+        return _dir_interpolate_per_band(DirectivityPattern_balloon(pattern), direction, front);
+    }
+    var g = directivity_gain(pattern, direction, front);
+    var out = alloc(NUM_BANDS * 8);
+    var i = 0;
+    while (i < NUM_BANDS) {
+        store64(out + i * 8, g);
+        i = i + 1;
+    }
+    return out;
+}

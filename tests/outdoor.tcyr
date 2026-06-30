@@ -1,0 +1,108 @@
+# outdoor.tcyr -- parity tests for src/outdoor.cyr
+# Ported from the #[test] blocks in rust-old/src/outdoor.rs.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/outdoor.cyr"
+
+# Tolerances (f64 bit patterns)
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+fn nz(p) { if (p == 0) { return 0; } return 1; }   # pointer is non-null
+
+# Sum of absolute values across an 8-band f64 buffer.
+fn sum_abs8(arr) {
+    var s = 0;
+    var i = 0;
+    while (i < 8) {
+        s = f64_add(s, f64_abs(load64(arr + i * 8)));
+        i = i + 1;
+    }
+    return s;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("barrier_insertion_loss");
+# Higher frequency -> shorter wavelength -> larger Fresnel number -> more loss.
+var b_low = barrier_insertion_loss(F64_ONE, f64_from(250), f64_from(20));
+var b_high = barrier_insertion_loss(F64_ONE, f64_from(4000), f64_from(20));
+assert(f64_gt(b_high, b_low), "higher freq has more barrier loss");
+# Larger path difference -> more loss.
+var b_small = barrier_insertion_loss(f64_div(F64_ONE, f64_from(10)), f64_from(1000), f64_from(20));
+var b_large = barrier_insertion_loss(F64_TWO, f64_from(1000), f64_from(20));
+assert(f64_gt(b_large, b_small), "larger path diff has more loss");
+# No barrier (zero / negative path difference) -> 0.
+assert_eq(f64_to(barrier_insertion_loss(0, f64_from(1000), f64_from(20))), 0, "zero path -> 0");
+assert_eq(f64_to(barrier_insertion_loss(f64_neg(F64_ONE), f64_from(1000), f64_from(20))), 0, "neg path -> 0");
+
+# ================================================================
+test_group("barrier_insertion_loss_bands");
+var bands = barrier_insertion_loss_bands(F64_ONE, f64_from(20));
+assert(nz(bands), "bands buffer allocated");
+# Each band equals the scalar barrier loss at that band frequency.
+var bands_ok = 1;
+var bi = 0;
+while (bi < NUM_BANDS) {
+    var expect = barrier_insertion_loss(F64_ONE, frequency_band(bi), f64_from(20));
+    if (approx(load64(bands + bi * 8), expect, TOL_1E3) == 0) { bands_ok = 0; }
+    bi = bi + 1;
+}
+assert(bands_ok, "per-band matches scalar barrier loss");
+assert_eq(NUM_BANDS, 8, "NUM_BANDS == 8");
+
+# ================================================================
+test_group("foliage_attenuation");
+# Deeper belt -> more attenuation.
+var fol_thin = foliage_attenuation(f64_from(5), f64_from(1000));
+var fol_thick = foliage_attenuation(f64_from(20), f64_from(1000));
+assert(f64_gt(fol_thick, fol_thin), "thicker foliage has more attenuation");
+# Capped at 10 dB.
+var fol_deep = foliage_attenuation(f64_from(1000), f64_from(4000));
+assert(f64_le(fol_deep, f64_from(10)), "foliage caps at 10 dB");
+
+# ================================================================
+test_group("meteorological_correction");
+# Short distance -> ~0 correction.
+var met_short = meteorological_correction(f64_from(50), F64_TWO, F64_TWO);
+assert(f64_lt(f64_abs(met_short), TOL_1E2), "short distance ~0 correction");
+# Correction rises with distance.
+var met_near = meteorological_correction(f64_from(200), F64_TWO, F64_TWO);
+var met_far = meteorological_correction(f64_from(2000), F64_TWO, F64_TWO);
+assert(f64_gt(met_far, met_near), "correction rises with distance");
+
+# ================================================================
+test_group("ground_attenuation");
+var d15 = f64_div(f64_from(3), f64_from(2));   # 1.5
+var d03 = f64_div(f64_from(3), f64_from(10));  # 0.3
+# Soft ground differs from hard ground.
+var g_hard = ground_attenuation(f64_from(100), F64_ONE, d15, 0);
+var g_soft = ground_attenuation(f64_from(100), F64_ONE, d15, F64_ONE);
+var hard_sum = sum_abs8(g_hard);
+var soft_sum = sum_abs8(g_soft);
+# soft_sum > hard_sum || |soft_sum - hard_sum| < 1.0
+var diff_ok = 0;
+if (f64_gt(soft_sum, hard_sum) == 1) { diff_ok = 1; }
+if (f64_lt(f64_abs(f64_sub(soft_sum, hard_sum)), F64_ONE) == 1) { diff_ok = 1; }
+assert(diff_ok, "soft ground differs from hard");
+# Every band stays within [-20, 0].
+var atten = ground_attenuation(f64_from(200), d03, d15, F64_HALF);
+var gi = 0;
+while (gi < 8) {
+    var a = load64(atten + gi * 8);
+    assert(f64_ge(a, f64_neg(f64_from(20))), "ground atten >= -20");
+    assert(f64_le(a, 0), "ground atten <= 0");
+    gi = gi + 1;
+}
+
+var rc = assert_summary();
+syscall(60, rc);

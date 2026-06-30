@@ -1,0 +1,167 @@
+# outdoor.cyr -- ISO 9613-2 outdoor sound propagation: barrier
+# diffraction, foliage attenuation, meteorological correction, and
+# ground effect.
+#
+# Ports rust-old/src/outdoor.rs. f32 -> f64. Per-band returns
+# ([f32; NUM_BANDS]) become an alloc(NUM_BANDS * 8) buffer of f64; the
+# caller reads each band with load64(buf + band * 8). Frequency band
+# centres come from material.frequency_band; the speed of sound comes
+# from propagation.speed_of_sound.
+#
+# Self-contained: no `include` lines. Relies on the build/test unit
+# providing material (NUM_BANDS, frequency_band), propagation
+# (speed_of_sound), and stdlib math (F64_ONE, F64_TWO, F64_HALF,
+# F64_LN10, f64_div/mul/add/sub/min/max/clamp/abs/neg/ln).
+
+# log10(x) = ln(x) / ln(10)
+fn _outdoor_log10(x) {
+    return f64_div(f64_ln(x), F64_LN10);
+}
+
+# ================================================================
+# Barrier diffraction (Maekawa, single edge)
+# ================================================================
+
+# Insertion loss (dB, positive = attenuation) of a thin barrier.
+#   path_difference -- extra path over the barrier vs direct path (m)
+#   frequency       -- Hz
+# Maekawa: IL = 10 * log10(3 + 20*N), N = 2*delta/lambda (Fresnel number).
+#must_use
+fn barrier_insertion_loss(path_difference, frequency, temperature_celsius) {
+    if (f64_le(path_difference, 0) == 1) { return 0; }
+    if (f64_le(frequency, 0) == 1) { return 0; }
+
+    var c = speed_of_sound(temperature_celsius);
+    var wavelength = f64_div(c, frequency);
+
+    # Fresnel number: N = 2*delta / lambda
+    var fresnel_n = f64_div(f64_mul(F64_TWO, path_difference), wavelength);
+
+    # Maekawa approximation (single edge)
+    if (f64_lt(fresnel_n, 0) == 1) { return 0; }
+    var inner = f64_add(f64_from(3), f64_mul(f64_from(20), fresnel_n));
+    return f64_max(f64_mul(f64_from(10), _outdoor_log10(inner)), 0);
+}
+
+# Per-band barrier insertion loss. Returns an alloc(NUM_BANDS * 8)
+# buffer; band i is at load64(buf + i * 8).
+#must_use
+fn barrier_insertion_loss_bands(path_difference, temperature_celsius) {
+    var out = alloc(NUM_BANDS * 8);
+    var band = 0;
+    while (band < NUM_BANDS) {
+        var il = barrier_insertion_loss(path_difference, frequency_band(band), temperature_celsius);
+        store64(out + band * 8, il);
+        band = band + 1;
+    }
+    return out;
+}
+
+# ================================================================
+# Foliage attenuation (ISO 9613-2 Annex)
+# ================================================================
+
+# Attenuation (dB) of a foliage belt of given depth at a frequency.
+# Rate ~0.01-0.12 dB/m, rising up to 8 kHz; capped at 10 dB total.
+#must_use
+fn foliage_attenuation(depth_m, frequency) {
+    if (f64_le(depth_m, 0) == 1) { return 0; }
+    if (f64_le(frequency, 0) == 1) { return 0; }
+
+    var f_khz = f64_div(frequency, f64_from(1000));
+    var clamped = f64_clamp(f_khz, 0, f64_from(8));
+    # rate = 0.01 + 0.014 * clamp(f_khz, 0, 8)
+    var base_rate = f64_div(F64_ONE, f64_from(100));            # 0.01
+    var per_khz = f64_div(f64_from(14), f64_from(1000));        # 0.014
+    var rate = f64_add(base_rate, f64_mul(per_khz, clamped));
+    # Cap at 10 dB per ISO.
+    return f64_min(f64_mul(rate, depth_m), f64_from(10));
+}
+
+# ================================================================
+# Meteorological correction C_met (ISO 9613-2)
+# ================================================================
+
+# Correction (dB) for favourable propagation (downwind / inversion).
+# 0 for short distances; positive for long distances.
+#must_use
+fn meteorological_correction(distance, source_height, receiver_height) {
+    if (f64_le(distance, 0) == 1) { return 0; }
+
+    # ISO 9613-2: uses the sum of heights h_s + h_r (not the average).
+    var h_sum = f64_add(source_height, receiver_height);
+    var dp = f64_sub(distance, f64_mul(f64_from(10), h_sum));
+    if (f64_le(dp, 0) == 1) { return 0; }
+
+    # C_0 depends on meteorological conditions (typically 0-3.5 dB).
+    var half_seven = f64_div(f64_from(7), f64_from(2));         # 3.5
+    var c0 = 0;
+    if (f64_gt(distance, f64_from(1000)) == 1) {
+        c0 = half_seven;
+    } else {
+        if (f64_gt(distance, f64_from(100)) == 1) {
+            # (distance - 100) / 900 * 3.5
+            c0 = f64_mul(f64_div(f64_sub(distance, f64_from(100)), f64_from(900)), half_seven);
+        } else {
+            c0 = 0;
+        }
+    }
+
+    # C_met = C_0 * max(1 - 10*(h_s + h_r)/d, 0)
+    var factor = f64_max(f64_sub(F64_ONE, f64_div(f64_mul(f64_from(10), h_sum), distance)), 0);
+    return f64_mul(c0, factor);
+}
+
+# ================================================================
+# Ground effect (ISO 9613-2 simplified)
+# ================================================================
+
+# Per-band ground attenuation (dB, in [-20, 0]). ground_factor G:
+# 0 = hard ground, 1 = soft/porous. Returns an alloc(NUM_BANDS * 8)
+# buffer; band i is at load64(buf + i * 8).
+#must_use
+fn ground_attenuation(distance, source_height, receiver_height, ground_factor) {
+    var out = alloc(NUM_BANDS * 8);
+    if (f64_le(distance, 0) == 1) {
+        var z = 0;
+        while (z < NUM_BANDS) {
+            store64(out + z * 8, 0);
+            z = z + 1;
+        }
+        return out;
+    }
+
+    var g = f64_clamp(ground_factor, 0, F64_ONE);
+    var h_s = f64_max(source_height, 0);
+    var h_r = f64_max(receiver_height, 0);
+    var dp = f64_max(distance, F64_ONE);
+
+    var neg_half = f64_neg(f64_div(f64_from(3), f64_from(2)));  # -1.5
+
+    var band = 0;
+    while (band < NUM_BANDS) {
+        var f = frequency_band(band);
+
+        # Soft-ground region term: -1.5 + g*(-1.5 + 3*min(f/500, 1))
+        var fr = f64_min(f64_div(f, f64_from(500)), F64_ONE);
+        var soft = f64_add(neg_half, f64_mul(g, f64_add(neg_half, f64_mul(f64_from(3), fr))));
+
+        # Source region ground effect.
+        var a_s = neg_half;
+        if (f64_lt(h_s, F64_HALF) == 1) { a_s = soft; }
+
+        # Receiver region ground effect.
+        var a_r = neg_half;
+        if (f64_lt(h_r, F64_HALF) == 1) { a_r = soft; }
+
+        # Middle region: proportional to distance and G.
+        var mid_factor = f64_max(f64_sub(F64_ONE,
+        f64_div(f64_mul(f64_from(30), f64_add(h_s, h_r)), dp)), 0);
+        var a_m = f64_mul(f64_mul(f64_neg(f64_from(3)), g), mid_factor);
+
+        var total = f64_add(f64_add(a_s, a_m), a_r);
+        store64(out + band * 8, f64_clamp(total, f64_neg(f64_from(20)), 0));
+        band = band + 1;
+    }
+    return out;
+}

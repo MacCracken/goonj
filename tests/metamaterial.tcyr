@@ -1,0 +1,201 @@
+# metamaterial.tcyr -- parity tests for src/metamaterial.cyr
+# Ported from the #[test] blocks in rust-old/src/metamaterial.rs.
+# (metamaterial_serialization_roundtrip and lookup_serialization_roundtrip
+#  omitted -- no serde in Cyrius.)
+
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/metamaterial.cyr"
+
+# Tolerances / literals (f64 bit patterns)
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E4 = 0x3F1A36E2EB1C432D;   # 0.0001
+var V_2_5   = 0x4004000000000000;   # 2.5
+var V_0_99  = 0x3FEFAE147AE147AE;   # 0.99
+
+# |a - b| < tol -> 1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+fn nz(p) { if (p == 0) { return 0; } return 1; }   # pointer non-null (Ok)
+fn iz(p) { if (p == 0) { return 1; } return 0; }   # pointer null (Err)
+
+# Test fixtures (mirror the Rust helper fns).
+fn neg_stiffness_500() {
+    var k = lorentzian_resonance_new(f64_from(500), f64_from(800), f64_from(50), AIR_BULK_MODULUS);
+    return metamaterial_negative_stiffness(k, AIR_DENSITY);
+}
+fn neg_density_400() {
+    var r = lorentzian_resonance_new(f64_from(400), f64_from(600), f64_from(40), AIR_DENSITY);
+    return metamaterial_negative_density(r, AIR_BULK_MODULUS);
+}
+
+# All 8 absorption bands of an inline 8*f64 buffer within [0, 1]?
+fn bands_in_range(buf) {
+    var i = 0;
+    while (i < 8) {
+        var a = load64(buf + i * 8);
+        if (f64_lt(a, 0) == 1) { return 0; }
+        if (f64_gt(a, F64_ONE) == 1) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+# Max over the 8-band buffer (fold from 0.0, as Rust does).
+fn bands_max(buf) {
+    var mx = 0;
+    var i = 0;
+    while (i < 8) { mx = f64_max(mx, load64(buf + i * 8)); i = i + 1; }
+    return mx;
+}
+# Min over the 8-band buffer (fold from 1.0, as Rust does).
+fn bands_min(buf) {
+    var mn = F64_ONE;
+    var i = 0;
+    while (i < 8) { mn = f64_min(mn, load64(buf + i * 8)); i = i + 1; }
+    return mn;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("LorentzianResonance: far above resonance returns background");
+var r_far = lorentzian_resonance_new(f64_from(1000), f64_from(500), f64_from(100), AIR_DENSITY);
+var c_far = lorentzian_evaluate(r_far, f64_from(100000));
+assert(approx(MmComplex_re(c_far), AIR_DENSITY, TOL_1E2), "real ~ background at f>>f0");
+assert(f64_lt(f64_abs(MmComplex_im(c_far)), TOL_1E2), "imag ~ 0 at f>>f0");
+
+# ================================================================
+test_group("LorentzianResonance: with_dc_value recovers specified DC");
+var r_dc = lorentzian_with_dc_value(f64_from(500), f64_from(800), f64_from(50), AIR_BULK_MODULUS);
+var c_dc = lorentzian_evaluate(r_dc, milli(1));
+assert(approx(f64_div(MmComplex_re(c_dc), AIR_BULK_MODULUS), F64_ONE, TOL_1E2), "DC value matches spec");
+
+# ================================================================
+test_group("LorentzianResonance: above resonance can go negative");
+var r_neg = lorentzian_resonance_new(f64_from(500), f64_from(800), f64_from(20), F64_ONE);
+assert(f64_lt(lorentzian_real_part(r_neg, f64_from(520)), 0), "real part negative just above f0");
+
+# ================================================================
+test_group("LorentzianResonance: zero plasma is constant");
+var r_zp = lorentzian_resonance_new(f64_from(500), 0, f64_from(50), V_2_5);
+var c10 = lorentzian_evaluate(r_zp, f64_from(10));
+assert(approx(MmComplex_re(c10), V_2_5, TOL_1E4), "re=2.5 at 10 Hz");
+assert(f64_lt(f64_abs(MmComplex_im(c10)), TOL_1E4), "im~0 at 10 Hz");
+var c500 = lorentzian_evaluate(r_zp, f64_from(500));
+assert(approx(MmComplex_re(c500), V_2_5, TOL_1E4), "re=2.5 at 500 Hz");
+assert(f64_lt(f64_abs(MmComplex_im(c500)), TOL_1E4), "im~0 at 500 Hz");
+var c5000 = lorentzian_evaluate(r_zp, f64_from(5000));
+assert(approx(MmComplex_re(c5000), V_2_5, TOL_1E4), "re=2.5 at 5000 Hz");
+assert(f64_lt(f64_abs(MmComplex_im(c5000)), TOL_1E4), "im~0 at 5000 Hz");
+
+# ================================================================
+test_group("NegativeStiffness: absorption in range across bands");
+assert(bands_in_range(metamaterial_absorption_bands(neg_stiffness_500())), "neg-stiffness alpha in [0,1]");
+
+# ================================================================
+test_group("NegativeStiffness: shows frequency dependence");
+var b_ns = metamaterial_absorption_bands(neg_stiffness_500());
+assert(f64_gt(f64_sub(bands_max(b_ns), bands_min(b_ns)), pct(5)), "neg-stiffness frequency-dependent");
+
+# ================================================================
+test_group("NegativeDensity: shows frequency dependence");
+var b_nd = metamaterial_absorption_bands(neg_density_400());
+assert(f64_gt(f64_sub(bands_max(b_nd), bands_min(b_nd)), pct(5)), "neg-density frequency-dependent");
+
+# ================================================================
+test_group("DC-tuned metamaterial is well-formed");
+var rho_dc = f64_div(f64_mul(AIR_IMPEDANCE_RAYLS, AIR_IMPEDANCE_RAYLS), AIR_BULK_MODULUS);
+var rho_eff_dc = lorentzian_with_dc_value(f64_from(500), f64_from(600), f64_from(100), rho_dc);
+var m_dc = metamaterial_negative_density(rho_eff_dc, AIR_BULK_MODULUS);
+var b_dc = metamaterial_absorption_bands(m_dc);
+assert(bands_in_range(b_dc), "DC-tuned bands in [0,1]");
+assert(f64_gt(f64_sub(bands_max(b_dc), bands_min(b_dc)), pct(5)), "DC-tuned frequency-dependent");
+
+# ================================================================
+test_group("DoublyNegative: absorption in range across bands");
+var k_dn = lorentzian_resonance_new(f64_from(500), f64_from(700), f64_from(60), AIR_BULK_MODULUS);
+var rho_dn = lorentzian_resonance_new(f64_from(500), f64_from(600), f64_from(40), AIR_DENSITY);
+var m_dn = metamaterial_doubly_negative(k_dn, rho_dn);
+assert(bands_in_range(metamaterial_absorption_bands(m_dn)), "doubly-negative alpha in [0,1]");
+
+# ================================================================
+test_group("LookupTable: interpolates between rows");
+var rows_i = mm_rows_new();
+mm_rows_push(rows_i, f64_from(100), pct(10));
+mm_rows_push(rows_i, f64_from(1000), pct(50));
+mm_rows_push(rows_i, f64_from(10000), pct(90));
+var m_i = metamaterial_lookup_table(rows_i);
+assert(approx(metamaterial_absorption_at(m_i, f64_from(100)), pct(10), TOL_1E4), "lookup @100Hz = 0.10");
+assert(approx(metamaterial_absorption_at(m_i, f64_from(1000)), pct(50), TOL_1E4), "lookup @1000Hz = 0.50");
+assert(approx(metamaterial_absorption_at(m_i, f64_from(550)), pct(30), TOL_1E2), "linear interp @550Hz ~0.30");
+
+# ================================================================
+test_group("LookupTable: clamps outside range");
+var rows_o = mm_rows_new();
+mm_rows_push(rows_o, f64_from(100), pct(10));
+mm_rows_push(rows_o, f64_from(1000), pct(50));
+var m_o = metamaterial_lookup_table(rows_o);
+assert(approx(metamaterial_absorption_at(m_o, f64_from(10)), pct(10), TOL_1E4), "below range holds 0.10");
+assert(approx(metamaterial_absorption_at(m_o, f64_from(20000)), pct(50), TOL_1E4), "above range holds 0.50");
+
+# ================================================================
+test_group("LookupTable: clamps invalid rows");
+var rows_c = mm_rows_new();
+mm_rows_push(rows_c, f64_from(100), f64_neg(F64_HALF));
+mm_rows_push(rows_c, f64_from(1000), f64_div(f64_from(3), F64_TWO));
+var m_c = metamaterial_lookup_table(rows_c);
+assert_eq(f64_to(metamaterial_absorption_at(m_c, f64_from(100))), 0, "invalid low clamps to 0");
+assert_eq(f64_to(metamaterial_absorption_at(m_c, f64_from(1000))), 1, "invalid high clamps to 1");
+
+# ================================================================
+test_group("LookupTable: empty returns zero");
+var m_e = metamaterial_lookup_table(mm_rows_new());
+assert_eq(f64_to(metamaterial_absorption_at(m_e, f64_from(500))), 0, "empty lookup -> 0");
+
+# ================================================================
+test_group("LookupTable: single row holds");
+var rows_s = mm_rows_new();
+mm_rows_push(rows_s, f64_from(500), pct(42));
+var m_s = metamaterial_lookup_table(rows_s);
+assert(approx(metamaterial_absorption_at(m_s, f64_from(50)), pct(42), TOL_1E4), "single row holds @50Hz");
+assert(approx(metamaterial_absorption_at(m_s, f64_from(500)), pct(42), TOL_1E4), "single row holds @500Hz");
+assert(approx(metamaterial_absorption_at(m_s, f64_from(5000)), pct(42), TOL_1E4), "single row holds @5000Hz");
+
+# ================================================================
+test_group("absorption_bands returns eight");
+var b_eight = metamaterial_absorption_bands(neg_stiffness_500());
+assert_eq(NUM_BANDS, 8, "8 bands");
+assert(bands_in_range(b_eight), "all 8 bands in [0,1]");
+
+# ================================================================
+test_group("convert to AcousticMaterial");
+var am_ok = metamaterial_to_acoustic_material(neg_stiffness_500(), "ns_500hz", pct(20));
+assert(nz(am_ok), "conversion Ok");
+assert(streq(am_name(am_ok), "ns_500hz"), "name preserved");
+assert(approx(am_scattering(am_ok), pct(20), TOL_1E4), "scattering = 0.2");
+var bi = 0;
+while (bi < 8) {
+    assert(f64_ge(am_absorption_band(am_ok, bi), 0), "am band >= 0");
+    assert(f64_le(am_absorption_band(am_ok, bi), F64_ONE), "am band <= 1");
+    bi = bi + 1;
+}
+
+# ================================================================
+test_group("convert rejects invalid scattering");
+var am_bad = metamaterial_to_acoustic_material(neg_stiffness_500(), "bad", f64_div(f64_from(3), F64_TWO));
+assert(iz(am_bad), "invalid scattering rejected");
+
+# ================================================================
+test_group("impedance match -> zero reflection");
+var z02 = f64_mul(AIR_IMPEDANCE_RAYLS, AIR_IMPEDANCE_RAYLS);
+assert(f64_gt(_mm_impedance_absorption(z02, 0, F64_ONE, 0), V_0_99), "impedance-matched alpha ~1");
+
+# ================================================================
+test_group("rigid wall -> high reflection");
+var alpha_rigid = _mm_impedance_absorption(f64_from(10000000000), 0, f64_from(1000000), 0);
+assert(f64_lt(alpha_rigid, pct(1)), "rigid wall alpha < 0.01");
+
+var rc = assert_summary();
+syscall(60, rc);

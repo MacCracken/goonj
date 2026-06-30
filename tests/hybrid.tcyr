@@ -1,0 +1,69 @@
+# hybrid.tcyr -- parity tests for src/hybrid.cyr
+# Ported from the #[test] blocks in rust-old/src/hybrid.rs.
+# (No serde test exists in the oracle; nothing dropped.)
+
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/hybrid.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var V_0_3   = 0x3FD3333333333333;   # 0.3
+var V_0_9   = 0x3FECCCCCCCCCCCCD;   # 0.9
+var V_0_5   = 0x3FE0000000000000;   # 0.5
+var V_0_15  = 0x3FC3333333333333;   # 0.15
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# Fill an 8×f64 buffer with one value.
+fn fill8(buf, v) {
+    var i = 0;
+    while (i < 8) { store64(buf + i * 8, v); i = i + 1; }
+    return buf;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("low_freq_favours_wave");
+# 63 Hz (band 0) is well below 500 Hz -> favours wave (low weight).
+var cfg_half = crossover_config_new(f64_from(500), V_0_5);
+var w_half = blend_weights(cfg_half);
+assert(f64_lt(load64(w_half + 0 * 8), V_0_3), "63 Hz should favour wave (<0.3)");
+
+# ================================================================
+test_group("high_freq_favours_geometric");
+# 8000 Hz (band 7) is well above 500 Hz -> favours geometric (high weight).
+assert(f64_gt(load64(w_half + 7 * 8), V_0_9), "8 kHz should favour geometric (>0.9)");
+
+# ================================================================
+test_group("crossover_frequency_is_midpoint");
+# 500 Hz band (index 3) should be near 0.5.
+var cfg_one = crossover_config_new(f64_from(500), F64_ONE);
+var w_one = blend_weights(cfg_one);
+assert(approx(load64(w_one + 3 * 8), V_0_5, V_0_15), "crossover freq ~0.5");
+
+# ================================================================
+test_group("blend_results_works");
+var wave = fill8(alloc(64), F64_ONE);
+var geom = fill8(alloc(64), 0);
+var cfg_def = crossover_config_default();
+var blended = blend_results(wave, geom, cfg_def);
+# Low bands closer to 1.0 (wave), high bands closer to 0.0 (geometric).
+assert(f64_gt(load64(blended + 0 * 8), load64(blended + 7 * 8)), "low band > high band");
+
+# ================================================================
+test_group("weights_in_valid_range");
+var w_def = blend_weights(crossover_config_default());
+var i = 0;
+while (i < 8) {
+    var w = load64(w_def + i * 8);
+    assert(f64_ge(w, 0), "weight >= 0");
+    assert(f64_le(w, F64_ONE), "weight <= 1");
+    i = i + 1;
+}
+
+var rc = assert_summary();
+syscall(60, rc);

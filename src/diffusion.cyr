@@ -1,0 +1,163 @@
+# diffusion.cyr -- acoustic diffusion equation (ADE) energy-density PDE
+# solver. Models sound energy density as a diffusion process (Fick's law
+# analogy) for high-frequency diffuse fields: long rooms, coupled rooms,
+# and industrial spaces where ray tracing struggles.
+#
+# Ports rust-old/src/diffusion.rs. f32 -> f64. Rust's `serde` derive is
+# dropped (no serde in Cyrius); the serde round-trip test is omitted.
+# Rust's `Vec<f32>` energy field -> stdlib `vec` (f64 in 8-byte slots);
+# the `&[f32]` absorption/source slices -> a raw f64 buffer pointer plus
+# an element count; the `[usize; 2]` dimensions -> two scalar fields.
+#
+# Requires (from the build/test unit): stdlib math (f64_* + F64_*),
+# vec (vec_new/push/len/get/set), alloc (alloc_init must have run).
+#
+# Reference: Valeau et al., "On the use of a diffusion equation for
+# room-acoustic prediction," JASA 119(3), 2006.
+
+# Configuration for the acoustic diffusion equation solver. Fields:
+# dx (grid spacing m), dt (time step s), nx/ny (grid cells), speed_of_sound
+# (m/s), mean_free_path (m, ~ 4V/S), max_time (simulation duration s).
+#derive(accessors)
+struct DiffusionConfig {
+    dx;
+    dt;
+    nx;
+    ny;
+    speed_of_sound;
+    mean_free_path;
+    max_time;
+}
+
+#must_use
+fn diffusion_config_new(dx, dt, nx, ny, speed_of_sound, mean_free_path, max_time) {
+    var c = alloc(sizeof(DiffusionConfig));
+    DiffusionConfig_set_dx(c, dx);
+    DiffusionConfig_set_dt(c, dt);
+    DiffusionConfig_set_nx(c, nx);
+    DiffusionConfig_set_ny(c, ny);
+    DiffusionConfig_set_speed_of_sound(c, speed_of_sound);
+    DiffusionConfig_set_mean_free_path(c, mean_free_path);
+    DiffusionConfig_set_max_time(c, max_time);
+    return c;
+}
+
+# Result of a diffusion simulation. `energy_density` is a vec of n f64
+# (flattened, [y * nx + x]); dimensions = (dim_x, dim_y).
+#derive(accessors)
+struct DiffusionResult { energy_density; dim_x; dim_y; time_steps; dx; }
+
+#must_use
+fn _diff_result_new(energy_density, dim_x, dim_y, time_steps, dx) {
+    var r = alloc(sizeof(DiffusionResult));
+    DiffusionResult_set_energy_density(r, energy_density);
+    DiffusionResult_set_dim_x(r, dim_x);
+    DiffusionResult_set_dim_y(r, dim_y);
+    DiffusionResult_set_time_steps(r, time_steps);
+    DiffusionResult_set_dx(r, dx);
+    return r;
+}
+
+# usize::clamp(v, 3, 2000) — cap grid size to prevent OOM (~4M cells max).
+fn _diff_clamp_grid(v) {
+    if (v < 3) { return 3; }
+    if (v > 2000) { return 2000; }
+    return v;
+}
+
+# A fresh vec of `n` zeros (f64 +0.0 shares integer 0's bit pattern).
+fn _diff_zeros(n) {
+    var v = vec_new();
+    var i = 0;
+    while (i < n) {
+        vec_push(v, 0);
+        i = i + 1;
+    }
+    return v;
+}
+
+# Solve the 2D acoustic diffusion equation on a regular grid using
+# explicit finite differences (FTCS):
+#   dw/dt = D*lap(w) - c/lambda * alpha * w + S(x,t),
+#   D = c*lambda/3 (diffusion coefficient), lambda = mean free path.
+# absorption_field / source_field are raw f64 buffers of `*_len` elems
+# (pass 0/0 for an empty slice). Returns a DiffusionResult pointer.
+#must_use
+fn solve_diffusion_2d(config, absorption_field, absorption_len, source_field, source_len) {
+    var dx = DiffusionConfig_dx(config);
+    var nx = _diff_clamp_grid(DiffusionConfig_nx(config));
+    var ny = _diff_clamp_grid(DiffusionConfig_ny(config));
+    var n = nx * ny;
+
+    var c = DiffusionConfig_speed_of_sound(config);
+    var mfp = DiffusionConfig_mean_free_path(config);
+    var dt_cfg = DiffusionConfig_dt(config);
+
+    # Invalid config: any non-positive dx/dt/mfp/speed -> empty result.
+    var bad = 0;
+    if (f64_le(dx, 0) == 1) { bad = 1; }
+    if (f64_le(dt_cfg, 0) == 1) { bad = 1; }
+    if (f64_le(mfp, 0) == 1) { bad = 1; }
+    if (f64_le(c, 0) == 1) { bad = 1; }
+    if (bad == 1) {
+        return _diff_result_new(_diff_zeros(n), nx, ny, 0, dx);
+    }
+
+    var d_coeff = f64_div(f64_mul(c, mfp), f64_from(3));   # diffusion coefficient
+    var dx2 = f64_mul(dx, dx);
+
+    # Stability: dt < dx^2 / (4 D) for the 2D explicit scheme; use 0.9 of it.
+    var dt_max = f64_div(dx2, f64_mul(f64_from(4), d_coeff));
+    var dt = f64_min(dt_cfg, f64_mul(dt_max, f64_div(f64_from(9), f64_from(10))));
+    var num_steps = f64_to(f64_div(DiffusionConfig_max_time(config), dt));
+    if (num_steps > 1000000) { num_steps = 1000000; }
+
+    var w = _diff_zeros(n);       # energy density
+    var w_new = _diff_zeros(n);
+
+    # Initialize source (take at most n elements).
+    var lim = source_len;
+    if (lim > n) { lim = n; }
+    var si = 0;
+    while (si < lim) {
+        vec_set(w, si, load64(source_field + si * 8));
+        si = si + 1;
+    }
+
+    var ratio = f64_div(f64_mul(d_coeff, dt), dx2);
+    var c_over_mfp = f64_div(c, mfp);
+
+    var step = 0;
+    while (step < num_steps) {
+        var y = 1;
+        while (y < ny - 1) {
+            var x = 1;
+            while (x < nx - 1) {
+                var idx = y * nx + x;
+                var wc = vec_get(w, idx);
+                var laplacian = f64_sub(
+                f64_add(
+                f64_add(vec_get(w, idx - 1), vec_get(w, idx + 1)),
+                f64_add(vec_get(w, idx - nx), vec_get(w, idx + nx))),
+                f64_mul(f64_from(4), wc));
+
+                # Absorption term (0 beyond the supplied field).
+                var alpha = 0;
+                if (idx < absorption_len) { alpha = load64(absorption_field + idx * 8); }
+                var absorp = f64_mul(f64_mul(c_over_mfp, alpha), wc);
+
+                var wn = f64_sub(f64_add(wc, f64_mul(ratio, laplacian)), f64_mul(dt, absorp));
+                vec_set(w_new, idx, f64_max(wn, 0));   # energy can't go negative
+                x = x + 1;
+            }
+            y = y + 1;
+        }
+        # std::mem::swap(&mut w, &mut w_new)
+        var tmp = w;
+        w = w_new;
+        w_new = tmp;
+        step = step + 1;
+    }
+
+    return _diff_result_new(w, nx, ny, num_steps, dx);
+}

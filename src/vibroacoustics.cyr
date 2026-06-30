@@ -1,0 +1,254 @@
+# vibroacoustics.cyr -- coupling between structural vibration and acoustic
+# radiation. Estimates sound radiated by vibrating surfaces from surface
+# velocity distributions using radiation-impedance models.
+#
+# Ports rust-old/src/vibroacoustics.rs. f32 → f64. Rust's `serde` derive is
+# dropped (no serde in Cyrius); the serde round-trip test is therefore
+# omitted. `&[VibratingSurface]`, `&[Vec3]`, `&[f32]`, `&[VibrationMode]`
+# and `Vec<f32>` mode shapes all become stdlib `vec` handles (pointers /
+# f64 stored directly in the 8-byte slots). RadiationResult's
+# `[f32; NUM_BANDS]` array uses a manual inline layout.
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON,
+# F64_NEG_INF), material.cyr (NUM_BANDS, frequency_band), propagation.cyr
+# (speed_of_sound), hisab HVec3 (hvec3_unit_y), and stdlib math/ganita
+# (F64_*, f64_*) + vec (vec_new/push/len/get) with alloc_init() run.
+
+# RadiationResult inline layout: watts | level_db | 8×f64 power_per_band.
+enum RrLayout {
+    RR_WATTS = 0,
+    RR_DB    = 8,
+    RR_BANDS = 16,   # offsets 16..80 (8 f64)
+    RR_SIZE  = 80,
+}
+
+# Physics constants that aren't clean integers (f64 bit patterns).
+var RHO_AIR  = 0x3FF35C28F5C28F5C;   # 1.21   air density kg/m³
+var INV_PICO = 0x3D719799812DEA11;   # 1e-12  reference power (1 pW)
+var V_0_01   = 0x3F847AE147AE147B;   # 0.01
+
+# log10(x) = ln(x) / ln(10)
+fn _vib_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
+
+# ================================================================
+# VibratingSurface — a vibrating surface element.
+#   position/normal : HVec3 pointers; area/velocity/frequency : f64.
+# ================================================================
+#derive(accessors)
+struct VibratingSurface { position; normal; area; velocity; frequency; }
+
+#must_use
+fn vibrating_surface_new(position, normal, area, velocity, frequency) {
+    var s = alloc(sizeof(VibratingSurface));
+    VibratingSurface_set_position(s, position);
+    VibratingSurface_set_normal(s, normal);
+    VibratingSurface_set_area(s, area);
+    VibratingSurface_set_velocity(s, velocity);
+    VibratingSurface_set_frequency(s, frequency);
+    return s;
+}
+
+# ================================================================
+# VibrationMode — a structural mode shape for modal radiation.
+#   mode_shape : a `vec` of per-element f64 normal-velocity amplitudes.
+# ================================================================
+#derive(accessors)
+struct VibrationMode { frequency; damping; mode_shape; }
+
+#must_use
+fn vibration_mode_new(frequency, damping, mode_shape) {
+    var m = alloc(sizeof(VibrationMode));
+    VibrationMode_set_frequency(m, frequency);
+    VibrationMode_set_damping(m, damping);
+    VibrationMode_set_mode_shape(m, mode_shape);
+    return m;
+}
+
+# ================================================================
+# RadiationResult — radiated power, level, and per-band breakdown.
+# ================================================================
+#must_use
+fn radiation_result_sound_power_watts(r)    { return load64(r + RR_WATTS); }
+#must_use
+fn radiation_result_sound_power_level_db(r) { return load64(r + RR_DB); }
+#must_use
+fn radiation_result_power_per_band(r, band) { return load64(r + RR_BANDS + band * 8); }
+
+# Build a RadiationResult with all per-band powers zeroed.
+fn _rr_make(watts, db) {
+    var r = alloc(RR_SIZE);
+    store64(r + RR_WATTS, watts);
+    store64(r + RR_DB, db);
+    var i = 0;
+    while (i < NUM_BANDS) {
+        store64(r + RR_BANDS + i * 8, 0);
+        i = i + 1;
+    }
+    return r;
+}
+
+# ================================================================
+# Radiation efficiency of a baffled rectangular plate.
+# Below critical: edge/corner radiation (σ << 1). At critical: σ peaks.
+# Above: σ → 1.
+# ================================================================
+#must_use
+fn radiation_efficiency(frequency, critical_frequency, plate_area, plate_perimeter, temperature_celsius) {
+    if (f64_le(frequency, 0) == 1) { return 0; }
+    if (f64_le(critical_frequency, 0) == 1) { return 0; }
+    if (f64_le(plate_area, 0) == 1) { return 0; }
+
+    var c = speed_of_sound(temperature_celsius);
+    var wavelength = f64_div(c, frequency);
+    var f_ratio = f64_div(frequency, critical_frequency);
+
+    if (f64_lt(f_ratio, F64_HALF) == 1) {
+        # σ ≈ (perimeter · wavelength) / (4π · area) (edge radiation)
+        var denom = f64_mul(f64_mul(f64_from(4), F64_PI), plate_area);
+        var sigma = f64_div(f64_mul(plate_perimeter, wavelength), denom);
+        return f64_clamp(sigma, 0, F64_ONE);
+    }
+    if (f64_lt(f_ratio, F64_ONE) == 1) {
+        # Approaching critical: rapid increase.
+        var one_minus = f64_sub(F64_ONE, f_ratio);
+        var sigma = f64_sqrt(f64_div(F64_ONE, one_minus));
+        var a = f64_clamp(sigma, 0, f64_from(10));
+        var b = f64_div(F64_ONE, f64_sqrt(f64_add(one_minus, V_0_01)));
+        return f64_clamp(f64_min(a, b), 0, F64_ONE);
+    }
+    # At or above critical: σ → 1.
+    var inner = f64_sub(F64_ONE, f64_div(F64_ONE, f64_mul(f_ratio, f_ratio)));
+    var t = f64_max(f64_sqrt(f64_abs(inner)), V_0_01);
+    var sigma = f64_div(F64_ONE, t);
+    return f64_clamp(sigma, 0, F64_ONE);
+}
+
+# ================================================================
+# Sound power radiated by a set of vibrating surfaces.
+# Rayleigh-integral baffled-piston approximation:
+#   W = ρ₀c₀ · σ · A · <v²>.
+#   surfaces : a `vec` of VibratingSurface pointers.
+# ================================================================
+#must_use
+fn radiated_sound_power(surfaces, critical_frequency, temperature_celsius) {
+    var n = vec_len(surfaces);
+    if (n == 0) { return _rr_make(0, F64_NEG_INF); }
+
+    var c = speed_of_sound(temperature_celsius);
+    var rho = RHO_AIR;
+
+    var total_area = 0;
+    var i = 0;
+    while (i < n) {
+        total_area = f64_add(total_area, VibratingSurface_area(vec_get(surfaces, i)));
+        i = i + 1;
+    }
+    # Approximate perimeter for a square plate.
+    var perimeter = f64_mul(f64_from(4), f64_sqrt(total_area));
+
+    var r = _rr_make(0, F64_NEG_INF);
+    var total_power = 0;
+    i = 0;
+    while (i < n) {
+        var s = vec_get(surfaces, i);
+        var freq = VibratingSurface_frequency(s);
+        var sigma = radiation_efficiency(freq, critical_frequency, total_area, perimeter, temperature_celsius);
+        var vel = VibratingSurface_velocity(s);
+
+        # W = ρ₀c · σ · A · v² (left-associative, matching the Rust order).
+        var power = f64_mul(rho, c);
+        power = f64_mul(power, sigma);
+        power = f64_mul(power, VibratingSurface_area(s));
+        power = f64_mul(power, vel);
+        power = f64_mul(power, vel);
+        total_power = f64_add(total_power, power);
+
+        var band = nearest_band(freq);
+        var cur = load64(r + RR_BANDS + band * 8);
+        store64(r + RR_BANDS + band * 8, f64_add(cur, power));
+        i = i + 1;
+    }
+
+    var swl = F64_NEG_INF;
+    if (f64_gt(total_power, 0) == 1) {
+        # dB re 1 pW.
+        swl = f64_mul(f64_from(10), _vib_log10(f64_div(total_power, INV_PICO)));
+    }
+    store64(r + RR_WATTS, total_power);
+    store64(r + RR_DB, swl);
+    return r;
+}
+
+# ================================================================
+# Radiated power from a set of vibration modes (modal superposition).
+#   positions : `vec` of HVec3 pointers; areas : `vec` of f64;
+#   modes     : `vec` of VibrationMode pointers.
+# ================================================================
+#must_use
+fn modal_radiation(positions, areas, modes, excitation_amplitude, critical_frequency, temperature_celsius) {
+    var np = vec_len(positions);
+    var na = vec_len(areas);
+    var nm = vec_len(modes);
+    if (np == 0) { return _rr_make(0, F64_NEG_INF); }
+    if (na == 0) { return _rr_make(0, F64_NEG_INF); }
+    if (nm == 0) { return _rr_make(0, F64_NEG_INF); }
+
+    var n = np;
+    if (na < n) { n = na; }
+
+    var surfaces = vec_new();
+    var mi = 0;
+    while (mi < nm) {
+        var mode = vec_get(modes, mi);
+        var shape = VibrationMode_mode_shape(mode);
+        if (vec_len(shape) < n) {
+            mi = mi + 1;
+        } else {
+            var freq = VibrationMode_frequency(mode);
+            var damping = VibrationMode_damping(mode);
+            # Modal response amplitude: A / (2ζω) at resonance.
+            var omega = f64_mul(F64_TAU, freq);
+            var modal_amp = 0;
+            if (f64_gt(omega, 0) == 1) {
+                if (f64_gt(damping, 0) == 1) {
+                    modal_amp = f64_div(excitation_amplitude, f64_mul(f64_mul(F64_TWO, damping), omega));
+                }
+            }
+
+            var i = 0;
+            while (i < n) {
+                var velocity = f64_mul(modal_amp, vec_get(shape, i));
+                var vabs = f64_abs(velocity);
+                if (f64_gt(vabs, GOONJ_EPSILON) == 1) {
+                    # Default normal up — caller should set correctly.
+                    var pos = vec_get(positions, i);
+                    var surf = vibrating_surface_new(pos, hvec3_unit_y(), vec_get(areas, i), vabs, freq);
+                    vec_push(surfaces, surf);
+                }
+                i = i + 1;
+            }
+            mi = mi + 1;
+        }
+    }
+
+    return radiated_sound_power(surfaces, critical_frequency, temperature_celsius);
+}
+
+# ================================================================
+# Nearest octave-band index for a frequency (Hz).
+# ================================================================
+#must_use
+fn nearest_band(frequency) {
+    var best = 0;
+    var best_dist = f64_abs(f64_sub(frequency, frequency_band(0)));
+    var i = 1;
+    while (i < NUM_BANDS) {
+        var dist = f64_abs(f64_sub(frequency, frequency_band(i)));
+        if (f64_lt(dist, best_dist) == 1) {
+            best = i;
+            best_dist = dist;
+        }
+        i = i + 1;
+    }
+    return best;
+}

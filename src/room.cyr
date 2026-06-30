@@ -1,0 +1,285 @@
+# room.cyr -- room geometry: walls (polygon + material + normal), room
+# geometry (wall collection), shoebox builder, volume/surface/absorption
+# queries, and the BVH-accelerated room wrapper.
+#
+# Ports rust-old/src/room.rs. f32 → f64 throughout (hisab is f64-only).
+# Rust's `serde` derive is dropped (no serde in Cyrius); the serde
+# round-trip behaviour has no test to port here. `Vec<Vec3>` vertex lists
+# and `Vec<Wall>` wall lists become stdlib `vec` handles holding HVec3 /
+# Wall pointers. `AcousticMaterial` is shared by pointer across the six
+# shoebox walls (Rust cloned for ownership; the data is read-only here).
+# `hisab::geo::{Aabb, Bvh}` map to hisab's GeoAabb / bvh_build.
+#
+# Requires (from the build/test unit): stdlib math/ganita (F64_*, f64_*),
+# vec (vec_new/push/len/get/set), hisab (hvec3_*, geo_aabb_new, bvh_build),
+# and material.cyr (average_absorption). alloc_init() must have run.
+
+# Non-integer / sentinel f64 bit patterns (decimal in comments).
+var ROOM_PAD     = 0x3F50624DD2F1A9FC;   # 0.001  AABB pad (avoid zero-thickness slabs)
+var ROOM_POS_INF = 0x7FF0000000000000;   # +inf
+var ROOM_NEG_INF = 0xFFF0000000000000;   # -inf
+
+# ================================================================
+# Structs
+# ================================================================
+# A wall: polygon vertices (vec of HVec3, min 3), material ptr, outward normal.
+#derive(accessors)
+struct Wall { vertices; material; normal; }
+
+# Room geometry: a vec of Wall pointers.
+#derive(accessors)
+struct RoomGeometry { walls; }
+
+# Acoustic room: geometry + environmental conditions.
+#derive(accessors)
+struct AcousticRoom { geometry; temperature_celsius; humidity_percent; }
+
+# BVH-accelerated room: an AcousticRoom plus a BVH built from wall AABBs.
+#derive(accessors)
+struct AcceleratedRoom { room; bvh; }
+
+# ================================================================
+# Wall
+# ================================================================
+#must_use
+fn wall_new(vertices, material, normal) {
+    var w = alloc(sizeof(Wall));
+    Wall_set_vertices(w, vertices);
+    Wall_set_material(w, material);
+    Wall_set_normal(w, normal);
+    return w;
+}
+
+# Build a vec of four HVec3 vertices (the shoebox face winding).
+#must_use
+fn _verts4(a, b, c, d) {
+    var v = vec_new();
+    vec_push(v, a);
+    vec_push(v, b);
+    vec_push(v, c);
+    vec_push(v, d);
+    return v;
+}
+
+# Area of a convex polygon wall via fan triangulation from vertex 0.
+# total += |(v_i - v0) × (v_{i+1} - v0)| · 0.5 for i in 1..len-1.
+#must_use
+fn wall_area(wall) {
+    var verts = Wall_vertices(wall);
+    var n = vec_len(verts);
+    if (n < 3) { return 0; }
+    var total = 0;
+    var v0 = vec_get(verts, 0);
+    var i = 1;
+    while (i < n - 1) {
+        var a = hvec3_sub(vec_get(verts, i), v0);
+        var b = hvec3_sub(vec_get(verts, i + 1), v0);
+        total = f64_add(total, f64_mul(hvec3_length(hvec3_cross(a, b)), F64_HALF));
+        i = i + 1;
+    }
+    return total;
+}
+
+# Sabine absorption area: area × average absorption coefficient.
+#must_use
+fn wall_absorption_area(wall) {
+    return f64_mul(wall_area(wall), average_absorption(Wall_material(wall)));
+}
+
+# Axis-aligned bounding box of the wall's vertices, padded by 0.001 to
+# avoid zero-thickness slabs. Empty vertex list → zero-size box at origin.
+#must_use
+fn wall_aabb(wall) {
+    var verts = Wall_vertices(wall);
+    var n = vec_len(verts);
+    if (n == 0) {
+        return geo_aabb_new(hvec3_zero(), hvec3_zero());
+    }
+    var mn = vec_get(verts, 0);
+    var mx = vec_get(verts, 0);
+    var i = 1;
+    while (i < n) {
+        var v = vec_get(verts, i);
+        mn = hvec3_min(mn, v);
+        mx = hvec3_max(mx, v);
+        i = i + 1;
+    }
+    var pad = hvec3_splat(ROOM_PAD);
+    return geo_aabb_new(hvec3_sub(mn, pad), hvec3_add(mx, pad));
+}
+
+# ================================================================
+# RoomGeometry
+# ================================================================
+# Total surface area: sum of all wall areas.
+#must_use
+fn room_geometry_surface_area(geom) {
+    var walls = RoomGeometry_walls(geom);
+    var n = vec_len(walls);
+    var sum = 0;
+    var i = 0;
+    while (i < n) {
+        sum = f64_add(sum, wall_area(vec_get(walls, i)));
+        i = i + 1;
+    }
+    return sum;
+}
+
+# Total Sabine absorption: sum of each wall's absorption area.
+#must_use
+fn room_geometry_total_absorption(geom) {
+    var walls = RoomGeometry_walls(geom);
+    var n = vec_len(walls);
+    var sum = 0;
+    var i = 0;
+    while (i < n) {
+        sum = f64_add(sum, wall_absorption_area(vec_get(walls, i)));
+        i = i + 1;
+    }
+    return sum;
+}
+
+# Build a BVH from the wall AABBs. Returns 0 for an empty room (matches
+# hisab bvh_build's count==0 path).
+#must_use
+fn room_geometry_build_bvh(geom) {
+    var walls = RoomGeometry_walls(geom);
+    var n = vec_len(walls);
+    if (n == 0) { return 0; }
+    var aabbs = alloc(n * 8);
+    var i = 0;
+    while (i < n) {
+        store64(aabbs + i * 8, wall_aabb(vec_get(walls, i)));
+        i = i + 1;
+    }
+    return bvh_build(aabbs, n);
+}
+
+# Shoebox (rectangular) room with uniform material on all six surfaces.
+# Normals point outward. Order: floor, ceiling, front (z=0), back (z=width),
+# left (x=0), right (x=length).
+#must_use
+fn room_geometry_shoebox(length, width, height, material) {
+    var walls = vec_new();
+
+    # Floor (y = 0), normal (0, -1, 0).
+    vec_push(walls, wall_new(
+    _verts4(
+    hvec3_new(0, 0, 0),
+    hvec3_new(length, 0, 0),
+    hvec3_new(length, 0, width),
+    hvec3_new(0, 0, width)),
+    material,
+    hvec3_new(0, f64_neg(F64_ONE), 0)));
+
+    # Ceiling (y = height), normal (0, 1, 0).
+    vec_push(walls, wall_new(
+    _verts4(
+    hvec3_new(0, height, width),
+    hvec3_new(length, height, width),
+    hvec3_new(length, height, 0),
+    hvec3_new(0, height, 0)),
+    material,
+    hvec3_new(0, F64_ONE, 0)));
+
+    # Front wall (z = 0), normal (0, 0, -1).
+    vec_push(walls, wall_new(
+    _verts4(
+    hvec3_new(0, height, 0),
+    hvec3_new(length, height, 0),
+    hvec3_new(length, 0, 0),
+    hvec3_new(0, 0, 0)),
+    material,
+    hvec3_new(0, 0, f64_neg(F64_ONE))));
+
+    # Back wall (z = width), normal (0, 0, 1).
+    vec_push(walls, wall_new(
+    _verts4(
+    hvec3_new(0, 0, width),
+    hvec3_new(length, 0, width),
+    hvec3_new(length, height, width),
+    hvec3_new(0, height, width)),
+    material,
+    hvec3_new(0, 0, F64_ONE)));
+
+    # Left wall (x = 0), normal (-1, 0, 0).
+    vec_push(walls, wall_new(
+    _verts4(
+    hvec3_new(0, 0, 0),
+    hvec3_new(0, 0, width),
+    hvec3_new(0, height, width),
+    hvec3_new(0, height, 0)),
+    material,
+    hvec3_new(f64_neg(F64_ONE), 0, 0)));
+
+    # Right wall (x = length), normal (1, 0, 0).
+    vec_push(walls, wall_new(
+    _verts4(
+    hvec3_new(length, height, 0),
+    hvec3_new(length, height, width),
+    hvec3_new(length, 0, width),
+    hvec3_new(length, 0, 0)),
+    material,
+    hvec3_new(F64_ONE, 0, 0)));
+
+    var g = alloc(sizeof(RoomGeometry));
+    RoomGeometry_set_walls(g, walls);
+    return g;
+}
+
+# Volume from the axis-aligned bounding box of all wall vertices. Scans
+# every vertex (independent of wall ordering). Accurate only for shoeboxes.
+# Degenerate extents (≤ 0 on any axis) → 0.
+#must_use
+fn room_geometry_volume_shoebox(geom) {
+    var walls = RoomGeometry_walls(geom);
+    var nw = vec_len(walls);
+    var mn = hvec3_splat(ROOM_POS_INF);
+    var mx = hvec3_splat(ROOM_NEG_INF);
+    var i = 0;
+    while (i < nw) {
+        var verts = Wall_vertices(vec_get(walls, i));
+        var nv = vec_len(verts);
+        var j = 0;
+        while (j < nv) {
+            var v = vec_get(verts, j);
+            mn = hvec3_min(mn, v);
+            mx = hvec3_max(mx, v);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    var ext = hvec3_sub(mx, mn);
+    var ex = HVec3_x(ext);
+    var ey = HVec3_y(ext);
+    var ez = HVec3_z(ext);
+    if (f64_le(ex, 0) == 1) { return 0; }
+    if (f64_le(ey, 0) == 1) { return 0; }
+    if (f64_le(ez, 0) == 1) { return 0; }
+    return f64_mul(f64_mul(ex, ey), ez);
+}
+
+# ================================================================
+# AcousticRoom
+# ================================================================
+# Shoebox acoustic room with default conditions (20 °C, 50 % humidity).
+#must_use
+fn acoustic_room_shoebox(length, width, height, material) {
+    var r = alloc(sizeof(AcousticRoom));
+    AcousticRoom_set_geometry(r, room_geometry_shoebox(length, width, height, material));
+    AcousticRoom_set_temperature_celsius(r, f64_from(20));
+    AcousticRoom_set_humidity_percent(r, f64_from(50));
+    return r;
+}
+
+# ================================================================
+# AcceleratedRoom
+# ================================================================
+# Build an accelerated room: wraps a room with a BVH over its wall AABBs.
+#must_use
+fn accelerated_room_new(room) {
+    var ar = alloc(sizeof(AcceleratedRoom));
+    AcceleratedRoom_set_room(ar, room);
+    AcceleratedRoom_set_bvh(ar, room_geometry_build_bvh(AcousticRoom_geometry(room)));
+    return ar;
+}

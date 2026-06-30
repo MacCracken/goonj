@@ -1,0 +1,210 @@
+# gfpe.tcyr -- parity tests for src/gfpe.cyr
+# Ported from the #[test] blocks in rust-old/src/gfpe.rs.
+# (config_serialization_roundtrip / terrain_serialization_roundtrip
+#  omitted -- no serde in Cyrius.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/propagation.cyr"
+include "src/gfpe.cyr"
+
+# Tolerances (f64 bit patterns)
+var TOL_1E1 = 0x3FB999999999999A;   # 0.1
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E5 = 0x3EE4F8B588E368F1;   # 1e-5
+var NEG_0_2 = 0xBFC999999999999A;   # -0.2  (upward-refraction gradient)
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# +inf bit-pattern checks for excess attenuation (blocked / out of range).
+fn is_inf(x)    { if (x == GFPE_POS_INF) { return 1; } return 0; }
+fn is_finite(x) { if (x == GFPE_POS_INF) { return 0; } return 1; }
+
+# small_config() from the Rust tests: 500 Hz, src 5 m, 100x30 m grid,
+# 5 m / 1 m steps, grass ground, default atmosphere.
+fn small_config() {
+    return gfpe_config_new(f64_from(500), f64_from(5), f64_from(100), f64_from(30),
+    f64_from(5), F64_ONE, ground_impedance_grass(), gfpe_atmosphere_default());
+}
+
+# Terrain builders (vecs of f64).
+fn mk_terrain2(r0, r1, h0, h1) {
+    var r = vec_new();
+    vec_push(r, r0);
+    vec_push(r, r1);
+    var h = vec_new();
+    vec_push(h, h0);
+    vec_push(h, h1);
+    return gfpe_terrain_new(r, h);
+}
+fn mk_terrain3(r0, r1, r2, h0, h1, h2) {
+    var r = vec_new();
+    vec_push(r, r0);
+    vec_push(r, r1);
+    vec_push(r, r2);
+    var h = vec_new();
+    vec_push(h, h0);
+    vec_push(h, h1);
+    vec_push(h, h2);
+    return gfpe_terrain_new(r, h);
+}
+fn mk_terrain5(r0, r1, r2, r3, r4, h0, h1, h2, h3, h4) {
+    var r = vec_new();
+    vec_push(r, r0);
+    vec_push(r, r1);
+    vec_push(r, r2);
+    vec_push(r, r3);
+    vec_push(r, r4);
+    var h = vec_new();
+    vec_push(h, h0);
+    vec_push(h, h1);
+    vec_push(h, h2);
+    vec_push(h, h3);
+    vec_push(h, h4);
+    return gfpe_terrain_new(r, h);
+}
+
+alloc_init();
+
+# ================================================================
+test_group("flat_terrain_height_is_zero");
+var tflat = gfpe_terrain_flat(f64_from(100));
+assert_eq(f64_to(gfpe_terrain_height_at(tflat, 0)), 0, "flat height_at(0)=0");
+assert_eq(f64_to(gfpe_terrain_height_at(tflat, f64_from(50))), 0, "flat height_at(50)=0");
+assert_eq(f64_to(gfpe_terrain_height_at(tflat, f64_from(150))), 0, "flat height_at(150)=0 held");
+
+# ================================================================
+test_group("terrain_interpolates_linearly");
+var thill = mk_terrain3(0, f64_from(50), f64_from(100), 0, f64_from(10), 0);
+assert(approx(gfpe_terrain_height_at(thill, 0), 0, TOL_1E5), "h(0)=0");
+assert(approx(gfpe_terrain_height_at(thill, f64_from(25)), f64_from(5), TOL_1E5), "h(25)=5");
+assert(approx(gfpe_terrain_height_at(thill, f64_from(50)), f64_from(10), TOL_1E5), "h(50)=10");
+assert(approx(gfpe_terrain_height_at(thill, f64_from(75)), f64_from(5), TOL_1E5), "h(75)=5");
+assert(approx(gfpe_terrain_height_at(thill, f64_from(100)), 0, TOL_1E5), "h(100)=0");
+
+# ================================================================
+test_group("terrain_clamps_outside_range");
+var tclamp = mk_terrain2(0, f64_from(100), f64_from(5), f64_from(15));
+assert(approx(gfpe_terrain_height_at(tclamp, f64_neg(f64_from(10))), f64_from(5), TOL_1E5), "h(-10)=5 held");
+assert(approx(gfpe_terrain_height_at(tclamp, f64_from(200)), f64_from(15), TOL_1E5), "h(200)=15 held");
+
+# ================================================================
+test_group("empty_terrain_returns_zero");
+var tempty = gfpe_terrain_new(vec_new(), vec_new());
+assert_eq(f64_to(gfpe_terrain_height_at(tempty, f64_from(50))), 0, "empty terrain -> 0");
+
+# ================================================================
+test_group("solve_returns_grid_of_expected_size");
+var res = solve_gfpe(gfpe_terrain_flat(f64_from(100)), small_config());
+assert(gfpe_result_num_ranges(res) > 0, "ranges non-empty");
+assert(gfpe_result_num_heights(res) > 0, "heights non-empty");
+var expected_len = gfpe_result_num_ranges(res) * gfpe_result_num_heights(res);
+assert_eq(vec_len(GfpeResult_excess_attenuation_db(res)), expected_len, "ea length matches grid");
+
+# ================================================================
+test_group("invalid_config_returns_empty");
+var cbadf = gfpe_config_new(0, f64_from(5), f64_from(100), f64_from(30),
+f64_from(5), F64_ONE, ground_impedance_grass(), gfpe_atmosphere_default());
+var rbadf = solve_gfpe(gfpe_terrain_flat(f64_from(100)), cbadf);
+assert_eq(gfpe_result_num_ranges(rbadf), 0, "freq 0 -> empty ranges");
+assert_eq(vec_len(GfpeResult_excess_attenuation_db(rbadf)), 0, "freq 0 -> empty ea");
+
+# ================================================================
+test_group("negative_range_step_returns_empty");
+var cneg = gfpe_config_new(f64_from(500), f64_from(5), f64_from(100), f64_from(30),
+f64_neg(F64_ONE), F64_ONE, ground_impedance_grass(), gfpe_atmosphere_default());
+assert_eq(gfpe_result_num_ranges(solve_gfpe(gfpe_terrain_flat(f64_from(100)), cneg)), 0, "neg range step -> empty");
+
+# ================================================================
+test_group("excess_attenuation_finite_above_ground");
+var rfin = solve_gfpe(gfpe_terrain_flat(f64_from(100)), small_config());
+var rfin_ri = gfpe_result_num_ranges(rfin) / 2;
+var rfin_nh = gfpe_result_num_heights(rfin);
+var rfin_hi = rfin_nh / 2;
+if (rfin_hi > rfin_nh - 1) { rfin_hi = rfin_nh - 1; }
+assert(is_finite(gfpe_result_at(rfin, rfin_ri, rfin_hi)), "EA finite at mid-grid");
+
+# ================================================================
+test_group("shadow_zone_under_upward_refraction");
+var sterr = gfpe_terrain_flat(f64_from(200));
+var cflat = gfpe_config_new(f64_from(500), f64_from(2), f64_from(200), f64_from(30),
+f64_from(5), F64_ONE, ground_impedance_grass(), gfpe_atmosphere_new(0, f64_from(343)));
+var cshadow = gfpe_config_new(f64_from(500), f64_from(2), f64_from(200), f64_from(30),
+f64_from(5), F64_ONE, ground_impedance_grass(), gfpe_atmosphere_new(NEG_0_2, f64_from(343)));
+var rflat = solve_gfpe(sterr, cflat);
+var rshadow = solve_gfpe(sterr, cshadow);
+var sridx = gfpe_result_num_ranges(rflat) - 1;
+var ea_flat = gfpe_result_at(rflat, sridx, 1);
+var ea_shadow = gfpe_result_at(rshadow, sridx, 1);
+# Only meaningful when both are finite (matches the Rust guard).
+var both_finite = 0;
+if (is_finite(ea_flat) == 1) {
+    if (is_finite(ea_shadow) == 1) { both_finite = 1; }
+}
+if (both_finite == 1) {
+    assert(f64_gt(ea_shadow, ea_flat), "shadow EA exceeds flat EA under upward refraction");
+}
+
+# ================================================================
+test_group("hill_blocks_field_below_crest");
+var hterr = mk_terrain5(0, f64_from(40), f64_from(50), f64_from(60), f64_from(100),
+0, 0, f64_from(20), 0, 0);
+var hcfg = gfpe_config_new(f64_from(500), f64_from(5), f64_from(100), f64_from(40),
+f64_from(5), F64_ONE, ground_impedance_grass(), gfpe_atmosphere_default());
+var hres = solve_gfpe(hterr, hcfg);
+# Column closest to 50 m.
+var hranges = GfpeResult_ranges_m(hres);
+var hnr = gfpe_result_num_ranges(hres);
+var best = 0;
+var best_d = f64_from(1000000000);
+var k = 0;
+while (k < hnr) {
+    var d = f64_abs(f64_sub(vec_get(hranges, k), f64_from(50)));
+    if (f64_lt(d, best_d) == 1) {
+        best_d = d;
+        best = k;
+    }
+    k = k + 1;
+}
+# First height row >= 5 m (well below the 20 m crest).
+var hheights = GfpeResult_heights_m(hres);
+var hnh = gfpe_result_num_heights(hres);
+var hidx = 0;
+var found = 0;
+k = 0;
+while (k < hnh) {
+    if (found == 0) {
+        if (f64_ge(vec_get(hheights, k), f64_from(5)) == 1) {
+            hidx = k;
+            found = 1;
+        }
+    }
+    k = k + 1;
+}
+assert(is_inf(gfpe_result_at(hres, best, hidx)), "field below hill crest blocked (inf EA)");
+
+# ================================================================
+test_group("grid_cap_returns_empty");
+var cbig = gfpe_config_new(f64_from(500), F64_ONE, f64_from(1000000000), f64_from(1000000000),
+GFPE_1E3, GFPE_1E3, ground_impedance_grass(), gfpe_atmosphere_default());
+assert_eq(gfpe_result_num_ranges(solve_gfpe(gfpe_terrain_flat(F64_ONE), cbig)), 0, "grid > cap -> empty");
+
+# ================================================================
+test_group("miki_complex_reflection_within_unit_disk");
+var grass = ground_impedance_grass();
+var rc1 = gfpe_ground_reflection_complex(f64_from(500), TOL_1E1, grass);
+var mag2 = f64_add(f64_mul(GfpeCplx_re(rc1), GfpeCplx_re(rc1)), f64_mul(GfpeCplx_im(rc1), GfpeCplx_im(rc1)));
+assert(f64_le(mag2, f64_add(F64_ONE, GFPE_1E3)), "|R|^2 <= 1.001");
+
+# ================================================================
+test_group("miki_complex_grazing_zero_angle_high_reflection");
+var rc2 = gfpe_ground_reflection_complex(f64_from(500), GFPE_1E3, grass);
+var mag = f64_sqrt(f64_add(f64_mul(GfpeCplx_re(rc2), GfpeCplx_re(rc2)), f64_mul(GfpeCplx_im(rc2), GfpeCplx_im(rc2))));
+assert(f64_gt(mag, f64_div(f64_from(9), f64_from(10))), "near-grazing |R| ~ 1");
+
+var rc = assert_summary();
+syscall(60, rc);

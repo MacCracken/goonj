@@ -1,0 +1,102 @@
+# directivity.tcyr -- parity tests for src/directivity.cyr
+# Ported from the #[test] blocks in rust-old/src/directivity.rs.
+# (directivity_pattern_serializes omitted — no serde in Cyrius.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/directivity.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var V_0_5   = 0x3FE0000000000000;   # 0.5
+var V_0_8   = 0x3FE999999999999A;   # 0.8
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# Build a balloon whose NUM_BANDS gain vecs each hold a single value `g`.
+fn _single_point_balloon(g) {
+    var az = vec_new();
+    vec_push(az, 0);   # 0.0
+    var el = vec_new();
+    vec_push(el, 0);   # 0.0
+    var gains = alloc(8 * 8);
+    var b = 0;
+    while (b < 8) {
+        var gv = vec_new();
+        vec_push(gv, g);
+        store64(gains + b * 8, gv);
+        b = b + 1;
+    }
+    return directivity_balloon_new(az, el, gains);
+}
+
+# Build an empty balloon (no azimuths/elevations, empty per-band vecs).
+fn _empty_balloon() {
+    var az = vec_new();
+    var el = vec_new();
+    var gains = alloc(8 * 8);
+    var b = 0;
+    while (b < 8) {
+        store64(gains + b * 8, vec_new());
+        b = b + 1;
+    }
+    return directivity_balloon_new(az, el, gains);
+}
+
+alloc_init();
+
+# ================================================================
+test_group("omnidirectional_always_one");
+var omni = directivity_omnidirectional();
+# gain is 1.0 in every direction.
+assert(approx(directivity_gain(omni, hvec3_unit_x(), hvec3_unit_z()), F64_ONE, TOL_1E2), "omni side -> 1.0");
+assert(approx(directivity_gain(omni, hvec3_neg(hvec3_unit_z()), hvec3_unit_z()), F64_ONE, TOL_1E2), "omni rear -> 1.0");
+
+# ================================================================
+test_group("cardioid");
+var card = directivity_cardioid();
+# On-axis ~1.0, rear ~0.0, 90° ~0.5.
+assert(approx(directivity_gain(card, hvec3_unit_z(), hvec3_unit_z()), F64_ONE, TOL_1E2), "cardioid on-axis ~1.0");
+assert(approx(directivity_gain(card, hvec3_neg(hvec3_unit_z()), hvec3_unit_z()), 0, TOL_1E2), "cardioid rear ~0.0");
+assert(approx(directivity_gain(card, hvec3_unit_x(), hvec3_unit_z()), V_0_5, TOL_1E2), "cardioid 90° ~0.5");
+
+# ================================================================
+test_group("figure8");
+var fig8 = directivity_figure8();
+var zr = hvec3_neg(hvec3_unit_z());
+# On-axis ~1.0, side ~0.0, rear ~1.0.
+assert(approx(directivity_gain(fig8, hvec3_unit_z(), hvec3_unit_z()), F64_ONE, TOL_1E2), "figure8 on-axis ~1.0");
+assert(approx(directivity_gain(fig8, hvec3_unit_x(), hvec3_unit_z()), 0, TOL_1E2), "figure8 side ~0.0");
+assert(approx(directivity_gain(fig8, zr, hvec3_unit_z()), F64_ONE, TOL_1E2), "figure8 rear ~1.0");
+
+# ================================================================
+test_group("supercardioid_on_axis");
+var super = directivity_supercardioid();
+assert(approx(directivity_gain(super, hvec3_unit_z(), hvec3_unit_z()), F64_ONE, TOL_1E2), "supercardioid on-axis ~1.0");
+
+# ================================================================
+test_group("gain_per_band_analytical_uniform");
+# Analytical patterns: every band equals the broadband gain (~1.0 on-axis).
+var bands = directivity_gain_per_band(card, hvec3_unit_z(), hvec3_unit_z());
+var k = 0;
+while (k < 8) {
+    assert(approx(load64(bands + k * 8), F64_ONE, TOL_1E2), "cardioid band ~1.0");
+    k = k + 1;
+}
+
+# ================================================================
+test_group("tabulated_empty_returns_one");
+var pe = directivity_tabulated(_empty_balloon());
+assert(approx(directivity_gain(pe, hvec3_unit_z(), hvec3_unit_z()), F64_ONE, TOL_1E2), "empty balloon -> 1.0");
+
+# ================================================================
+test_group("tabulated_single_point");
+var pt = directivity_tabulated(_single_point_balloon(V_0_8));
+assert(approx(directivity_gain(pt, hvec3_unit_z(), hvec3_unit_z()), V_0_8, TOL_1E2), "single point -> 0.8");
+
+var rc = assert_summary();
+syscall(60, rc);

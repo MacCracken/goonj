@@ -1,0 +1,107 @@
+# fdn.tcyr -- parity tests for src/fdn.cyr
+# Ported from the #[test] blocks in rust-old/src/fdn.rs.
+# (No serde round-trip test existed in the oracle; nothing dropped.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/propagation.cyr"
+include "src/fdn.cyr"
+
+alloc_init();
+
+# ================================================================
+test_group("fdn_produces_output");
+# Impulse into a 10x8x3 room (RT60 = 1 s) yields non-zero reverb energy.
+var cfg1 = fdn_config_for_room(f64_from(10), f64_from(8), f64_from(3), F64_ONE, 48000);
+var fdn1 = fdn_new(cfg1);
+var energy = 0;
+var o0 = fdn_process_sample(fdn1, F64_ONE);
+energy = f64_add(energy, f64_mul(o0, o0));
+var t = 1;
+while (t < 4800) {
+    var ot = fdn_process_sample(fdn1, 0);
+    energy = f64_add(energy, f64_mul(ot, ot));
+    t = t + 1;
+}
+assert(f64_gt(energy, 0), "FDN should produce reverb output");
+
+# ================================================================
+test_group("fdn_decays_over_time");
+# After initial buildup, an earlier window holds more energy than a later one.
+var cfg2 = fdn_config_for_room(f64_from(10), f64_from(8), f64_from(3), F64_HALF, 48000);
+var fdn2 = fdn_new(cfg2);
+fdn_process_sample(fdn2, F64_ONE);
+var w = 0;
+while (w < 4800) { fdn_process_sample(fdn2, 0); w = w + 1; }
+var early = 0;
+var e = 0;
+while (e < 9600) {
+    var oe = fdn_process_sample(fdn2, 0);
+    early = f64_add(early, f64_mul(oe, oe));
+    e = e + 1;
+}
+var late = 0;
+var l = 0;
+while (l < 9600) {
+    var ol = fdn_process_sample(fdn2, 0);
+    late = f64_add(late, f64_mul(ol, ol));
+    l = l + 1;
+}
+assert(f64_gt(early, late), "early energy should exceed late");
+
+# ================================================================
+test_group("fdn_reset_clears_state");
+# After reset, the next output is silence.
+var cfg3 = fdn_config_for_room(f64_from(5), f64_from(4), f64_from(3), F64_ONE, 48000);
+var fdn3 = fdn_new(cfg3);
+fdn_process_sample(fdn3, F64_ONE);
+var r = 0;
+while (r < 100) { fdn_process_sample(fdn3, 0); r = r + 1; }
+fdn_reset(fdn3);
+var out3 = fdn_process_sample(fdn3, 0);
+assert(f64_lt(f64_abs(out3), GOONJ_EPSILON), "reset should clear all state");
+
+# ================================================================
+test_group("fdn_config_for_room_valid");
+var cfg4 = fdn_config_for_room(f64_from(10), f64_from(8), f64_from(3), F64_ONE, 48000);
+assert_eq(FdnConfig_num_delays(cfg4), 8, "num_delays == 8");
+var dl = FdnConfig_delay_lengths(cfg4);
+assert_eq(vec_len(dl), 8, "delay_lengths len == 8");
+var di = 0;
+while (di < 8) {
+    assert(vec_get(dl, di) > 0, "delay lengths should be positive");
+    di = di + 1;
+}
+
+# ================================================================
+test_group("process_buffer_matches_sample_by_sample");
+# process_buffer must equal a manual sample-by-sample run on an identical FDN.
+var rt08 = f64_div(f64_from(8), f64_from(10));
+var cfg5 = fdn_config_for_room(f64_from(5), f64_from(4), f64_from(3), rt08, 48000);
+var fdnA = fdn_new(cfg5);
+var fdnB = fdn_new(cfg5);
+var input = vec_new();
+var ii = 0;
+while (ii < 100) {
+    if (ii == 0) { vec_push(input, F64_ONE); } else { vec_push(input, 0); }
+    ii = ii + 1;
+}
+var buf_out = fdn_process_buffer(fdnA, input);
+var sample_out = vec_new();
+var si = 0;
+while (si < 100) {
+    vec_push(sample_out, fdn_process_sample(fdnB, vec_get(input, si)));
+    si = si + 1;
+}
+var match_all = 1;
+var mi = 0;
+while (mi < 100) {
+    var a = vec_get(buf_out, mi);
+    var b = vec_get(sample_out, mi);
+    if (f64_ge(f64_abs(f64_sub(a, b)), GOONJ_EPSILON) == 1) { match_all = 0; }
+    mi = mi + 1;
+}
+assert(match_all, "buffer and sample-by-sample should match");
+
+var rc = assert_summary();
+syscall(60, rc);

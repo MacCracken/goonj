@@ -1,0 +1,93 @@
+# portal.tcyr -- parity tests for src/portal.cyr
+# Ported from the #[test] blocks in rust-old/src/portal.rs.
+# (portal_serializes omitted -- no serde in Cyrius.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/portal.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+
+# |a - b| < tol -> 1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# Rust standard_door(): position (5,1,0), normal +Z, 0.9 x 2.1 m.
+fn standard_door() {
+    return portal_new(hvec3_new(f64_from(5), F64_ONE, 0), hvec3_unit_z(),
+    f64_div(f64_from(9), f64_from(10)), f64_div(f64_from(21), f64_from(10)));
+}
+
+# Sum all NUM_BANDS energy/transmission factors in a band buffer.
+fn band_sum(buf) {
+    var s = 0;
+    var i = 0;
+    while (i < 8) {
+        s = f64_add(s, load64(buf + i * 8));
+        i = i + 1;
+    }
+    return s;
+}
+
+# Every band value within [0, 1]?
+fn all_bands_in_range(buf) {
+    var i = 0;
+    while (i < 8) {
+        var e = load64(buf + i * 8);
+        if (f64_lt(e, 0) == 1) { return 0; }
+        if (f64_gt(e, F64_ONE) == 1) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("portal_area");
+# 0.9 x 2.1 door = 1.89 m^2.
+assert(approx(portal_area(standard_door()), f64_div(f64_from(189), f64_from(100)), TOL_1E2), "door area ~1.89");
+
+# ================================================================
+test_group("transmission_factor");
+var factors = portal_transmission_factor(standard_door(), f64_from(20));
+# 8 kHz: wavelength ~0.043 m, door ~1.4 m -> ratio ~32 -> near 1.0.
+assert(f64_gt(load64(factors + 7 * 8), f64_div(f64_from(9), f64_from(10))), "8 kHz near 1.0");
+# 63 Hz transmits less than 8 kHz.
+assert(f64_lt(load64(factors + 0 * 8), load64(factors + 7 * 8)), "low freq < high freq");
+
+# ================================================================
+test_group("portal_energy_on_axis");
+var door = standard_door();
+var on_src = hvec3_new(f64_from(5), F64_ONE, f64_neg(f64_from(3)));
+var on_lis = hvec3_new(f64_from(5), F64_ONE, f64_from(3));
+var energy = portal_energy_transfer(on_src, door, on_lis, f64_from(20));
+assert(all_bands_in_range(energy), "energy in [0,1]");
+# On-axis 1 kHz (band 4) has some transfer.
+assert(f64_gt(load64(energy + 4 * 8), 0), "1 kHz on-axis has energy");
+
+# ================================================================
+test_group("portal_energy_off_axis_lower");
+var door2 = standard_door();
+var on_axis = portal_energy_transfer(hvec3_new(f64_from(5), F64_ONE, f64_neg(f64_from(3))),
+door2, hvec3_new(f64_from(5), F64_ONE, f64_from(3)), f64_from(20));
+var off_axis = portal_energy_transfer(hvec3_new(0, F64_ONE, f64_neg(f64_from(3))),
+door2, hvec3_new(f64_from(5), F64_ONE, f64_from(3)), f64_from(20));
+assert(f64_gt(band_sum(on_axis), band_sum(off_axis)), "on-axis > off-axis energy");
+
+# ================================================================
+test_group("zero_size_portal_no_transmission");
+var tiny = portal_new(hvec3_zero(), hvec3_unit_z(), 0, 0);
+var zfac = portal_transmission_factor(tiny, f64_from(20));
+var i = 0;
+while (i < 8) {
+    assert_eq(f64_to(load64(zfac + i * 8)), 0, "zero-size band -> 0");
+    i = i + 1;
+}
+
+var rc = assert_summary();
+syscall(60, rc);

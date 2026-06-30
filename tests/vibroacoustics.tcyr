@@ -1,0 +1,119 @@
+# vibroacoustics.tcyr -- parity tests for src/vibroacoustics.cyr
+# Ported from the #[test] blocks in rust-old/src/vibroacoustics.rs.
+# (radiation_result_serializes omitted — no serde in Cyrius.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/vibroacoustics.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# Finite (not ±inf, not NaN): bounded magnitude check.
+fn finite(x) {
+    if (f64_lt(f64_abs(x), f64_from(1000000000000000000)) == 1) { return 1; }
+    return 0;
+}
+
+# 0.001 and 0.01 as f64 rationals.
+fn _milli() { return f64_div(F64_ONE, f64_from(1000)); }
+fn _centi() { return f64_div(F64_ONE, f64_from(100)); }
+
+# Single-surface RadiationResult from a velocity (area 1, freq 1000).
+fn _one_surface_power(velocity) {
+    var surfaces = vec_new();
+    var s = vibrating_surface_new(hvec3_zero(), hvec3_unit_y(), F64_ONE, velocity, f64_from(1000));
+    vec_push(surfaces, s);
+    return radiated_sound_power(surfaces, f64_from(2500), f64_from(20));
+}
+
+alloc_init();
+
+# ================================================================
+test_group("radiation_efficiency: below critical");
+# Large plate (10 m²) at low frequency well below critical -> low sigma.
+var sig_below = radiation_efficiency(f64_from(100), f64_from(2500), f64_from(10), f64_from(12), f64_from(20));
+assert(f64_gt(sig_below, 0), "below critical sigma > 0");
+assert(f64_lt(sig_below, F64_HALF), "below critical sigma < 0.5");
+
+# ================================================================
+test_group("radiation_efficiency: above critical");
+var sig_above = radiation_efficiency(f64_from(5000), f64_from(2500), F64_ONE, f64_from(4), f64_from(20));
+assert(f64_gt(sig_above, F64_HALF), "above critical sigma > 0.5");
+
+# ================================================================
+test_group("radiation_efficiency: in range");
+var freqs = alloc(48);
+store64(freqs + 0 * 8, f64_from(63));
+store64(freqs + 1 * 8, f64_from(125));
+store64(freqs + 2 * 8, f64_from(500));
+store64(freqs + 3 * 8, f64_from(1000));
+store64(freqs + 4 * 8, f64_from(4000));
+store64(freqs + 5 * 8, f64_from(8000));
+var fi = 0;
+while (fi < 6) {
+    var sig = radiation_efficiency(load64(freqs + fi * 8), f64_from(2000), F64_TWO, f64_from(6), f64_from(20));
+    assert(f64_ge(sig, 0), "sigma >= 0");
+    assert(f64_le(sig, F64_ONE), "sigma <= 1");
+    fi = fi + 1;
+}
+
+# ================================================================
+test_group("radiated_sound_power: from a vibrating plate");
+var res_plate = _one_surface_power(_milli());
+assert(f64_gt(radiation_result_sound_power_watts(res_plate), 0), "plate radiates power > 0");
+assert(finite(radiation_result_sound_power_level_db(res_plate)), "swl is finite");
+
+# ================================================================
+test_group("radiated_sound_power: empty");
+var res_empty = radiated_sound_power(vec_new(), f64_from(2500), f64_from(20));
+assert_eq(f64_to(radiation_result_sound_power_watts(res_empty)), 0, "empty -> 0 W");
+
+# ================================================================
+test_group("radiated_sound_power: increases with velocity");
+var res_low = _one_surface_power(_milli());
+var res_high = _one_surface_power(_centi());
+assert(f64_gt(radiation_result_sound_power_watts(res_high),
+radiation_result_sound_power_watts(res_low)), "higher velocity -> more power");
+
+# ================================================================
+test_group("modal_radiation: produces output");
+var positions = vec_new();
+vec_push(positions, hvec3_zero());
+vec_push(positions, hvec3_unit_x());
+vec_push(positions, hvec3_new(0, 0, F64_ONE));
+var areas = vec_new();
+vec_push(areas, F64_HALF);
+vec_push(areas, F64_HALF);
+vec_push(areas, F64_HALF);
+var shape = vec_new();
+vec_push(shape, F64_ONE);
+vec_push(shape, F64_HALF);
+vec_push(shape, f64_neg(F64_HALF));
+var mode0 = vibration_mode_new(f64_from(500), f64_div(F64_TWO, f64_from(100)), shape);
+var modes = vec_new();
+vec_push(modes, mode0);
+var res_modal = modal_radiation(positions, areas, modes, F64_ONE, f64_from(2500), f64_from(20));
+assert(f64_gt(radiation_result_sound_power_watts(res_modal), 0), "modal radiation power > 0");
+
+# ================================================================
+test_group("modal_radiation: empty");
+var res_modal_empty = modal_radiation(vec_new(), vec_new(), vec_new(), F64_ONE, f64_from(2500), f64_from(20));
+assert_eq(f64_to(radiation_result_sound_power_watts(res_modal_empty)), 0, "empty modal -> 0 W");
+
+# ================================================================
+test_group("nearest_band");
+assert_eq(nearest_band(f64_from(63)), 0, "63 Hz -> band 0");
+assert_eq(nearest_band(f64_from(1000)), 4, "1000 Hz -> band 4");
+assert_eq(nearest_band(f64_from(8000)), 7, "8000 Hz -> band 7");
+assert_eq(nearest_band(f64_from(3000)), 5, "3000 Hz -> band 5 (closer to 2000)");
+
+var rc = assert_summary();
+syscall(60, rc);

@@ -1,0 +1,135 @@
+# underwater.tcyr -- parity tests for src/underwater.cyr
+# Ported from the #[test] blocks in rust-old/src/underwater.rs.
+# (ocean_profile_serializes omitted -- no serde in Cyrius.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/underwater.cyr"
+
+# Tolerances / literals (f64 bit patterns)
+var TOL_1E1   = 0x3FB999999999999A;   # 0.1
+var D_03      = 0x3FD3333333333333;   # 0.3   grazing angle
+var D_005     = 0x3FA999999999999A;   # 0.05  grazing angle
+var D_01      = 0x3FB999999999999A;   # 0.1   rms wave height
+var GRAD_005  = 0xBFA999999999999A;   # -0.05 thermocline gradient
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# Standard ocean: 15 C, 35 ppt, 100 m (Rust `standard_ocean`).
+fn standard_ocean() { return ocean_profile_new(f64_from(15), f64_from(35), f64_from(100)); }
+
+# Preset sanity: speed > 0, density > 0, attenuation >= 0.
+fn assert_sed_valid(sed) {
+    assert(f64_gt(SeabedSediment_speed(sed), 0), "sediment speed > 0");
+    assert(f64_gt(SeabedSediment_density(sed), 0), "sediment density > 0");
+    assert(f64_ge(SeabedSediment_attenuation_db_per_wavelength(sed), 0), "sediment atten >= 0");
+    return 0;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("mackenzie_standard_conditions");
+# Standard ocean (~15 C, 35 ppt, 100 m) -> speed ~1507 m/s.
+var c_std = ocean_sound_speed(standard_ocean());
+assert(f64_gt(c_std, f64_from(1490)), "standard ocean speed > 1490");
+assert(f64_lt(c_std, f64_from(1530)), "standard ocean speed < 1530");
+
+# ================================================================
+test_group("speed_increases_with_temperature");
+var cold = ocean_sound_speed(ocean_profile_new(f64_from(5), f64_from(35), 0));
+var warm = ocean_sound_speed(ocean_profile_new(f64_from(25), f64_from(35), 0));
+assert(f64_gt(warm, cold), "warmer water higher speed");
+
+# ================================================================
+test_group("speed_increases_with_depth");
+var shallow = ocean_sound_speed(ocean_profile_new(f64_from(15), f64_from(35), 0));
+var deep = ocean_sound_speed(ocean_profile_new(f64_from(15), f64_from(35), f64_from(4000)));
+assert(f64_gt(deep, shallow), "deeper water higher speed");
+
+# ================================================================
+test_group("speed_increases_with_salinity");
+var fresh = ocean_sound_speed(ocean_profile_new(f64_from(15), 0, 0));
+var salt = ocean_sound_speed(ocean_profile_new(f64_from(15), f64_from(35), 0));
+assert(f64_gt(salt, fresh), "saltier water higher speed");
+
+# ================================================================
+test_group("thermocline_speed_profile");
+var surf = ocean_profile_new(f64_from(20), f64_from(35), 0);
+var c_surface = ocean_speed_at_depth(surf, GRAD_005, f64_from(50), 0);
+var c_deep = ocean_speed_at_depth(surf, GRAD_005, f64_from(50), f64_from(500));
+# Below the thermocline, temperature drops -> speed differs from the surface.
+assert(approx(c_surface, c_deep, TOL_1E1) == 0, "speed varies with depth");
+
+# ================================================================
+test_group("francois_garrison_absorption");
+# At 10 kHz, typical absorption ~1 dB/km (window 0.5 .. 5).
+var a_10k = ocean_absorption_db_per_km(f64_from(10000), standard_ocean());
+assert(f64_gt(a_10k, F64_HALF), "10 kHz absorption > 0.5");
+assert(f64_lt(a_10k, f64_from(5)), "10 kHz absorption < 5");
+
+# ================================================================
+test_group("absorption_increases_with_frequency");
+var a_1k = ocean_absorption_db_per_km(f64_from(1000), standard_ocean());
+var a_100k = ocean_absorption_db_per_km(f64_from(100000), standard_ocean());
+assert(f64_gt(a_100k, a_1k), "higher frequency more absorption");
+
+# ================================================================
+test_group("absorption_bands_valid");
+var bands = ocean_absorption_bands(standard_ocean());
+var bi = 0;
+while (bi < NUM_BANDS) {
+    assert(f64_ge(load64(bands + bi * 8), 0), "absorption non-negative");
+    bi = bi + 1;
+}
+
+# ================================================================
+test_group("bottom_reflection_sand");
+var r_sand = bottom_reflection_coefficient(D_03, f64_from(1500), f64_from(1025), seabed_sand());
+assert(f64_ge(r_sand, 0), "reflection >= 0");
+assert(f64_le(r_sand, F64_ONE), "reflection <= 1");
+
+# ================================================================
+test_group("bottom_reflection_grazing_high");
+# At very grazing angles, reflection should be high.
+var r_graze = bottom_reflection_coefficient(D_005, f64_from(1500), f64_from(1025), seabed_sand());
+assert(f64_gt(r_graze, F64_HALF), "grazing angle high reflection");
+
+# ================================================================
+test_group("bottom_reflection_rock_vs_clay");
+var r_rock = bottom_reflection_coefficient(F64_HALF, f64_from(1500), f64_from(1025), seabed_rock());
+var r_clay = bottom_reflection_coefficient(F64_HALF, f64_from(1500), f64_from(1025), seabed_clay());
+assert(f64_gt(r_rock, r_clay), "rock reflects more than clay");
+
+# ================================================================
+test_group("surface_scattering_calm_low_loss");
+# Calm sea (small waves) at low frequency -> minimal scattering.
+var loss_calm = surface_scattering_loss(f64_from(1000), D_03, D_01, f64_from(1500));
+assert(f64_lt(loss_calm, f64_from(5)), "calm sea low scattering");
+
+# ================================================================
+test_group("surface_scattering_rough_more_loss");
+var calm2 = surface_scattering_loss(f64_from(10000), F64_HALF, D_01, f64_from(1500));
+var rough2 = surface_scattering_loss(f64_from(10000), F64_HALF, F64_TWO, f64_from(1500));
+assert(f64_gt(rough2, calm2), "rough sea scatters more than calm");
+
+# ================================================================
+test_group("surface_scattering_zero_waves");
+assert_eq(f64_to(surface_scattering_loss(f64_from(1000), F64_HALF, 0, f64_from(1500))), 0,
+"zero waves -> 0 loss");
+
+# ================================================================
+test_group("sediment_presets_valid");
+assert_sed_valid(seabed_sand());
+assert_sed_valid(seabed_silt());
+assert_sed_valid(seabed_clay());
+assert_sed_valid(seabed_rock());
+
+var rc = assert_summary();
+syscall(60, rc);

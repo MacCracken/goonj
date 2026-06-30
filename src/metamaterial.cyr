@@ -1,0 +1,269 @@
+# metamaterial.cyr -- acoustic metamaterials: engineered structures with
+# frequency-dependent effective parameters (negative stiffness / density,
+# doubly-negative, and a lookup-table form for measured data).
+#
+# Ports rust-old/src/metamaterial.rs. f32 -> f64 throughout. Rust's `serde`
+# derive is dropped (no serde in Cyrius); the two serde round-trip tests are
+# therefore omitted. The payload-carrying `Metamaterial` enum becomes a
+# manual tagged union (tag + two 8-byte slots); the `(f32, f32)` tuple
+# returned by `evaluate` becomes an `MmComplex` struct. `Vec<(f32, f32)>`
+# lookup rows become a flat stdlib `vec` (freq, absorption, freq, ...).
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON),
+# material.cyr (acoustic_material_new, frequency_band, NUM_BANDS), stdlib
+# math/ganita (F64_*, f64_*) and vec; alloc_init() must have run.
+
+# ================================================================
+# Constants (f64 bit patterns; decimal in comments for traceability)
+# ================================================================
+# Characteristic impedance of air, Z0 = rho0*c at 20 C, 1 atm (rayls).
+var AIR_IMPEDANCE_RAYLS = 0x4079D00000000000;   # 413.0
+# Reference air density at 20 C (kg/m^3).
+var AIR_DENSITY         = 0x3FF347AE147AE148;   # 1.205
+# Reference air bulk modulus K0 = rho0*c^2 at 20 C (Pa).
+var AIR_BULK_MODULUS    = 0x4101558000000000;   # 1.42e5 = 142000.0
+
+# Metamaterial variant tags.
+enum MmTag {
+    MM_NEG_STIFFNESS   = 0,
+    MM_NEG_DENSITY     = 1,
+    MM_DOUBLY_NEGATIVE = 2,
+    MM_LOOKUP_TABLE    = 3,
+}
+
+# Tagged-union layout: tag | slot A | slot B.
+#   NegativeStiffness: A = k_eff (LorentzianResonance ptr), B = rho   (f64)
+#   NegativeDensity:   A = rho_eff (ptr),                   B = k_mod (f64)
+#   DoublyNegative:    A = k_eff (ptr),                     B = rho_eff (ptr)
+#   LookupTable:       A = rows (vec handle),               B = unused
+enum MmLayout {
+    MM_TAG  = 0,
+    MM_A    = 8,
+    MM_B    = 16,
+    MM_SIZE = 24,
+}
+
+# ================================================================
+# LorentzianResonance -- X(w) = X_bg * [1 - w_p^2 / (w^2 - w_0^2 + i*g*w)]
+# ================================================================
+#derive(accessors)
+struct LorentzianResonance { center_hz; plasma_hz; damping_hz; background_value; }
+
+# Complex value (re, im) -- replaces Rust's (f32, f32) tuple return.
+#derive(accessors)
+struct MmComplex { re; im; }
+
+#must_use
+fn lorentzian_resonance_new(center_hz, plasma_hz, damping_hz, background_value) {
+    var r = alloc(sizeof(LorentzianResonance));
+    LorentzianResonance_set_center_hz(r, center_hz);
+    LorentzianResonance_set_plasma_hz(r, plasma_hz);
+    LorentzianResonance_set_damping_hz(r, damping_hz);
+    LorentzianResonance_set_background_value(r, background_value);
+    return r;
+}
+
+# Pick background_value so the DC value (w->0) equals dc_value exactly.
+# X(0) = X_bg * (1 + (w_p/w_0)^2); invert for X_bg.
+#must_use
+fn lorentzian_with_dc_value(center_hz, plasma_hz, damping_hz, dc_value) {
+    var center = f64_max(center_hz, GOONJ_EPSILON);
+    var ratio = f64_div(plasma_hz, center);
+    var factor = f64_add(F64_ONE, f64_mul(ratio, ratio));
+    var bg = f64_div(dc_value, factor);
+    return lorentzian_resonance_new(center_hz, plasma_hz, damping_hz, bg);
+}
+
+# Evaluate X(w) at frequency_hz; returns an MmComplex (re, im).
+#must_use
+fn lorentzian_evaluate(r, frequency_hz) {
+    var omega = f64_mul(F64_TAU, frequency_hz);
+    var omega_0 = f64_mul(F64_TAU, LorentzianResonance_center_hz(r));
+    var omega_p = f64_mul(F64_TAU, LorentzianResonance_plasma_hz(r));
+    var gamma = f64_mul(F64_TAU, LorentzianResonance_damping_hz(r));
+    var omega2 = f64_mul(omega, omega);
+    var omega_0_2 = f64_mul(omega_0, omega_0);
+    var omega_p_2 = f64_mul(omega_p, omega_p);
+    var diff = f64_sub(omega2, omega_0_2);
+    var denom = f64_add(f64_mul(diff, diff), f64_mul(f64_mul(gamma, gamma), omega2));
+    var bg = LorentzianResonance_background_value(r);
+
+    var c = alloc(sizeof(MmComplex));
+    if (f64_lt(denom, GOONJ_EPSILON) == 1) {
+        MmComplex_set_re(c, bg);
+        MmComplex_set_im(c, 0);
+        return c;
+    }
+    # real = X_bg * (1 - w_p^2 * (w^2 - w_0^2) / denom)
+    var real = f64_mul(bg, f64_sub(F64_ONE, f64_div(f64_mul(omega_p_2, diff), denom)));
+    # imag = X_bg * w_p^2 * g * w / denom
+    var imag = f64_div(f64_mul(f64_mul(bg, omega_p_2), f64_mul(gamma, omega)), denom);
+    MmComplex_set_re(c, real);
+    MmComplex_set_im(c, imag);
+    return c;
+}
+
+# Real part of X(w) -- negative around resonance for strong enough plasma_hz.
+#must_use
+fn lorentzian_real_part(r, frequency_hz) {
+    return MmComplex_re(lorentzian_evaluate(r, frequency_hz));
+}
+
+# ================================================================
+# Metamaterial constructors (tagged union)
+# ================================================================
+#must_use
+fn metamaterial_negative_stiffness(k_eff, rho) {
+    var m = alloc(MM_SIZE);
+    store64(m + MM_TAG, MM_NEG_STIFFNESS);
+    store64(m + MM_A, k_eff);
+    store64(m + MM_B, rho);
+    return m;
+}
+
+#must_use
+fn metamaterial_negative_density(rho_eff, k_modulus) {
+    var m = alloc(MM_SIZE);
+    store64(m + MM_TAG, MM_NEG_DENSITY);
+    store64(m + MM_A, rho_eff);
+    store64(m + MM_B, k_modulus);
+    return m;
+}
+
+#must_use
+fn metamaterial_doubly_negative(k_eff, rho_eff) {
+    var m = alloc(MM_SIZE);
+    store64(m + MM_TAG, MM_DOUBLY_NEGATIVE);
+    store64(m + MM_A, k_eff);
+    store64(m + MM_B, rho_eff);
+    return m;
+}
+
+#must_use
+fn metamaterial_lookup_table(rows) {
+    var m = alloc(MM_SIZE);
+    store64(m + MM_TAG, MM_LOOKUP_TABLE);
+    store64(m + MM_A, rows);
+    store64(m + MM_B, 0);
+    return m;
+}
+
+# New (freq, absorption) lookup-row vec, and a paired-push helper.
+#must_use
+fn mm_rows_new() { return vec_new(); }
+fn mm_rows_push(rows, frequency_hz, absorption) {
+    vec_push(rows, frequency_hz);
+    vec_push(rows, absorption);
+    return 0;
+}
+
+# ================================================================
+# Normal-incidence bulk absorption from complex (K_eff, rho_eff) vs air.
+# Z = sqrt(rho*K), R = (Z - Z0)/(Z + Z0), alpha = 1 - |R|^2.
+# ================================================================
+#must_use
+fn _mm_impedance_absorption(k_re, k_im, rho_re, rho_im) {
+    # rho * K (complex multiply)
+    var prod_r = f64_sub(f64_mul(rho_re, k_re), f64_mul(rho_im, k_im));
+    var prod_i = f64_add(f64_mul(rho_re, k_im), f64_mul(rho_im, k_re));
+    # Principal sqrt(prod) = sqrt|prod| * (cos(arg/2) + i*sin(arg/2))
+    var mag = f64_sqrt(f64_add(f64_mul(prod_r, prod_r), f64_mul(prod_i, prod_i)));
+    var phase = f64_atan2(prod_i, prod_r);
+    var sqrt_mag = f64_sqrt(mag);
+    var half_phase = f64_mul(phase, F64_HALF);
+    var z_r = f64_mul(sqrt_mag, f64_cos(half_phase));
+    var z_i = f64_mul(sqrt_mag, f64_sin(half_phase));
+    # R = (Z - Z0)/(Z + Z0)
+    var num_r = f64_sub(z_r, AIR_IMPEDANCE_RAYLS);
+    var num_i = z_i;
+    var den_r = f64_add(z_r, AIR_IMPEDANCE_RAYLS);
+    var den_i = z_i;
+    var den_mag2 = f64_add(f64_mul(den_r, den_r), f64_mul(den_i, den_i));
+    if (f64_lt(den_mag2, GOONJ_EPSILON) == 1) {
+        return F64_ONE;
+    }
+    var r_mag2 = f64_div(f64_add(f64_mul(num_r, num_r), f64_mul(num_i, num_i)), den_mag2);
+    return f64_clamp(f64_sub(F64_ONE, r_mag2), 0, F64_ONE);
+}
+
+# Linear interpolation of a sorted (freq, absorption) lookup table.
+# Outside the range the endpoint absorption is held.
+#must_use
+fn _mm_lookup_absorption(rows, frequency_hz) {
+    var len = vec_len(rows);
+    if (len == 0) { return 0; }
+    var nrows = len / 2;
+    var f0 = vec_get(rows, 0);
+    var a0 = vec_get(rows, 1);
+    if (nrows == 1) { return f64_clamp(a0, 0, F64_ONE); }
+    if (f64_le(frequency_hz, f0) == 1) { return f64_clamp(a0, 0, F64_ONE); }
+    var last_f = vec_get(rows, (nrows - 1) * 2);
+    var last_a = vec_get(rows, (nrows - 1) * 2 + 1);
+    if (f64_ge(frequency_hz, last_f) == 1) { return f64_clamp(last_a, 0, F64_ONE); }
+
+    var i = 0;
+    while (i < nrows - 1) {
+        var f_a = vec_get(rows, i * 2);
+        var a_a = vec_get(rows, i * 2 + 1);
+        var f_b = vec_get(rows, (i + 1) * 2);
+        var a_b = vec_get(rows, (i + 1) * 2 + 1);
+        # if frequency_hz >= f_a && frequency_hz <= f_b  (sequential ifs)
+        if (f64_ge(frequency_hz, f_a) == 1) {
+            if (f64_le(frequency_hz, f_b) == 1) {
+                var span = f64_max(f64_sub(f_b, f_a), GOONJ_EPSILON);
+                var frac = f64_div(f64_sub(frequency_hz, f_a), span);
+                var val = f64_add(a_a, f64_mul(f64_sub(a_b, a_a), frac));
+                return f64_clamp(val, 0, F64_ONE);
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ================================================================
+# Metamaterial queries
+# ================================================================
+# Absorption coefficient at frequency_hz, in 0..1.
+#must_use
+fn metamaterial_absorption_at(m, frequency_hz) {
+    var tag = load64(m + MM_TAG);
+    if (tag == MM_NEG_STIFFNESS) {
+        var k = lorentzian_evaluate(load64(m + MM_A), frequency_hz);
+        var rho = load64(m + MM_B);
+        return _mm_impedance_absorption(MmComplex_re(k), MmComplex_im(k), rho, 0);
+    }
+    if (tag == MM_NEG_DENSITY) {
+        var k_modulus = load64(m + MM_B);
+        var rho = lorentzian_evaluate(load64(m + MM_A), frequency_hz);
+        return _mm_impedance_absorption(k_modulus, 0, MmComplex_re(rho), MmComplex_im(rho));
+    }
+    if (tag == MM_DOUBLY_NEGATIVE) {
+        var k = lorentzian_evaluate(load64(m + MM_A), frequency_hz);
+        var rho = lorentzian_evaluate(load64(m + MM_B), frequency_hz);
+        return _mm_impedance_absorption(MmComplex_re(k), MmComplex_im(k), MmComplex_re(rho), MmComplex_im(rho));
+    }
+    # MM_LOOKUP_TABLE
+    return _mm_lookup_absorption(load64(m + MM_A), frequency_hz);
+}
+
+# Absorption coefficients for the 8 ISO octave bands (63-8000 Hz).
+# Returns a pointer to an inline 8*f64 buffer.
+#must_use
+fn metamaterial_absorption_bands(m) {
+    var buf = alloc(NUM_BANDS * 8);
+    var band = 0;
+    while (band < NUM_BANDS) {
+        store64(buf + band * 8, metamaterial_absorption_at(m, frequency_band(band)));
+        band = band + 1;
+    }
+    return buf;
+}
+
+# Convert to an AcousticMaterial for use as a wall material.
+# Returns the material pointer, or 0 on the Result::Err path (invalid params).
+#must_use
+fn metamaterial_to_acoustic_material(m, name, scattering) {
+    var bands = metamaterial_absorption_bands(m);
+    return acoustic_material_new(name, bands, scattering);
+}

@@ -1,0 +1,263 @@
+# underwater.cyr -- underwater (ocean) acoustics: Mackenzie sound speed,
+# Francois-Garrison absorption, Rayleigh bottom reflection, and Eckart
+# sea-surface scattering loss.
+#
+# Ports rust-old/src/underwater.rs. f32 -> f64 throughout. Rust's `serde`
+# derive is dropped (no serde in Cyrius); the serde round-trip test is
+# omitted. The `[f32; NUM_BANDS]` band-absorption return becomes an inline
+# 8xf64 buffer (alloc), matching material.cyr's fixed-array idiom.
+#
+# Self-contained: no `include` lines. Relies on error.cyr (GOONJ_EPSILON),
+# material.cyr (NUM_BANDS, frequency_band) and stdlib math/ganita
+# (F64_PI, F64_ONE, F64_TWO, F64_HALF, F64_LN10, f64_pow/exp/ln/sqrt/sin/cos)
+# being present in the build/test unit.
+
+# ================================================================
+# Constants (f64 bit patterns; decimal in comments for traceability)
+# ================================================================
+
+# Mackenzie (1981) nine-term sound-speed coefficients.
+var MACK_C0     = 0x4096A3D70A3D70A4;   # 1448.96
+var MACK_C1     = 0x40125D2F1A9FBE77;   # 4.591
+var MACK_C2     = 0x3FAB280F12C27A63;   # 0.05304
+var MACK_C3     = 0x3F2F1DD278DE382F;   # 0.0002374
+var MACK_C4     = 0x3FF570A3D70A3D71;   # 1.34
+var MACK_C5     = 0x3F90B0F27BB2FEC5;   # 0.0163
+var MACK_C6     = 0x3E867B4194CAD2CD;   # 1.675e-7
+var MACK_C7     = 0x3F84FDF3B645A1CB;   # 0.01025
+var MACK_C8     = 0x3D691E3D5303DC48;   # 7.139e-13
+
+# Francois-Garrison (1982) absorption coefficients.
+var UW_KELVIN   = 0x4071126666666666;   # 273.15  C -> K
+var P_C1        = 0x3F21F4F50A02B841;   # 1.37e-4  pressure-factor linear term
+var P_C2        = 0x3E3AA0F8DB08FFCD;   # 6.2e-9   pressure-factor quadratic term
+var BORIC_886   = 0x4021B851EB851EB8;   # 8.86     boric-acid magnitude
+var BORIC_078   = 0x3FE8F5C28F5C28F6;   # 0.78     boric-acid salinity exponent
+var BORIC_28    = 0x4006666666666666;   # 2.8      boric relaxation magnitude
+var MG_2144     = 0x403570A3D70A3D71;   # 21.44    MgSO4 magnitude
+var MG_0025     = 0x3F9999999999999A;   # 0.025    MgSO4 temperature term
+var MG_817      = 0x4020570A3D70A3D7;   # 8.17     MgSO4 relaxation magnitude
+var MG_00018    = 0x3F5D7DBF487FCB92;   # 0.0018   MgSO4 salinity correction
+var PW_LO_0     = 0x3F402D74AD510683;   # 4.937e-4 pure-water visc, T<=20 const
+var PW_LO_1     = 0x3EFB287A728CE556;   # 2.59e-5  pure-water visc, T<=20 linear
+var PW_LO_2     = 0x3EAE916E2F911ACE;   # 9.11e-7  pure-water visc, T<=20 quadratic
+var PW_LO_3     = 0x3E501B2B29A4692B;   # 1.50e-8  pure-water visc, T<=20 cubic
+var PW_HI_0     = 0x3F39FA7D09401AA2;   # 3.964e-4 pure-water visc, T>20 const
+var PW_HI_1     = 0x3EE8088A682354EF;   # 1.146e-5 pure-water visc, T>20 linear
+var PW_HI_2     = 0x3E8376297CFBFF14;   # 1.45e-7  pure-water visc, T>20 quadratic
+var PW_HI_3     = 0x3E065575E0FF4A28;   # 6.5e-10  pure-water visc, T>20 cubic
+
+# Eckart sea-surface scattering: coherent-energy floor before capping.
+var E_NEG10     = 0x3DDB7CDFD9D7BDBB;   # 1e-10
+
+# Hamilton (1980) sediment attenuation (dB per wavelength).
+var SAND_ATTEN  = 0x3FEC28F5C28F5C29;   # 0.88
+var SILT_ATTEN  = 0x3FF0CCCCCCCCCCCD;   # 1.05
+var CLAY_ATTEN  = 0x3FC999999999999A;   # 0.20
+var ROCK_ATTEN  = 0x3FB999999999999A;   # 0.10
+
+# log10(x) = ln(x) / ln(10)
+fn _uw_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
+
+# ================================================================
+# OceanProfile -- ocean sound-speed profile parameters.
+# ================================================================
+#derive(accessors)
+struct OceanProfile { temperature_celsius; salinity_ppt; depth_m; }
+
+#must_use
+fn ocean_profile_new(temperature_celsius, salinity_ppt, depth_m) {
+    var p = alloc(sizeof(OceanProfile));
+    OceanProfile_set_temperature_celsius(p, temperature_celsius);
+    OceanProfile_set_salinity_ppt(p, salinity_ppt);
+    OceanProfile_set_depth_m(p, depth_m);
+    return p;
+}
+
+# Sound speed in seawater via the Mackenzie (1981) nine-term equation.
+# Valid: T = 2-30 C, S = 25-40 ppt, D = 0-8000 m (+/-0.07 m/s).
+#must_use
+fn ocean_sound_speed(profile) {
+    var t = OceanProfile_temperature_celsius(profile);
+    var s = OceanProfile_salinity_ppt(profile);
+    var d = OceanProfile_depth_m(profile);
+
+    var t2 = f64_mul(t, t);
+    var t3 = f64_mul(t2, t);
+    var s_rel = f64_sub(s, f64_from(35));
+    var d2 = f64_mul(d, d);
+    var d3 = f64_mul(d2, d);
+
+    # 1448.96 + 4.591*t - 0.05304*t^2 + 0.0002374*t^3 + 1.340*(s-35)
+    #   + 0.01630*d + 1.675e-7*d^2 - 0.01025*t*(s-35) - 7.139e-13*t*d^3
+    var c = MACK_C0;
+    c = f64_add(c, f64_mul(MACK_C1, t));
+    c = f64_sub(c, f64_mul(MACK_C2, t2));
+    c = f64_add(c, f64_mul(MACK_C3, t3));
+    c = f64_add(c, f64_mul(MACK_C4, s_rel));
+    c = f64_add(c, f64_mul(MACK_C5, d));
+    c = f64_add(c, f64_mul(MACK_C6, d2));
+    c = f64_sub(c, f64_mul(MACK_C7, f64_mul(t, s_rel)));
+    c = f64_sub(c, f64_mul(MACK_C8, f64_mul(t, d3)));
+    return c;
+}
+
+# Sound speed at depth via a linear-thermocline model: a constant-temperature
+# surface mixed layer transitioning to a linear gradient below it.
+#must_use
+fn ocean_speed_at_depth(surface, thermocline_gradient, mixed_layer_depth, depth) {
+    var temp = OceanProfile_temperature_celsius(surface);
+    if (f64_gt(depth, mixed_layer_depth) == 1) {
+        temp = f64_add(temp, f64_mul(thermocline_gradient, f64_sub(depth, mixed_layer_depth)));
+    }
+    var clamped = f64_max(temp, f64_neg(F64_TWO));
+    var p = ocean_profile_new(clamped, OceanProfile_salinity_ppt(surface), depth);
+    return ocean_sound_speed(p);
+}
+
+# Acoustic absorption in seawater (dB/km) via the Francois-Garrison (1982)
+# model: boric-acid + magnesium-sulphate relaxation + pure-water viscosity.
+# Valid: 100 Hz-1 MHz, T = -6-35 C, S = 7.7-43 ppt, D = 0-7000 m.
+#must_use
+fn ocean_absorption_db_per_km(frequency_hz, profile) {
+    if (f64_le(frequency_hz, 0) == 1) { return 0; }
+
+    var t = OceanProfile_temperature_celsius(profile);
+    var s = OceanProfile_salinity_ppt(profile);
+    var d = OceanProfile_depth_m(profile);
+    var f = f64_div(frequency_hz, f64_from(1000));   # kHz
+    var f2 = f64_mul(f, f);
+
+    var t_kelvin = f64_add(t, UW_KELVIN);
+    var c = ocean_sound_speed(profile);
+
+    # Pressure factor (depth dependent): 1 - 1.37e-4*d + 6.2e-9*d^2.
+    var p_factor = f64_add(f64_sub(F64_ONE, f64_mul(P_C1, d)), f64_mul(P_C2, f64_mul(d, d)));
+
+    # Boric acid contribution (low frequency, < 1 kHz).
+    var s_ratio = f64_div(s, f64_from(35));
+    var a1_exp = f64_sub(f64_mul(BORIC_078, _uw_log10(s_ratio)), f64_from(5));
+    var a1 = f64_mul(f64_div(BORIC_886, c), f64_pow(f64_from(10), a1_exp));
+    var f1_exp = f64_sub(f64_from(4), f64_div(f64_from(1245), t_kelvin));
+    var f1 = f64_mul(f64_mul(BORIC_28, f64_sqrt(s_ratio)), f64_pow(f64_from(10), f1_exp));
+    var boric_inner = f64_div(f64_mul(f64_mul(a1, f1), f2), f64_add(f64_mul(f1, f1), f2));
+    var boric = f64_mul(boric_inner, p_factor);
+
+    # Magnesium sulphate contribution (mid frequency, 1-100 kHz).
+    var a2 = f64_mul(f64_div(f64_mul(MG_2144, s), c), f64_add(F64_ONE, f64_mul(MG_0025, t)));
+    var f2r_exp = f64_sub(f64_from(8), f64_div(f64_from(1990), t_kelvin));
+    var f2r_num = f64_mul(MG_817, f64_pow(f64_from(10), f2r_exp));
+    var f2r_den = f64_add(F64_ONE, f64_mul(MG_00018, f64_sub(s, f64_from(35))));
+    var f2_relax = f64_div(f2r_num, f2r_den);
+    var mg_inner = f64_div(f64_mul(f64_mul(a2, f2_relax), f2), f64_add(f64_mul(f2_relax, f2_relax), f2));
+    var mgso4 = f64_mul(mg_inner, p_factor);
+
+    # Pure water viscous absorption (high frequency, > 100 kHz).
+    var t2 = f64_mul(t, t);
+    var t3 = f64_mul(t2, t);
+    var a3 = 0;
+    if (f64_le(t, f64_from(20)) == 1) {
+        a3 = f64_sub(f64_add(f64_sub(PW_LO_0, f64_mul(PW_LO_1, t)),
+        f64_mul(PW_LO_2, t2)), f64_mul(PW_LO_3, t3));
+    } else {
+        a3 = f64_sub(f64_add(f64_sub(PW_HI_0, f64_mul(PW_HI_1, t)),
+        f64_mul(PW_HI_2, t2)), f64_mul(PW_HI_3, t3));
+    }
+    var pure_water = f64_mul(f64_mul(a3, f2), p_factor);
+
+    return f64_max(f64_add(f64_add(boric, mgso4), pure_water), 0);
+}
+
+# Per-band ocean absorption (dB/km) -> inline 8xf64 buffer (NUM_BANDS slots),
+# using material.cyr's octave-band centre frequencies.
+#must_use
+fn ocean_absorption_bands(profile) {
+    var out = alloc(NUM_BANDS * 8);
+    var band = 0;
+    while (band < NUM_BANDS) {
+        store64(out + band * 8, ocean_absorption_db_per_km(frequency_band(band), profile));
+        band = band + 1;
+    }
+    return out;
+}
+
+# ================================================================
+# SeabedSediment -- bottom sediment properties for reflection.
+# ================================================================
+#derive(accessors)
+struct SeabedSediment { speed; density; attenuation_db_per_wavelength; }
+
+#must_use
+fn seabed_sediment_new(speed, density, attenuation_db_per_wavelength) {
+    var sed = alloc(sizeof(SeabedSediment));
+    SeabedSediment_set_speed(sed, speed);
+    SeabedSediment_set_density(sed, density);
+    SeabedSediment_set_attenuation_db_per_wavelength(sed, attenuation_db_per_wavelength);
+    return sed;
+}
+
+# Hamilton (1980) presets.
+#must_use
+fn seabed_sand() { return seabed_sediment_new(f64_from(1749), f64_from(1941), SAND_ATTEN); }
+#must_use
+fn seabed_silt() { return seabed_sediment_new(f64_from(1575), f64_from(1740), SILT_ATTEN); }
+#must_use
+fn seabed_clay() { return seabed_sediment_new(f64_from(1500), f64_from(1500), CLAY_ATTEN); }
+#must_use
+fn seabed_rock() { return seabed_sediment_new(f64_from(5250), f64_from(2700), ROCK_ATTEN); }
+
+# Bottom reflection coefficient magnitude (0..1) via the Rayleigh model.
+#   R = (m*sin(theta) - n) / (m*sin(theta) + n)
+# with m = rho_sed/rho_water and n = sqrt(1 - cos^2(theta) / (c_water/c_sed)^2).
+#must_use
+fn bottom_reflection_coefficient(grazing_angle_rad, water_speed, water_density, sediment) {
+    if (f64_le(water_speed, 0) == 1) { return F64_ONE; }
+    if (f64_le(water_density, 0) == 1) { return F64_ONE; }
+    if (f64_le(SeabedSediment_speed(sediment), 0) == 1) { return F64_ONE; }
+    if (f64_le(SeabedSediment_density(sediment), 0) == 1) { return F64_ONE; }
+
+    var sin_theta = f64_sin(grazing_angle_rad);
+    var cos_theta = f64_cos(grazing_angle_rad);
+
+    var m = f64_div(SeabedSediment_density(sediment), water_density);
+    var speed_ratio = f64_div(water_speed, SeabedSediment_speed(sediment));
+    var speed_ratio2 = f64_mul(speed_ratio, speed_ratio);
+
+    # n = sqrt(1 - (c_sed/c_water)^2 * cos^2(theta)) -- refracted-angle term.
+    var inner = f64_sub(F64_ONE, f64_div(f64_mul(cos_theta, cos_theta), speed_ratio2));
+    if (f64_lt(inner, 0) == 1) {
+        # Total internal reflection (critical angle exceeded).
+        return F64_ONE;
+    }
+    var n = f64_sqrt(inner);
+
+    var num = f64_abs(f64_sub(f64_mul(m, sin_theta), n));
+    var den = f64_add(f64_mul(m, sin_theta), n);
+    if (f64_lt(f64_abs(den), GOONJ_EPSILON) == 1) { return F64_ONE; }
+
+    return f64_clamp(f64_div(num, den), 0, F64_ONE);
+}
+
+# Sea-surface scattering loss (dB) due to wave roughness, via the Eckart model:
+# loss grows with frequency and RMS wave height.
+#must_use
+fn surface_scattering_loss(frequency_hz, grazing_angle_rad, rms_wave_height, water_speed) {
+    if (f64_le(frequency_hz, 0) == 1) { return 0; }
+    if (f64_le(rms_wave_height, 0) == 1) { return 0; }
+    if (f64_le(water_speed, 0) == 1) { return 0; }
+
+    var wavelength = f64_div(water_speed, frequency_hz);
+    var sin_theta = f64_abs(f64_sin(grazing_angle_rad));
+
+    # Rayleigh roughness parameter: R = 4*pi*h_rms*sin(theta) / lambda.
+    var roughness = f64_div(
+    f64_mul(f64_mul(f64_mul(f64_from(4), F64_PI), rms_wave_height), sin_theta), wavelength);
+
+    # Eckart model: scattering loss ~ exp(-R^2/2) -> dB.
+    var coherent = f64_exp(f64_div(f64_neg(f64_mul(roughness, roughness)), F64_TWO));
+    if (f64_lt(coherent, E_NEG10) == 1) {
+        # Cap at 100 dB loss.
+        return f64_from(100);
+    }
+    return f64_mul(f64_neg(f64_from(20)), _uw_log10(coherent));
+}

@@ -1,0 +1,249 @@
+# fdn.cyr -- Feedback Delay Network (FDN) for late-reverberation synthesis.
+#
+# Ports rust-old/src/fdn.rs. f32 -> f64 throughout. Rust's serde derive on
+# FdnConfig is dropped (no serde in Cyrius). The nested `Vec<Vec<f32>>`
+# delay lines become a stdlib `vec` of `vec` handles; the `Vec<u32>` /
+# `Vec<f32>` / `Vec<usize>` fields are stdlib `vec`s holding the value
+# directly in each 8-byte slot (f64 as its bit pattern, counts as ints).
+# Methods become free `fdn_*` functions taking the struct pointer.
+#
+# Requires (from the build/test unit): stdlib alloc/vec (alloc_init, vec_*),
+# math/ganita (F64_ONE/TWO/HALF, f64_*), and propagation.cyr
+# (speed_of_sound). The module file itself has no `include` lines.
+
+# ================================================================
+# FdnConfig -- reverberator configuration.
+#   num_delays     : delay-line count (usize)
+#   delay_lengths  : vec<u32> delay lengths in samples (one per line)
+#   feedback_gains : vec<f32> per-line absorption gains (empty = auto)
+#   sample_rate    : u32 Hz
+#   target_rt60    : f32 seconds (used when feedback_gains is empty)
+# ================================================================
+#derive(accessors)
+struct FdnConfig { num_delays; delay_lengths; feedback_gains; sample_rate; target_rt60; }
+
+# ================================================================
+# Fdn -- N parallel delay lines + Householder feedback matrix.
+#   delay_lines     : vec of vec<f32> ring buffers
+#   write_positions : vec<usize> per-line write cursor
+#   feedback_gains  : vec<f32> per-line gains
+#   scratch         : vec<f32> per-sample read buffer (no per-sample alloc)
+#   sample_rate     : u32 Hz (retained; unused in processing, as in Rust)
+# ================================================================
+#derive(accessors)
+struct Fdn { delay_lines; write_positions; feedback_gains; scratch; sample_rate; }
+
+# ================================================================
+# fdn_config_for_room -- 8-line FDN config from room dimensions.
+# ================================================================
+
+# Samples for one base delay: (2.0 * d / c * sample_rate) as u32, min 1.
+fn _delay_samples(d, c, sample_rate) {
+    var samples_f = f64_mul(f64_div(f64_mul(F64_TWO, d), c), f64_from(sample_rate));
+    var samples = f64_to(samples_f);
+    if (samples < 1) { samples = 1; }
+    return samples;
+}
+
+# FDN config for a shoebox room: 8 delay lines whose lengths approximate
+# the room's modal round-trip times. Mirrors fdn_config_for_room.
+#must_use
+fn fdn_config_for_room(length, width, height, rt60, sample_rate) {
+    var c = speed_of_sound(f64_from(20));
+
+    # base_delays[0..8] from Rust (round-trip distances per dimension/combo).
+    var d0 = length;
+    var d1 = width;
+    var d2 = height;
+    var d3 = f64_mul(f64_add(length, width), F64_HALF);
+    var d4 = f64_mul(f64_add(length, height), F64_HALF);
+    var d5 = f64_mul(f64_add(width, height), F64_HALF);
+    var d6 = f64_div(f64_add(f64_add(length, width), height), f64_from(3));
+    var d7 = f64_max(f64_max(length, width), height);
+
+    var delay_lengths = vec_new();
+    vec_push(delay_lengths, _delay_samples(d0, c, sample_rate));
+    vec_push(delay_lengths, _delay_samples(d1, c, sample_rate));
+    vec_push(delay_lengths, _delay_samples(d2, c, sample_rate));
+    vec_push(delay_lengths, _delay_samples(d3, c, sample_rate));
+    vec_push(delay_lengths, _delay_samples(d4, c, sample_rate));
+    vec_push(delay_lengths, _delay_samples(d5, c, sample_rate));
+    vec_push(delay_lengths, _delay_samples(d6, c, sample_rate));
+    vec_push(delay_lengths, _delay_samples(d7, c, sample_rate));
+
+    var config = alloc(sizeof(FdnConfig));
+    FdnConfig_set_num_delays(config, 8);
+    FdnConfig_set_delay_lengths(config, delay_lengths);
+    FdnConfig_set_feedback_gains(config, vec_new());
+    FdnConfig_set_sample_rate(config, sample_rate);
+    FdnConfig_set_target_rt60(config, rt60);
+    return config;
+}
+
+# ================================================================
+# fdn_new -- build an FDN from configuration.
+# ================================================================
+#must_use
+fn fdn_new(config) {
+    var n = FdnConfig_num_delays(config);
+    var delay_lengths = FdnConfig_delay_lengths(config);
+    var dl_len = vec_len(delay_lengths);
+    var sample_rate = FdnConfig_sample_rate(config);
+    var target_rt60 = FdnConfig_target_rt60(config);
+    var cfg_gains = FdnConfig_feedback_gains(config);
+
+    # .take(n) on delay_lengths == min(n, dl_len).
+    var take = n;
+    if (dl_len < take) { take = dl_len; }
+
+    # delay_lines: vec![0.0; len.max(1)] per taken delay length.
+    var delay_lines = vec_new();
+    var i = 0;
+    while (i < take) {
+        var len = vec_get(delay_lengths, i);
+        if (len < 1) { len = 1; }
+        var line = vec_new();
+        var j = 0;
+        while (j < len) {
+            vec_push(line, 0);
+            j = j + 1;
+        }
+        vec_push(delay_lines, line);
+        i = i + 1;
+    }
+
+    # feedback_gains: use config gains if it supplies >= n; else from RT60.
+    var feedback_gains = vec_new();
+    if (vec_len(cfg_gains) >= n) {
+        var k = 0;
+        while (k < n) {
+            vec_push(feedback_gains, vec_get(cfg_gains, k));
+            k = k + 1;
+        }
+    } else {
+        # gain = 10^(-3 * delay_time / RT60), delay_time = len / max(sr, 1).
+        var sr = sample_rate;
+        if (sr < 1) { sr = 1; }
+        var g = 0;
+        while (g < take) {
+            var glen = vec_get(delay_lengths, g);
+            var delay_time = f64_div(f64_from(glen), f64_from(sr));
+            var gain = 0;
+            if (f64_gt(target_rt60, 0) == 1) {
+                var expo = f64_div(f64_mul(f64_neg(f64_from(3)), delay_time), target_rt60);
+                gain = f64_pow(f64_from(10), expo);
+            }
+            vec_push(feedback_gains, gain);
+            g = g + 1;
+        }
+    }
+
+    # write_positions = vec![0; n], scratch = vec![0.0; n].
+    var write_positions = vec_new();
+    var scratch = vec_new();
+    var p = 0;
+    while (p < n) {
+        vec_push(write_positions, 0);
+        vec_push(scratch, 0);
+        p = p + 1;
+    }
+
+    var fdn = alloc(sizeof(Fdn));
+    Fdn_set_delay_lines(fdn, delay_lines);
+    Fdn_set_write_positions(fdn, write_positions);
+    Fdn_set_feedback_gains(fdn, feedback_gains);
+    Fdn_set_scratch(fdn, scratch);
+    Fdn_set_sample_rate(fdn, sample_rate);
+    return fdn;
+}
+
+# ================================================================
+# fdn_process_sample -- one input sample -> mixed output.
+# Householder feedback matrix (all-pass, energy preserving); no per-sample
+# allocation (reuses the scratch buffer). Not #must_use: callers legitimately
+# discard the return when only advancing internal delay-line state (warmup).
+# ================================================================
+fn fdn_process_sample(fdn, input) {
+    var delay_lines = Fdn_delay_lines(fdn);
+    var n = vec_len(delay_lines);
+    if (n == 0) { return input; }
+
+    var write_positions = Fdn_write_positions(fdn);
+    var scratch = Fdn_scratch(fdn);
+    var feedback_gains = Fdn_feedback_gains(fdn);
+
+    # Read each delay line into scratch; accumulate the output sum.
+    var output_sum = 0;
+    var i = 0;
+    while (i < n) {
+        var line = vec_get(delay_lines, i);
+        var len = vec_len(line);
+        var read_pos = (vec_get(write_positions, i) + 1) % len;
+        var s = vec_get(line, read_pos);
+        vec_set(scratch, i, s);
+        output_sum = f64_add(output_sum, s);
+        i = i + 1;
+    }
+
+    # Householder feedback: factor = 2/n, correction = factor * sum.
+    var factor = f64_div(F64_TWO, f64_from(n));
+    var correction = f64_mul(factor, output_sum);
+    var input_per_line = f64_div(input, f64_from(n));
+
+    i = 0;
+    while (i < n) {
+        var fb = f64_sub(vec_get(scratch, i), correction);
+        var line = vec_get(delay_lines, i);
+        var len = vec_len(line);
+        var wp = vec_get(write_positions, i);
+        var written = f64_add(input_per_line, f64_mul(fb, vec_get(feedback_gains, i)));
+        vec_set(line, wp, written);
+        vec_set(write_positions, i, (wp + 1) % len);
+        i = i + 1;
+    }
+
+    # Normalized output: output_sum / sqrt(n).
+    return f64_div(output_sum, f64_sqrt(f64_from(n)));
+}
+
+# ================================================================
+# fdn_process_buffer -- map process_sample over a vec of input samples.
+# ================================================================
+#must_use
+fn fdn_process_buffer(fdn, input) {
+    var out = vec_new();
+    var n = vec_len(input);
+    var i = 0;
+    while (i < n) {
+        vec_push(out, fdn_process_sample(fdn, vec_get(input, i)));
+        i = i + 1;
+    }
+    return out;
+}
+
+# ================================================================
+# fdn_reset -- clear all delay lines to silence and rewind every cursor.
+# ================================================================
+fn fdn_reset(fdn) {
+    var delay_lines = Fdn_delay_lines(fdn);
+    var n = vec_len(delay_lines);
+    var i = 0;
+    while (i < n) {
+        var line = vec_get(delay_lines, i);
+        var len = vec_len(line);
+        var j = 0;
+        while (j < len) {
+            vec_set(line, j, 0);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    var write_positions = Fdn_write_positions(fdn);
+    var m = vec_len(write_positions);
+    var k = 0;
+    while (k < m) {
+        vec_set(write_positions, k, 0);
+        k = k + 1;
+    }
+    return 0;
+}

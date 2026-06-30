@@ -1,0 +1,113 @@
+# diffusion.tcyr -- parity tests for src/diffusion.cyr
+# Ported from the #[test] blocks in rust-old/src/diffusion.rs.
+# (simple_config uses propagation::speed_of_sound(20), so propagation +
+# hisab are included.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/propagation.cyr"
+include "src/diffusion.cyr"
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# Shared config: dx=0.5, dt=0.001, 20x16 grid, c(20C), mfp=4, max_time=0.1.
+fn simple_config() {
+    return diffusion_config_new(
+    F64_HALF,                            # dx = 0.5
+    f64_div(F64_ONE, f64_from(1000)),    # dt = 0.001
+    20, 16,                              # nx, ny
+    speed_of_sound(f64_from(20)),        # speed of sound at 20 C
+    f64_from(4),                         # mean free path = 4
+    f64_div(F64_ONE, f64_from(10)));     # max_time = 0.1
+}
+
+# Alloc an n-element f64 buffer filled with `val`.
+fn buf_fill(n, val) {
+    var b = alloc(n * 8);
+    var i = 0;
+    while (i < n) { store64(b + i * 8, val); i = i + 1; }
+    return b;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("diffusion_produces_output");
+var cfg1 = simple_config();
+var n1 = DiffusionConfig_nx(cfg1) * DiffusionConfig_ny(cfg1);
+var abs1 = buf_fill(n1, f64_div(F64_ONE, f64_from(10)));   # 0.1
+var src1 = buf_fill(n1, 0);
+var centre1 = (DiffusionConfig_ny(cfg1) / 2) * DiffusionConfig_nx(cfg1) + DiffusionConfig_nx(cfg1) / 2;
+store64(src1 + centre1 * 8, F64_ONE);                      # centre source = 1.0
+var res1 = solve_diffusion_2d(cfg1, abs1, n1, src1, n1);
+assert_eq(vec_len(DiffusionResult_energy_density(res1)), n1, "energy_density length == n");
+assert(DiffusionResult_time_steps(res1) > 0, "time_steps > 0");
+
+# ================================================================
+test_group("diffusion_energy_spreads");
+var cfg2 = simple_config();
+var nx2 = DiffusionConfig_nx(cfg2);
+var n2 = nx2 * DiffusionConfig_ny(cfg2);
+var abs2 = buf_fill(n2, 0);                                # no absorption
+var src2 = buf_fill(n2, 0);
+var centre2 = (DiffusionConfig_ny(cfg2) / 2) * nx2 + nx2 / 2;
+store64(src2 + centre2 * 8, F64_ONE);
+var res2 = solve_diffusion_2d(cfg2, abs2, n2, src2, n2);
+var ed2 = DiffusionResult_energy_density(res2);
+# Energy should spread beyond the centre (4-neighbourhood).
+var spread = 0;
+if (f64_gt(vec_get(ed2, centre2 - 1), 0) == 1) { spread = 1; }
+if (f64_gt(vec_get(ed2, centre2 + 1), 0) == 1) { spread = 1; }
+if (f64_gt(vec_get(ed2, centre2 - nx2), 0) == 1) { spread = 1; }
+if (f64_gt(vec_get(ed2, centre2 + nx2), 0) == 1) { spread = 1; }
+assert(spread, "energy diffuses to neighbouring cells");
+
+# ================================================================
+test_group("diffusion_energy_non_negative");
+var cfg3 = simple_config();
+var nx3 = DiffusionConfig_nx(cfg3);
+var n3 = nx3 * DiffusionConfig_ny(cfg3);
+var abs3 = buf_fill(n3, F64_HALF);                         # absorption 0.5
+var src3 = buf_fill(n3, 0);
+var centre3 = (DiffusionConfig_ny(cfg3) / 2) * nx3 + nx3 / 2;
+store64(src3 + centre3 * 8, F64_ONE);
+var res3 = solve_diffusion_2d(cfg3, abs3, n3, src3, n3);
+var ed3 = DiffusionResult_energy_density(res3);
+var nonneg = 1;
+var k = 0;
+while (k < n3) {
+    if (f64_lt(vec_get(ed3, k), 0) == 1) { nonneg = 0; }
+    k = k + 1;
+}
+assert(nonneg, "energy density non-negative");
+
+# ================================================================
+test_group("diffusion_invalid_config");
+# dx = 0 -> invalid config -> 0 steps.
+var cfg4 = diffusion_config_new(0, f64_div(F64_ONE, f64_from(1000)), 10, 10,
+f64_from(343), f64_from(4), f64_div(F64_ONE, f64_from(10)));
+var res4 = solve_diffusion_2d(cfg4, 0, 0, 0, 0);
+assert_eq(DiffusionResult_time_steps(res4), 0, "invalid config -> 0 steps");
+
+# ================================================================
+test_group("diffusion_zero_speed_of_sound_returns_empty");
+var cfg5 = diffusion_config_new(F64_HALF, f64_div(F64_ONE, f64_from(1000)), 10, 10,
+0, f64_from(4), f64_div(F64_ONE, f64_from(10)));
+var res5 = solve_diffusion_2d(cfg5, 0, 0, 0, 0);
+assert_eq(DiffusionResult_time_steps(res5), 0, "zero speed -> 0 steps");
+var ed5 = DiffusionResult_energy_density(res5);
+var alln0 = 1;
+var m = 0;
+var n5 = vec_len(ed5);
+while (m < n5) {
+    if (f64_to(vec_get(ed5, m)) != 0) { alln0 = 0; }
+    m = m + 1;
+}
+assert(alln0, "all energy density == 0");
+
+var rc = assert_summary();
+syscall(60, rc);

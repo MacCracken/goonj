@@ -1,0 +1,99 @@
+# udfa.tcyr -- parity tests for src/udfa.cyr
+# Ported from the #[test] blocks in rust-old/src/udfa.rs.
+# (filter_serializes omitted -- no serde in Cyrius.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/udfa.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# Sum of all 8 attenuation bands (signed dB).
+fn df_atten_sum(f) {
+    var s = 0;
+    var i = 0;
+    while (i < NUM_BANDS) { s = f64_add(s, df_attenuation_band(f, i)); i = i + 1; }
+    return s;
+}
+
+# Sum of |attenuation| across all 8 bands.
+fn df_atten_abs_sum(f) {
+    var s = 0;
+    var i = 0;
+    while (i < NUM_BANDS) { s = f64_add(s, f64_abs(df_attenuation_band(f, i))); i = i + 1; }
+    return s;
+}
+
+# 1 if every attenuation band is ~0.
+fn all_atten_zero(f) {
+    var i = 0;
+    while (i < NUM_BANDS) {
+        if (approx(df_attenuation_band(f, i), 0, TOL_1E3) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("zero_path_diff_no_attenuation");
+# path_difference = 0 -> no attenuation, no delay.
+var fz = compute_diffraction_filter(0, F64_ONE, f64_from(20));
+assert(all_atten_zero(fz), "zero path diff -> all bands 0");
+assert_eq(f64_to(df_delay_seconds(fz)), 0, "zero path diff -> delay 0");
+
+# ================================================================
+test_group("attenuation_increases_with_frequency");
+# Higher bands should be more attenuated (more negative).
+var ff = compute_diffraction_filter(F64_HALF, F64_TWO, f64_from(20));
+assert(f64_lt(df_attenuation_band(ff, 7), df_attenuation_band(ff, 0)), "8kHz more attenuated than 63Hz");
+
+# ================================================================
+test_group("attenuation_increases_with_path_diff");
+# Larger path difference -> more total attenuation (more negative sum).
+var small = compute_diffraction_filter(f64_div(F64_ONE, f64_from(10)), F64_TWO, f64_from(20));
+var large = compute_diffraction_filter(F64_TWO, F64_TWO, f64_from(20));
+assert(f64_lt(df_atten_sum(large), df_atten_sum(small)), "larger path diff -> more attenuation");
+
+# ================================================================
+test_group("chain_filters_accumulates");
+var f1 = compute_diffraction_filter(F64_HALF, F64_TWO, f64_from(20));
+var f2 = compute_diffraction_filter(f64_div(f64_from(3), f64_from(10)), f64_div(f64_from(3), F64_TWO), f64_from(20));
+var fv = vec_new();
+vec_push(fv, f1);
+vec_push(fv, f2);
+var chained = chain_diffraction_filters(fv);
+var band = 0;
+while (band < NUM_BANDS) {
+    var expected = f64_add(df_attenuation_band(f1, band), df_attenuation_band(f2, band));
+    assert(approx(df_attenuation_band(chained, band), expected, TOL_1E2), "chained attenuation sums");
+    band = band + 1;
+}
+var delay_sum = f64_add(df_delay_seconds(f1), df_delay_seconds(f2));
+assert(approx(df_delay_seconds(chained), delay_sum, TOL_1E3), "chained delay sums");
+
+# ================================================================
+test_group("chain_empty_returns_zero");
+var ev = vec_new();
+var fe = chain_diffraction_filters(ev);
+assert(all_atten_zero(fe), "empty chain -> all bands 0");
+
+# ================================================================
+test_group("finite_edge_reduces_loss");
+# Short edge -> less diffraction loss (attenuation closer to 0).
+var infinite = compute_diffraction_filter(F64_HALF, f64_from(100), f64_from(20));
+var finite = compute_diffraction_filter(F64_HALF, F64_HALF, f64_from(20));
+assert(f64_lt(df_atten_abs_sum(finite), df_atten_abs_sum(infinite)), "finite edge has less loss");
+
+var rc = assert_summary();
+syscall(60, rc);

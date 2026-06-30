@@ -36,6 +36,14 @@ milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md
   `schroeder_frequency`, `modal_density`. 15 parity assertions in
   `tests/resonance.tcyr`, all green. Establishes the `Vec<T>` dynamic-array
   idiom for the rest of the port.
+- **L2 spine (13 modules)** — `hybrid`, `directivity`, `metamaterial`, `room`,
+  `fdn`, `gfpe`, `diffusion`, `outdoor`, `portal`, `udfa`, `underwater`,
+  `vibroacoustics`, `bridge`. Ported in a single 13-agent parallel workflow
+  (each in an isolated git worktree), then integrated and independently
+  re-verified in main: **291 parity assertions across 13 suites, all green**;
+  fmt + lint clean. No new language patterns required. Added `fnptr` to the
+  stdlib deps (closure→callback). `fdtd` (gated on `hybrid`) is the one L2
+  module still pending.
 
 #### Changed (port-wide conventions)
 - **f32 → f64** throughout — hisab's `HVec3` is f64-only.

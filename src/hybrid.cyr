@@ -1,0 +1,91 @@
+# hybrid.cyr -- hybrid frequency crossover: blending low-frequency
+# wave-based results (FDTD/FEM/BEM) with high-frequency geometric
+# results (ray/image-source/radiosity) at a crossover frequency near
+# the Schroeder frequency of the room.
+#
+# Ports rust-old/src/hybrid.rs. f32 → f64. Rust's `serde` derive on
+# CrossoverConfig is dropped (no serde in Cyrius); there is no
+# serde-specific test to port. The Rust `[f32; NUM_BANDS]` return arrays
+# become alloc'd 8×f64 buffers (read with load64(buf + band*8)).
+#
+# Requires (from the build/test unit): material.cyr (NUM_BANDS,
+# frequency_band) and stdlib math/ganita (F64_ONE, F64_LN2,
+# f64_exp/ln/clamp/max/div/mul/add/sub/neg). alloc_init() must have run.
+
+# Floor for the transition bandwidth: transition_octaves.max(0.1).
+var BW_MIN = 0x3FB999999999999A;   # 0.1
+
+# log2(x) = ln(x) / ln(2)
+fn _hybrid_log2(x) { return f64_div(f64_ln(x), F64_LN2); }
+
+# ================================================================
+# CrossoverConfig — crossover frequency + transition bandwidth.
+# ================================================================
+#derive(accessors)
+struct CrossoverConfig { crossover_hz; transition_octaves; }
+
+#must_use
+fn crossover_config_new(crossover_hz, transition_octaves) {
+    var c = alloc(sizeof(CrossoverConfig));
+    CrossoverConfig_set_crossover_hz(c, crossover_hz);
+    CrossoverConfig_set_transition_octaves(c, transition_octaves);
+    return c;
+}
+
+# Rust Default: crossover_hz = 500.0, transition_octaves = 1.0.
+#must_use
+fn crossover_config_default() {
+    return crossover_config_new(f64_from(500), F64_ONE);
+}
+
+# ================================================================
+# blend_weights — per-band wave-vs-geometric blend weights.
+# 0.0 = fully wave-based, 1.0 = fully geometric; smooth sigmoid
+# centred on the crossover frequency in log-frequency space.
+# Returns an alloc'd 8×f64 buffer.
+# ================================================================
+#must_use
+fn blend_weights(config) {
+    var fc = CrossoverConfig_crossover_hz(config);
+    var bw = f64_max(CrossoverConfig_transition_octaves(config), BW_MIN);
+    var out = alloc(NUM_BANDS * 8);
+    var band = 0;
+    while (band < NUM_BANDS) {
+        var f = frequency_band(band);
+        if (f64_le(fc, 0) == 1) {
+            # all geometric
+            store64(out + band * 8, F64_ONE);
+        } else {
+            # Sigmoid blend in log-frequency space:
+            # octaves_above = (f / fc).log2() / bw
+            var octaves_above = f64_div(_hybrid_log2(f64_div(f, fc)), bw);
+            # weight = 1.0 / (1.0 + (-4.0 * octaves_above).exp())
+            var exp_arg = f64_mul(f64_neg(f64_from(4)), octaves_above);
+            var weight = f64_div(F64_ONE, f64_add(F64_ONE, f64_exp(exp_arg)));
+            store64(out + band * 8, f64_clamp(weight, 0, F64_ONE));
+        }
+        band = band + 1;
+    }
+    return out;
+}
+
+# ================================================================
+# blend_results — combine per-band wave + geometric results using the
+# crossover weights. Returns an alloc'd 8×f64 buffer:
+#   wave[band]*(1-w[band]) + geometric[band]*w[band].
+# ================================================================
+#must_use
+fn blend_results(wave_result, geometric_result, config) {
+    var weights = blend_weights(config);
+    var out = alloc(NUM_BANDS * 8);
+    var band = 0;
+    while (band < NUM_BANDS) {
+        var w = load64(weights + band * 8);
+        var wave = load64(wave_result + band * 8);
+        var geom = load64(geometric_result + band * 8);
+        var blended = f64_add(f64_mul(wave, f64_sub(F64_ONE, w)), f64_mul(geom, w));
+        store64(out + band * 8, blended);
+        band = band + 1;
+    }
+    return out;
+}

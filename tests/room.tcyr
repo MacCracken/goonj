@@ -1,0 +1,107 @@
+# room.tcyr -- parity tests for src/room.cyr
+# Ported from the #[test] blocks in rust-old/src/room.rs.
+# (No serde_roundtrip test exists in the oracle; nothing to drop there.)
+# Adds one smoke check for accelerated_room_new / build_bvh, which the
+# Rust oracle exercises only indirectly.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/room.cyr"
+
+# Tolerances (f64 bit patterns).
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+# A 10 × 8 × 3 m concrete shoebox (the oracle's test_room()).
+fn test_room() {
+    return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
+    acoustic_material_concrete());
+}
+
+alloc_init();
+
+# ================================================================
+test_group("shoebox_has_6_walls");
+var room = test_room();
+assert_eq(vec_len(RoomGeometry_walls(AcousticRoom_geometry(room))), 6, "shoebox has 6 walls");
+
+# ================================================================
+test_group("shoebox_surface_area");
+# 2*(10*8) + 2*(10*3) + 2*(8*3) = 160 + 60 + 48 = 268 m².
+var area = room_geometry_surface_area(AcousticRoom_geometry(room));
+assert(approx(area, f64_from(268), F64_ONE), "surface area ~268 m^2");
+
+# ================================================================
+test_group("shoebox_volume");
+# 10 * 8 * 3 = 240 m³.
+var vol = room_geometry_volume_shoebox(AcousticRoom_geometry(room));
+assert(approx(vol, f64_from(240), F64_ONE), "volume ~240 m^3");
+
+# ================================================================
+test_group("wall_area_rectangle");
+# 5 × 3 rectangle → area 15 m².
+var wverts = vec_new();
+vec_push(wverts, hvec3_new(0, 0, 0));
+vec_push(wverts, hvec3_new(f64_from(5), 0, 0));
+vec_push(wverts, hvec3_new(f64_from(5), f64_from(3), 0));
+vec_push(wverts, hvec3_new(0, f64_from(3), 0));
+var rect = wall_new(wverts, acoustic_material_concrete(), hvec3_new(0, 0, F64_ONE));
+assert(approx(wall_area(rect), f64_from(15), TOL_1E2), "rectangle area ~15");
+
+# ================================================================
+test_group("absorption_area_depends_on_material");
+var concrete_room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
+acoustic_material_concrete());
+var carpet_room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
+acoustic_material_carpet());
+assert(f64_gt(room_geometry_total_absorption(AcousticRoom_geometry(carpet_room)),
+room_geometry_total_absorption(AcousticRoom_geometry(concrete_room))),
+"carpet absorbs more than concrete");
+
+# ================================================================
+test_group("default_conditions");
+# Defaults: 20 °C, 50 % humidity (set exactly, so a tight tolerance holds).
+assert(approx(AcousticRoom_temperature_celsius(room), f64_from(20), TOL_1E3), "default temp 20C");
+assert(approx(AcousticRoom_humidity_percent(room), f64_from(50), TOL_1E3), "default humidity 50%");
+
+# ================================================================
+test_group("volume_shoebox_no_walls");
+var empty_geom = alloc(sizeof(RoomGeometry));
+RoomGeometry_set_walls(empty_geom, vec_new());
+assert_eq(f64_to(room_geometry_volume_shoebox(empty_geom)), 0, "no walls -> 0 volume");
+
+# ================================================================
+test_group("volume_shoebox_independent_of_wall_order");
+var geom = AcousticRoom_geometry(room);
+var vol1 = room_geometry_volume_shoebox(geom);
+# Reverse the wall order into a fresh geometry.
+var orig_walls = RoomGeometry_walls(geom);
+var nw = vec_len(orig_walls);
+var rev_walls = vec_new();
+var k = nw - 1;
+while (k >= 0) {
+    vec_push(rev_walls, vec_get(orig_walls, k));
+    k = k - 1;
+}
+var rev_geom = alloc(sizeof(RoomGeometry));
+RoomGeometry_set_walls(rev_geom, rev_walls);
+var vol2 = room_geometry_volume_shoebox(rev_geom);
+assert(approx(vol1, vol2, TOL_1E3), "volume independent of wall ordering");
+
+# ================================================================
+test_group("accelerated_room (smoke)");
+# Not a direct oracle test: AcceleratedRoom::new builds a BVH from the six
+# wall AABBs; assert it produced a non-null tree.
+var accel = accelerated_room_new(test_room());
+var accel_bvh = AcceleratedRoom_bvh(accel);
+assert(accel_bvh != 0, "accelerated room has a BVH");
+
+var rc = assert_summary();
+syscall(60, rc);

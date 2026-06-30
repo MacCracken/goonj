@@ -1,0 +1,144 @@
+# udfa.cyr -- Universal Diffraction Filter Approximation (UDFA).
+#
+# Filter-based diffraction model for real-time applications. Approximates
+# diffraction effects as minimum-phase IIR filters, enabling efficient
+# higher-order diffraction interactions around finite objects.
+# Reference: Acta Acustica, 2024 -- "Universal Diffraction Filter Approximation."
+#
+# Ports rust-old/src/udfa.rs. f32 -> f64. Rust's `serde` derive is dropped
+# (no serde in Cyrius); the serde round-trip test is therefore omitted.
+# The `DiffractionFilter` struct (an `[f32; 8]` attenuation array plus two
+# scalars) is an inline manual-layout block, mirroring material's
+# AcousticMaterial. The Rust `&[DiffractionFilter]` slice argument of
+# chain_diffraction_filters becomes a stdlib `vec` of filter pointers.
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON),
+# material.cyr (NUM_BANDS, frequency_band), propagation.cyr
+# (speed_of_sound), stdlib math/ganita (F64_ONE, F64_TWO, F64_LN10,
+# f64_*) and vec (vec_len/vec_get).
+
+# DiffractionFilter inline layout: 8xf64 attenuation | delay | quality.
+enum DfLayout {
+    DF_ATTEN = 0,    # offsets 0..64 (8 f64), per-band attenuation in dB
+    DF_DELAY = 64,   # phase delay in seconds (extra path / speed of sound)
+    DF_QUAL  = 72,   # filter quality (higher = sharper transition)
+    DF_SIZE  = 80,
+}
+
+# Constants that aren't clean integers (f64 bit patterns; decimal in comment).
+var UDFA_FRESNEL_MIN = 0x3F847AE147AE147B;   # 0.01  Fresnel-number cutoff
+var UDFA_CLAMP_LO    = 0x3FB999999999999A;   # 0.1   quality clamp minimum
+var UDFA_F64_MAX     = 0x7FEFFFFFFFFFFFFF;   # f64::MAX seed for min-quality
+
+# log10(x) = ln(x) / ln(10)
+fn _udfa_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
+
+# ================================================================
+# DiffractionFilter accessors (manual layout)
+# ================================================================
+#must_use
+fn df_delay_seconds(f) { return load64(f + DF_DELAY); }
+#must_use
+fn df_quality(f) { return load64(f + DF_QUAL); }
+#must_use
+fn df_attenuation_band(f, band) { return load64(f + DF_ATTEN + band * 8); }
+fn _df_set_band(f, band, v) { store64(f + DF_ATTEN + band * 8, v); return 0; }
+
+# Per-band attenuation (negative dB) for the UDFA spectral shape.
+#   wavelength = c / freq;  fresnel_n = 2 * path_difference / wavelength
+#   base_loss  = 0                         if fresnel_n < 0.01
+#              = 10 * log10(3 + 20 N) * finite_correction   otherwise
+#   atten      = -max(base_loss, 0)
+fn _udfa_band_atten(c, path_difference, finite_correction, freq) {
+    var wavelength = f64_div(c, freq);
+    var fresnel_n = f64_div(f64_mul(F64_TWO, path_difference), wavelength);
+    var base_loss = 0;
+    if (f64_lt(fresnel_n, UDFA_FRESNEL_MIN) == 1) {
+        # very low Fresnel number: no significant diffraction loss
+        base_loss = 0;
+    } else {
+        # Maekawa IL ~ 10*log10(3 + 20 N), with finite-edge correction.
+        var inner = f64_add(f64_from(3), f64_mul(f64_from(20), fresnel_n));
+        base_loss = f64_mul(f64_mul(f64_from(10), _udfa_log10(inner)), finite_correction);
+    }
+    return f64_neg(f64_max(base_loss, 0));   # negative = attenuation
+}
+
+# Compute the UDFA diffraction filter for a single edge.
+#   path_difference     -- extra path length around the edge vs direct (m)
+#   edge_length         -- length of the diffracting edge (m)
+#   temperature_celsius -- air temperature
+#must_use
+fn compute_diffraction_filter(path_difference, edge_length, temperature_celsius) {
+    var f = alloc(DF_SIZE);
+
+    if (f64_le(path_difference, 0) == 1) {
+        var z = 0;
+        while (z < NUM_BANDS) { _df_set_band(f, z, 0); z = z + 1; }
+        store64(f + DF_DELAY, 0);
+        store64(f + DF_QUAL, F64_ONE);
+        return f;
+    }
+
+    var c = speed_of_sound(temperature_celsius);
+    var delay = f64_div(path_difference, c);
+
+    # Finite-edge correction: zero-length edge -> no diffraction,
+    # long edge -> full diffraction.
+    var finite_correction = 0;
+    if (f64_gt(edge_length, GOONJ_EPSILON) == 1) {
+        finite_correction = f64_sqrt(f64_div(edge_length, f64_add(edge_length, path_difference)));
+    }
+
+    var i = 0;
+    while (i < NUM_BANDS) {
+        var atten = _udfa_band_atten(c, path_difference, finite_correction, frequency_band(i));
+        _df_set_band(f, i, atten);
+        i = i + 1;
+    }
+
+    store64(f + DF_DELAY, delay);
+    # Filter quality based on geometry: (path_difference * 10).clamp(0.1, 10).
+    var quality = f64_clamp(f64_mul(path_difference, f64_from(10)), UDFA_CLAMP_LO, f64_from(10));
+    store64(f + DF_QUAL, quality);
+    return f;
+}
+
+# Apply a sequence of diffraction filters (higher-order diffraction).
+# `filters` is a stdlib vec of DiffractionFilter pointers. Total
+# attenuation is the per-band sum (dB), total delay the sum of delays,
+# and quality the minimum quality across edges.
+#must_use
+fn chain_diffraction_filters(filters) {
+    var result = alloc(DF_SIZE);
+    var i = 0;
+    while (i < NUM_BANDS) { _df_set_band(result, i, 0); i = i + 1; }
+
+    var n = vec_len(filters);
+    if (n == 0) {
+        store64(result + DF_DELAY, 0);
+        store64(result + DF_QUAL, F64_ONE);
+        return result;
+    }
+
+    var total_delay = 0;
+    var min_quality = UDFA_F64_MAX;
+
+    var k = 0;
+    while (k < n) {
+        var filt = vec_get(filters, k);
+        var b = 0;
+        while (b < NUM_BANDS) {
+            var sum = f64_add(df_attenuation_band(result, b), df_attenuation_band(filt, b));
+            _df_set_band(result, b, sum);
+            b = b + 1;
+        }
+        total_delay = f64_add(total_delay, df_delay_seconds(filt));
+        min_quality = f64_min(min_quality, df_quality(filt));
+        k = k + 1;
+    }
+
+    store64(result + DF_DELAY, total_delay);
+    store64(result + DF_QUAL, min_quality);
+    return result;
+}
