@@ -22,6 +22,17 @@ milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md
   Doppler, Miki 1990 ground reflection) plus the `HVec3` wind/temperature
   profiles (`refracted_speed`, `speed_at_height`). 35 parity assertions in
   `tests/propagation.tcyr`, all green.
+- **material** — `src/material.cyr`. `AcousticMaterial` (7 named tables,
+  validated constructor, average/per-band absorption), `WallConstruction`
+  (mass-law transmission loss + coefficient), and the `JcalMaterial` JCAL
+  porous-absorber model. 65 parity assertions in `tests/material.tcyr`, all
+  green. Establishes the manual-struct-layout (inline arrays) and string-
+  field idioms for the rest of the port.
+- **resonance** — `src/resonance.cyr`. `room_mode`, `axial_modes`/
+  `all_axial_modes` (mode lists via stdlib `vec` + f64 insertion sort),
+  `schroeder_frequency`, `modal_density`. 15 parity assertions in
+  `tests/resonance.tcyr`, all green. Establishes the `Vec<T>` dynamic-array
+  idiom for the rest of the port.
 
 #### Changed (port-wide conventions)
 - **f32 → f64** throughout — hisab's `HVec3` is f64-only.

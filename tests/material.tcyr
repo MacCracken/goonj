@@ -1,0 +1,148 @@
+# material.tcyr -- parity tests for src/material.cyr
+# Ported from the #[test] blocks in rust-old/src/material.rs.
+# (serde_roundtrip omitted — no serde in Cyrius.)
+
+include "src/error.cyr"
+include "src/material.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;        # 0.01
+var AVG_CONCRETE = 0x3F92BD3C36113405;   # 0.0183 (expected concrete average)
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+fn nz(p) { if (p == 0) { return 0; } return 1; }   # pointer is non-null
+fn iz(p) { if (p == 0) { return 1; } return 0; }   # pointer is null (error)
+
+# Fill an 8×f64 buffer with one value.
+fn fill8(buf, v) {
+    var i = 0;
+    while (i < 8) { store64(buf + i * 8, v); i = i + 1; }
+    return buf;
+}
+
+# All 8 absorption bands + scattering within [0, 1]?
+fn all_in_range(m) {
+    var i = 0;
+    while (i < 8) {
+        var a = am_absorption_band(m, i);
+        if (f64_lt(a, 0) == 1) { return 0; }
+        if (f64_gt(a, F64_ONE) == 1) { return 0; }
+        i = i + 1;
+    }
+    var s = am_scattering(m);
+    if (f64_lt(s, 0) == 1) { return 0; }
+    if (f64_gt(s, F64_ONE) == 1) { return 0; }
+    return 1;
+}
+
+# Transmission coefficient in [0, 1] across all octave bands.
+fn assert_tau_in_range(wall) {
+    var i = 0;
+    while (i < 8) {
+        var tau = transmission_coefficient(wall, frequency_band(i));
+        assert(f64_ge(tau, 0), "tau >= 0");
+        assert(f64_le(tau, F64_ONE), "tau <= 1");
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Transmission loss non-negative across all octave bands.
+fn assert_tl_nonneg(wall) {
+    var i = 0;
+    while (i < 8) {
+        assert(f64_ge(transmission_loss_db(wall, frequency_band(i)), 0), "TL >= 0");
+        i = i + 1;
+    }
+    return 0;
+}
+
+# JCAL absorption in [0, 1] across all octave bands.
+fn assert_jcal_in_range(mat, thickness) {
+    var i = 0;
+    while (i < 8) {
+        var alpha = jcal_absorption_coefficient(mat, frequency_band(i), thickness);
+        assert(f64_ge(alpha, 0), "alpha >= 0");
+        assert(f64_le(alpha, F64_ONE), "alpha <= 1");
+        i = i + 1;
+    }
+    return 0;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("AcousticMaterial: absorption tables in range");
+assert(all_in_range(acoustic_material_concrete()), "concrete in range");
+assert(all_in_range(acoustic_material_carpet()), "carpet in range");
+assert(all_in_range(acoustic_material_glass()), "glass in range");
+assert(all_in_range(acoustic_material_wood()), "wood in range");
+assert(all_in_range(acoustic_material_curtain()), "curtain in range");
+assert(all_in_range(acoustic_material_drywall()), "drywall in range");
+assert(all_in_range(acoustic_material_tile()), "tile in range");
+
+# ================================================================
+test_group("AcousticMaterial: averages & band access");
+assert(f64_gt(average_absorption(acoustic_material_carpet()),
+              average_absorption(acoustic_material_concrete())), "carpet > concrete");
+assert(approx(average_absorption(acoustic_material_concrete()), AVG_CONCRETE, TOL_1E2), "concrete avg ~0.0183");
+var wood = acoustic_material_wood();
+assert(approx(absorption_at_band(wood, 0), pct(15), TOL_1E2), "wood band0 ~0.15");
+assert(approx(absorption_at_band(wood, 7), pct(7), TOL_1E2), "wood band7 ~0.07");
+assert_eq(f64_to(absorption_at_band(wood, 8)), 0, "wood band8 out of range -> 0");
+
+# ================================================================
+test_group("AcousticMaterial: validated constructor");
+var abs01 = fill8(alloc(64), pct(10));
+var mok = acoustic_material_new("test", abs01, F64_HALF);
+assert(nz(mok), "valid material is Ok");
+assert(streq(am_name(mok), "test"), "name preserved");
+# absorption[2] = 1.5 -> rejected
+var abs_hi = fill8(alloc(64), pct(10));
+store64(abs_hi + 2 * 8, f64_div(f64_from(15), f64_from(10)));
+assert(iz(acoustic_material_new("bad", abs_hi, F64_HALF)), "absorption > 1 rejected");
+# absorption[0] = -0.1 -> rejected
+var abs_neg = fill8(alloc(64), pct(10));
+store64(abs_neg, f64_neg(pct(10)));
+assert(iz(acoustic_material_new("bad", abs_neg, F64_HALF)), "negative absorption rejected");
+# scattering = 1.5 -> rejected
+assert(iz(acoustic_material_new("bad", abs01, f64_div(f64_from(15), f64_from(10)))), "scattering > 1 rejected");
+
+# ================================================================
+test_group("WallConstruction: transmission loss");
+var concrete = wall_concrete_150mm();
+var drywall = wall_drywall_single();
+# Concrete >40 dB TL at 1 kHz.
+assert(f64_gt(transmission_loss_db(concrete, f64_from(1000)), f64_from(40)), "concrete >40 dB @1k");
+# Concrete isolates more than drywall.
+assert(f64_gt(transmission_loss_db(concrete, f64_from(1000)),
+              transmission_loss_db(drywall, f64_from(1000))), "concrete > drywall");
+# Mass-law regime: TL rises with frequency.
+assert(f64_gt(transmission_loss_db(concrete, f64_from(1000)),
+              transmission_loss_db(concrete, f64_from(250))), "TL rises with freq");
+# Double drywall isolates more than single at 500 Hz.
+assert(f64_gt(transmission_loss_db(wall_drywall_double(), f64_from(500)),
+              transmission_loss_db(drywall, f64_from(500))), "double > single");
+# Zero frequency -> 0.
+assert_eq(f64_to(transmission_loss_db(concrete, 0)), 0, "zero freq -> 0 TL");
+# Ranges across bands.
+assert_tau_in_range(wall_glass_6mm());
+assert_tl_nonneg(drywall);
+
+# ================================================================
+test_group("JcalMaterial: porous absorption");
+var mw = jcal_mineral_wool();
+# 50 mm mineral wool absorbs > 0.3 at 1 kHz.
+assert(f64_gt(jcal_absorption_coefficient(mw, f64_from(1000), pct(5)), pct(30)), "mineral wool absorbs >0.3");
+# Thicker absorbs at least as much.
+assert(f64_ge(jcal_absorption_coefficient(mw, f64_from(1000), pct(10)),
+              jcal_absorption_coefficient(mw, f64_from(1000), milli(25))), "thicker >= thinner");
+# In-range sweep (open-cell foam, 50 mm).
+assert_jcal_in_range(jcal_open_cell_foam(), pct(5));
+# Zero frequency -> impedance 1.0.
+assert(approx(jcal_surface_impedance_magnitude(mw, 0, pct(5)), F64_ONE, TOL_1E2), "zero freq -> Z=1");
+
+var rc = assert_summary();
+syscall(60, rc);

@@ -30,7 +30,9 @@ Per-module parity is tracked in [`port-audit.md`](port-audit.md). Summary:
 |---------------|-------------------|-------|
 | error         | ✅ ported          | (via propagation suite) |
 | propagation   | 🟡 partial (scalar core + Vec3 profiles) | 35 ✓ |
-| *(34 others)* | ⬜ pending          | —     |
+| material      | ✅ ported          | 65 ✓  |
+| resonance     | ✅ ported          | 15 ✓  |
+| *(32 others)* | ⬜ pending          | —     |
 
 `propagation` is complete except `refract_ray_step` /
 `trace_ray_atmospheric` — both take a closure (`speed_fn`) and need the
@@ -41,7 +43,16 @@ fnptr/callback pattern; see roadmap M1.
 - `tests/propagation.tcyr` — **35 assertions, all green**. Covers
   speed-of-sound, inverse-square, SPL/pressure, atmospheric absorption
   (ISO 9613-1), Doppler, Miki ground reflection, and the Vec3 wind/
-  temperature profiles. Ported one-for-one from the Rust `#[test]` blocks.
+  temperature profiles.
+- `tests/material.tcyr` — **65 assertions, all green**. Covers the 7
+  named-material absorption tables, average/band access, validated
+  constructor, WallConstruction transmission loss/coefficient, and the
+  JCAL porous model.
+- `tests/resonance.tcyr` — **15 assertions, all green**. Covers room_mode,
+  axial/all-axial mode lists (Vec + sort), Schroeder frequency, modal density.
+
+All ported one-for-one from the Rust `#[test]` blocks. **115 assertions
+total across 3 suites, all green.**
 
 ## Dependencies
 
@@ -60,6 +71,7 @@ port yet* (gated on the distlib bundle, roadmap M5).
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). Immediate: finish M1 (foundation layer:
-`error` ✅, `propagation` 🟡, then `material`, `resonance`, `ambisonics`,
-`dark_velvet_noise`, `scattering`).
+See [`roadmap.md`](roadmap.md). M1 remaining: the L0 leaves `resonance`,
+`ambisonics`, `dark_velvet_noise` (needs RNG), `scattering` (needs RNG),
+`logging`; plus closing `propagation` (the two `speed_fn`-closure ray
+tracers — resolves the fnptr/callback pattern). `error` ✅, `material` ✅.

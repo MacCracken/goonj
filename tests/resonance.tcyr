@@ -1,0 +1,70 @@
+# resonance.tcyr -- parity tests for src/resonance.cyr
+# Ported from the #[test] blocks in rust-old/src/resonance.rs.
+
+include "src/resonance.cyr"
+
+var TOL_1E1 = 0x3FB999999999999A;   # 0.1
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var V_34_3  = 0x4041266666666666;   # 34.3 (first mode of a 5 m room at 343 m/s)
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("room_mode");
+# First axial mode of a 5 m room ≈ 34.3 Hz.
+assert(approx(room_mode(f64_from(5), 1, f64_from(343)), V_34_3, TOL_1E1), "5 m first mode ~34.3 Hz");
+# Second mode is 2× the first.
+var f1 = room_mode(f64_from(5), 1, f64_from(343));
+var f2 = room_mode(f64_from(5), 2, f64_from(343));
+assert(approx(f64_div(f2, f1), F64_TWO, TOL_1E2), "second mode is 2x first");
+# Guards: mode 0 / zero length → 0.
+assert_eq(f64_to(room_mode(f64_from(5), 0, f64_from(343))), 0, "mode 0 -> 0");
+assert_eq(f64_to(room_mode(0, 1, f64_from(343))), 0, "zero length -> 0");
+
+# ================================================================
+test_group("axial_modes (Vec)");
+# 5 m room below 200 Hz → modes at 34.3, 68.6, 102.9, 137.2, 171.5 → 5 modes.
+assert_eq(vec_len(axial_modes(f64_from(5), f64_from(200), f64_from(343))), 5, "5 modes below 200 Hz");
+# all_axial_modes returns a sorted list.
+var modes = all_axial_modes(f64_from(10), f64_from(8), f64_from(3), f64_from(200), f64_from(343));
+var sorted = 1;
+var i = 1;
+var nmodes = vec_len(modes);
+while (i < nmodes) {
+    if (f64_gt(vec_get(modes, i - 1), vec_get(modes, i)) == 1) { sorted = 0; }
+    i = i + 1;
+}
+assert(sorted, "all_axial_modes sorted ascending");
+assert(f64_gt(f64_from(nmodes), 0), "all_axial_modes non-empty");
+
+# ================================================================
+test_group("schroeder_frequency");
+# RT60 = 1 s, V = 100 m³ → fs ≈ 200 Hz.
+assert(approx(schroeder_frequency(F64_ONE, f64_from(100)), f64_from(200), F64_ONE), "fs ~200 Hz");
+# Larger room → lower fs.
+assert(f64_lt(schroeder_frequency(F64_ONE, f64_from(500)),
+              schroeder_frequency(F64_ONE, f64_from(50))), "larger room lower fs");
+# Longer RT60 → higher fs.
+assert(f64_gt(schroeder_frequency(F64_TWO, f64_from(100)),
+              schroeder_frequency(F64_HALF, f64_from(100))), "longer RT60 higher fs");
+# Guards.
+assert_eq(f64_to(schroeder_frequency(F64_ONE, 0)), 0, "zero volume -> 0");
+assert_eq(f64_to(schroeder_frequency(0, f64_from(100))), 0, "zero RT60 -> 0");
+
+# ================================================================
+test_group("modal_density");
+# Rises with frequency and with volume.
+assert(f64_gt(modal_density(f64_from(1000), f64_from(200), f64_from(343)),
+              modal_density(f64_from(100), f64_from(200), f64_from(343))), "rises with frequency");
+assert(f64_gt(modal_density(f64_from(500), f64_from(500), f64_from(343)),
+              modal_density(f64_from(500), f64_from(50), f64_from(343))), "rises with volume");
+# Guard: zero speed → 0.
+assert_eq(f64_to(modal_density(f64_from(500), f64_from(100), 0)), 0, "zero speed -> 0");
+
+var rc = assert_summary();
+syscall(60, rc);

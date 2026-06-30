@@ -20,6 +20,9 @@ the relevant row whenever a module's status changes.
   .normalize/.distance`→`hvec3_*`, `+ - *`→`hvec3_add/sub/scale`, `.x/.y/.z`→
   `HVec3_x/y/z`, `Vec3::X/ZERO/splat`→`hvec3_unit_x/zero/splat`.
 - **`enum` errors → integer codes** (see `src/error.cyr`).
+- **`Vec<T>` → stdlib `vec`** (`vec_new`/`vec_push`/`vec_len`/`vec_get`/`vec_set`);
+  f64 elements store directly in the 8-byte slots. Sorting f64 vecs uses a local
+  insertion sort comparing with `f64_gt` (`resonance._vec_sort_f64`).
 - **structs** via `#derive(accessors)` + `alloc(sizeof(T))`; methods become
   free functions `type_verb(self, …)`.
 - **Module files do not `include` each other** — the build/test entry includes
@@ -33,7 +36,7 @@ the relevant row whenever a module's status changes.
 |-------------------|----:|--------|-------|
 | error             |  60 | ✅ | Integer codes + `goonj_is_err`/`goonj_err_name`; shared `GOONJ_EPSILON`, `F64_NEG_INF`. |
 | propagation       | 831 | 🟡 | Scalar core + Vec3 wind/temp profiles ported, 35 tests green. Pending: `refract_ray_step`, `trace_ray_atmospheric` (closure `speed_fn` → fnptr/callback). |
-| resonance         | 194 | ⬜ | Room modes, Schroeder freq, modal density. |
+| resonance         | 194 | ✅ | Room modes, Schroeder freq, modal density. `Vec<f32>` mode lists → stdlib `vec` (f64 in 8-byte slots) + f64 insertion sort. 15 tests green. Established the dynamic-array idiom. |
 | ambisonics        | 259 | ⬜ | B-format + 3rd-order HOA. |
 | dark_velvet_noise | 405 | ⬜ | Sparse stochastic late reverb (RNG state needed). |
 | scattering        | 165 | ⬜ | Cosine-weighted hemisphere sampling (RNG). |
@@ -43,7 +46,7 @@ the relevant row whenever a module's status changes.
 
 | Module   | LOC | Status | Notes |
 |----------|----:|--------|-------|
-| material | 589 | ⬜ | Freq-dependent absorption/scattering/transmission. Needed by most of L2–L6. |
+| material | 589 | ✅ | AcousticMaterial (inline 8-band array + cstring name, manual layout), WallConstruction (mass-law TL), JCAL porous model. 65 tests green. serde round-trip omitted (no serde). Established: manual struct layout, `pct`/`milli` literal helpers, string field via `streq`. |
 
 ### L2 — geometric & wave (dep: material, ±propagation)
 
@@ -94,4 +97,4 @@ the relevant row whenever a module's status changes.
 | integration/kiran   | 168 | ⬜ | (consumer API) |
 | integration/soorat  | 165 | ⬜ | (consumer API) |
 
-**Totals:** 1 / 37 done, 1 partial, 35 pending · 14,630 Rust lines.
+**Totals:** 3 / 37 done (error, material, resonance), 1 partial (propagation), 33 pending · 14,630 Rust lines.

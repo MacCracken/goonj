@@ -1,0 +1,327 @@
+# material.cyr -- acoustic materials: frequency-dependent absorption /
+# scattering (AcousticMaterial), wall transmission loss
+# (WallConstruction), and the JCAL porous-absorber model (JcalMaterial).
+#
+# Ports rust-old/src/material.rs. f32 → f64. Rust's `serde` derive is
+# dropped (no serde in Cyrius); the serde round-trip test is therefore
+# omitted. String `name` is stored as a cstring pointer; the `[f32; 8]`
+# absorption array is an inline 8×f64 block via manual struct layout.
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON), stdlib
+# math/ganita (F64_*, f64_pow/sqrt/tanh/ln) and string (streq).
+
+# 8 octave bands, 63 Hz – 8 kHz (ISO 3382-1).
+enum NumBands { NUM_BANDS = 8 }
+
+# AcousticMaterial inline layout: name ptr | 8×f64 absorption | scattering.
+enum AmLayout {
+    AM_NAME = 0,
+    AM_ABS  = 8,    # offsets 8..72 (8 f64)
+    AM_SCAT = 72,
+    AM_SIZE = 80,
+}
+
+# Physics constants that aren't clean hundredths (f64 bit patterns).
+var ETA       = 0x3EF2FAAE876767EE;   # 1.81e-5  dynamic viscosity of air
+var PERM_MW   = 0x3E19C511DC3A41DF;   # 1.5e-9   mineral-wool thermal permeability
+var PERM_FOAM = 0x3E29C511DC3A41DF;   # 3.0e-9   open-cell-foam thermal permeability
+
+# n/100 and n/1000 as f64 — keeps absorption tables and loss factors
+# readable (every value in material.rs is an exact hundredth/thousandth).
+fn pct(n)   { return f64_div(f64_from(n), f64_from(100)); }
+fn milli(n) { return f64_div(f64_from(n), f64_from(1000)); }
+
+# log10(x) = ln(x) / ln(10)
+fn _mat_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
+
+# Octave-band centre frequency (Hz) by index 0..7. All integers.
+#must_use
+fn frequency_band(i) {
+    if (i == 0) { return f64_from(63); }
+    if (i == 1) { return f64_from(125); }
+    if (i == 2) { return f64_from(250); }
+    if (i == 3) { return f64_from(500); }
+    if (i == 4) { return f64_from(1000); }
+    if (i == 5) { return f64_from(2000); }
+    if (i == 6) { return f64_from(4000); }
+    if (i == 7) { return f64_from(8000); }
+    return 0;
+}
+
+# ================================================================
+# AcousticMaterial
+# ================================================================
+fn am_name(m)              { return load64(m + AM_NAME); }
+fn am_scattering(m)        { return load64(m + AM_SCAT); }
+fn am_absorption_band(m, band) { return load64(m + AM_ABS + band * 8); }
+fn _am_set_band(m, band, v)    { store64(m + AM_ABS + band * 8, v); return 0; }
+
+# Build a material from a name, 8 absorption values, and scattering.
+#must_use
+fn _am_make(name, a0, a1, a2, a3, a4, a5, a6, a7, scattering) {
+    var m = alloc(AM_SIZE);
+    store64(m + AM_NAME, name);
+    store64(m + AM_SCAT, scattering);
+    _am_set_band(m, 0, a0);
+    _am_set_band(m, 1, a1);
+    _am_set_band(m, 2, a2);
+    _am_set_band(m, 3, a3);
+    _am_set_band(m, 4, a4);
+    _am_set_band(m, 5, a5);
+    _am_set_band(m, 6, a6);
+    _am_set_band(m, 7, a7);
+    return m;
+}
+
+# Absorption tables: pct(n) = n/100 per octave band (63 Hz … 8 kHz), then scattering.
+#must_use
+fn acoustic_material_concrete() {
+    return _am_make("concrete", pct(1), pct(1), pct(1), pct(2), pct(2), pct(2), pct(3), pct(4), pct(10));
+}
+#must_use
+fn acoustic_material_carpet() {
+    return _am_make("carpet", pct(2), pct(8), pct(24), pct(57), pct(69), pct(71), pct(73), pct(73), pct(40));
+}
+#must_use
+fn acoustic_material_glass() {
+    return _am_make("glass", pct(35), pct(35), pct(25), pct(18), pct(12), pct(7), pct(4), pct(2), pct(5));
+}
+#must_use
+fn acoustic_material_wood() {
+    return _am_make("wood", pct(15), pct(15), pct(11), pct(10), pct(7), pct(6), pct(7), pct(7), pct(15));
+}
+#must_use
+fn acoustic_material_curtain() {
+    return _am_make("curtain", pct(3), pct(7), pct(31), pct(49), pct(75), pct(70), pct(65), pct(65), pct(50));
+}
+#must_use
+fn acoustic_material_drywall() {
+    return _am_make("drywall", pct(29), pct(29), pct(10), pct(5), pct(4), pct(7), pct(9), pct(9), pct(10));
+}
+#must_use
+fn acoustic_material_tile() {
+    return _am_make("tile", pct(1), pct(1), pct(1), pct(1), pct(1), pct(2), pct(2), pct(2), pct(5));
+}
+
+# Validated constructor: `absorption` is a pointer to 8 f64. Returns the
+# material pointer, or 0 if any absorption value or the scattering
+# coefficient is outside 0.0–1.0 (Rust's Result::Err path).
+#must_use
+fn acoustic_material_new(name, absorption, scattering) {
+    var i = 0;
+    while (i < NUM_BANDS) {
+        var a = load64(absorption + i * 8);
+        if (f64_lt(a, 0) == 1) { return 0; }
+        if (f64_gt(a, F64_ONE) == 1) { return 0; }
+        i = i + 1;
+    }
+    if (f64_lt(scattering, 0) == 1) { return 0; }
+    if (f64_gt(scattering, F64_ONE) == 1) { return 0; }
+
+    var m = alloc(AM_SIZE);
+    store64(m + AM_NAME, name);
+    store64(m + AM_SCAT, scattering);
+    i = 0;
+    while (i < NUM_BANDS) {
+        _am_set_band(m, i, load64(absorption + i * 8));
+        i = i + 1;
+    }
+    return m;
+}
+
+# Average absorption across all bands.
+#must_use
+fn average_absorption(m) {
+    var sum = 0;
+    var i = 0;
+    while (i < NUM_BANDS) {
+        sum = f64_add(sum, am_absorption_band(m, i));
+        i = i + 1;
+    }
+    return f64_div(sum, f64_from(NUM_BANDS));
+}
+
+# Absorption at band index 0..7; 0.0 if out of range.
+#must_use
+fn absorption_at_band(m, band) {
+    if (band < 0) { return 0; }
+    if (band < NUM_BANDS) { return am_absorption_band(m, band); }
+    return 0;
+}
+
+# ================================================================
+# WallConstruction — sound transmission loss
+# ================================================================
+#derive(accessors)
+struct WallConstruction { surface_density; critical_frequency; loss_factor; }
+
+#must_use
+fn wall_construction_new(surface_density, critical_frequency, loss_factor) {
+    var w = alloc(sizeof(WallConstruction));
+    WallConstruction_set_surface_density(w, surface_density);
+    WallConstruction_set_critical_frequency(w, critical_frequency);
+    WallConstruction_set_loss_factor(w, loss_factor);
+    return w;
+}
+
+#must_use
+fn wall_drywall_single() { return wall_construction_new(f64_from(10), f64_from(2500), milli(14)); }
+#must_use
+fn wall_drywall_double() { return wall_construction_new(f64_from(20), f64_from(2500), milli(20)); }
+#must_use
+fn wall_concrete_150mm() { return wall_construction_new(f64_from(350), f64_from(130), milli(10)); }
+#must_use
+fn wall_glass_6mm()      { return wall_construction_new(f64_from(15), f64_from(2000), milli(20)); }
+
+# Sound Reduction Index (transmission loss, dB) at a frequency.
+# Mass law below coincidence, Davy-style correction around/above it.
+#must_use
+fn transmission_loss_db(wall, frequency) {
+    var m = WallConstruction_surface_density(wall);
+    var fc = WallConstruction_critical_frequency(wall);
+    var loss_factor = WallConstruction_loss_factor(wall);
+    if (f64_le(frequency, 0) == 1) { return 0; }
+    if (f64_le(m, 0) == 1) { return 0; }
+
+    # Mass law: TL = 20·log10(π·f·m / ρ₀c₀) − 3, ρ₀c₀ ≈ 415.
+    var mass_arg = f64_div(f64_mul(f64_mul(F64_PI, frequency), m), f64_from(415));
+    var mass_law = f64_sub(f64_mul(f64_from(20), _mat_log10(mass_arg)), f64_from(3));
+
+    var half_fc = f64_mul(fc, F64_HALF);
+    var two_fc = f64_mul(fc, F64_TWO);
+
+    if (f64_lt(frequency, half_fc) == 1) {
+        # Below coincidence: pure mass law.
+        return f64_max(mass_law, 0);
+    }
+    if (f64_lt(frequency, two_fc) == 1) {
+        # Near coincidence: mass law + coincidence dip.
+        var dip_inner = f64_add(loss_factor,
+            f64_div(m, f64_mul(f64_from(485), f64_sqrt(frequency))));
+        var coincidence_dip = f64_mul(f64_from(10), _mat_log10(dip_inner));
+        return f64_max(f64_add(mass_law, coincidence_dip), 0);
+    }
+    # Above coincidence: mass law + damping-controlled increase.
+    var above = f64_add(f64_add(mass_law,
+        f64_mul(f64_from(10), _mat_log10(f64_max(loss_factor, milli(1))))), f64_from(5));
+    return f64_max(above, 0);
+}
+
+# Transmission coefficient (energy ratio 0..1): τ = 10^(−TL/10).
+#must_use
+fn transmission_coefficient(wall, frequency) {
+    var tl = transmission_loss_db(wall, frequency);
+    return f64_pow(f64_from(10), f64_div(f64_neg(tl), f64_from(10)));
+}
+
+# ================================================================
+# JcalMaterial — Johnson-Champoux-Allard-Lafarge porous model
+# ================================================================
+#derive(accessors)
+struct JcalMaterial {
+    flow_resistivity;
+    porosity;
+    tortuosity;
+    viscous_length;
+    thermal_length;
+    thermal_permeability;
+}
+
+#must_use
+fn jcal_material_new(flow_resistivity, porosity, tortuosity, viscous_length, thermal_length, thermal_permeability) {
+    var j = alloc(sizeof(JcalMaterial));
+    JcalMaterial_set_flow_resistivity(j, flow_resistivity);
+    JcalMaterial_set_porosity(j, porosity);
+    JcalMaterial_set_tortuosity(j, tortuosity);
+    JcalMaterial_set_viscous_length(j, viscous_length);
+    JcalMaterial_set_thermal_length(j, thermal_length);
+    JcalMaterial_set_thermal_permeability(j, thermal_permeability);
+    return j;
+}
+
+# Microns → meters: n·1e-6.
+fn _microns(n) { return f64_div(f64_from(n), f64_from(1000000)); }
+
+#must_use
+fn jcal_mineral_wool() {
+    return jcal_material_new(f64_from(30000), pct(97), pct(106), _microns(100), _microns(200), PERM_MW);
+}
+#must_use
+fn jcal_open_cell_foam() {
+    return jcal_material_new(f64_from(10000), pct(98), pct(102), _microns(150), _microns(300), PERM_FOAM);
+}
+
+# Surface impedance magnitude normalized to ρ₀c₀, for a rigid-backed
+# layer of given thickness. Returns 1.0 for degenerate inputs.
+#must_use
+fn jcal_surface_impedance_magnitude(mat, frequency, thickness) {
+    var phi = JcalMaterial_porosity(mat);
+    if (f64_le(frequency, 0) == 1) { return F64_ONE; }
+    if (f64_le(thickness, 0) == 1) { return F64_ONE; }
+    if (f64_le(phi, 0) == 1) { return F64_ONE; }
+
+    var omega = f64_mul(F64_TAU, frequency);
+    var sigma = JcalMaterial_flow_resistivity(mat);
+    var alpha_inf = JcalMaterial_tortuosity(mat);
+    var lambda_v = JcalMaterial_viscous_length(mat);
+    var lambda_t = JcalMaterial_thermal_length(mat);
+
+    var rho_0 = pct(121);          # 1.21 kg/m³
+    var c_0 = f64_from(343);       # 343 m/s
+    var gamma = pct(140);          # 1.4
+    var p_0 = f64_from(101325);    # 101325 Pa
+    var pr = pct(71);              # 0.71 Prandtl number
+
+    # Johnson effective density (viscous), magnitude approximation.
+    var visc_ratio = f64_div(f64_mul(sigma, phi), f64_mul(f64_mul(omega, rho_0), alpha_inf));
+    var lambda_term = 0;
+    if (f64_gt(lambda_v, 0) == 1) {
+        var num = f64_mul(f64_mul(f64_mul(f64_from(4), omega), rho_0),
+            f64_mul(f64_mul(alpha_inf, alpha_inf), ETA));
+        var den = f64_mul(f64_mul(f64_mul(sigma, sigma), f64_mul(phi, phi)),
+            f64_mul(lambda_v, lambda_v));
+        lambda_term = f64_div(num, den);
+    }
+    var inner = f64_sqrt(f64_add(F64_ONE, lambda_term));
+    var g_visc = f64_sqrt(f64_sqrt(f64_add(F64_ONE,
+        f64_mul(f64_mul(visc_ratio, visc_ratio), f64_mul(inner, inner)))));
+    var rho_eff_mag = f64_div(f64_mul(f64_mul(rho_0, alpha_inf), g_visc), phi);
+
+    # Champoux-Allard-Lafarge bulk modulus (thermal).
+    var thermal_ratio = 0;
+    if (f64_gt(lambda_t, 0) == 1) {
+        var kappa = milli(26);     # 0.026 thermal conductivity
+        var c_p = f64_from(1005);  # 1005 specific heat
+        var num2 = f64_mul(f64_from(8), kappa);
+        var den2 = f64_mul(f64_mul(f64_mul(lambda_t, lambda_t), c_p),
+            f64_mul(f64_mul(rho_0, pr), omega));
+        thermal_ratio = f64_div(num2, den2);
+    }
+    var thermal_factor = f64_sqrt(f64_add(F64_ONE, f64_mul(thermal_ratio, thermal_ratio)));
+    var denom = f64_sub(gamma, f64_div(f64_sub(gamma, F64_ONE), thermal_factor));
+    var k_eff_mag = 0;
+    if (f64_gt(f64_abs(denom), GOONJ_EPSILON) == 1) {
+        k_eff_mag = f64_div(f64_mul(gamma, p_0), f64_mul(phi, denom));
+    } else {
+        k_eff_mag = f64_div(f64_mul(gamma, p_0), phi);
+    }
+
+    var z_c = f64_sqrt(f64_mul(rho_eff_mag, k_eff_mag));
+    var k_mag = f64_mul(omega, f64_sqrt(f64_div(rho_eff_mag, k_eff_mag)));
+
+    # Surface impedance of rigid-backed layer: |Z_s| ≈ Z_c / |tanh(k·d)|.
+    var kd = f64_mul(k_mag, thickness);
+    var tanh_kd = f64_max(f64_abs(f64_tanh(kd)), pct(1));
+    var z_s = f64_div(z_c, tanh_kd);
+
+    var rho_c = f64_mul(rho_0, c_0);
+    return f64_max(f64_div(z_s, rho_c), pct(1));
+}
+
+# Normal-incidence absorption coefficient (0..1) for a layer.
+#must_use
+fn jcal_absorption_coefficient(mat, frequency, thickness) {
+    var z_norm = jcal_surface_impedance_magnitude(mat, frequency, thickness);
+    var r = f64_abs(f64_div(f64_sub(z_norm, F64_ONE), f64_add(z_norm, F64_ONE)));
+    return f64_clamp(f64_sub(F64_ONE, f64_mul(r, r)), 0, F64_ONE);
+}

@@ -1,0 +1,99 @@
+# resonance.cyr -- room resonance: axial modes, Schroeder frequency,
+# modal density.
+#
+# Ports rust-old/src/resonance.rs. f32 → f64. The Rust `Vec<f32>` returns
+# (axial_modes, all_axial_modes) become stdlib `vec` handles holding f64
+# bit patterns (8 bytes each — an f64 stores directly as the i64 slot).
+# Establishes the dynamic-array idiom for the rest of the port.
+#
+# Requires (from the build/test unit): stdlib math (F64_PI, F64_TWO) and
+# vec (vec_new/push/len/get/set); alloc_init() must have run.
+
+# Axial room-mode frequency for one dimension: f_n = n·c / (2·L).
+# Returns 0 for non-positive length or mode number 0.
+#must_use
+fn room_mode(dimension_length, mode_number, speed_of_sound) {
+    if (f64_le(dimension_length, 0) == 1) { return 0; }
+    if (mode_number == 0) { return 0; }
+    return f64_div(f64_mul(f64_from(mode_number), speed_of_sound),
+        f64_mul(F64_TWO, dimension_length));
+}
+
+# Push every axial mode of `dim` below `max_frequency` onto `dst`.
+fn _append_axial_modes(dst, dim, max_frequency, speed_of_sound) {
+    var n = 1;
+    var go = 1;
+    while (go == 1) {
+        var f = room_mode(dim, n, speed_of_sound);
+        if (f64_gt(f, max_frequency) == 1) { go = 0; }
+        if (f64_le(f, 0) == 1) { go = 0; }
+        if (go == 1) {
+            vec_push(dst, f);
+            n = n + 1;
+        }
+    }
+    return 0;
+}
+
+# All axial modes for one dimension below max_frequency (ascending by n).
+#must_use
+fn axial_modes(dimension_length, max_frequency, speed_of_sound) {
+    var modes = vec_new();
+    _append_axial_modes(modes, dimension_length, max_frequency, speed_of_sound);
+    return modes;
+}
+
+# Ascending insertion sort of a vec by f64 value.
+fn _vec_sort_f64(v) {
+    var n = vec_len(v);
+    var i = 1;
+    while (i < n) {
+        var key = vec_get(v, i);
+        var j = i - 1;
+        var go = 1;
+        while (go == 1) {
+            if (j < 0) { go = 0; }
+            if (go == 1) {
+                if (f64_gt(vec_get(v, j), key) == 1) {
+                    vec_set(v, j + 1, vec_get(v, j));
+                    j = j - 1;
+                } else {
+                    go = 0;
+                }
+            }
+        }
+        vec_set(v, j + 1, key);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# All axial modes for a shoebox (length, width, height) below
+# max_frequency, sorted ascending.
+#must_use
+fn all_axial_modes(length, width, height, max_frequency, speed_of_sound) {
+    var modes = vec_new();
+    _append_axial_modes(modes, length, max_frequency, speed_of_sound);
+    _append_axial_modes(modes, width, max_frequency, speed_of_sound);
+    _append_axial_modes(modes, height, max_frequency, speed_of_sound);
+    _vec_sort_f64(modes);
+    return modes;
+}
+
+# Schroeder frequency: f_s = 2000·√(RT60 / V). Modal below, diffuse above.
+#must_use
+fn schroeder_frequency(rt60, volume) {
+    if (f64_le(volume, 0) == 1) { return 0; }
+    if (f64_le(rt60, 0) == 1) { return 0; }
+    return f64_mul(f64_from(2000), f64_sqrt(f64_div(rt60, volume)));
+}
+
+# Modal density (modes per Hz): n(f) = 4π·V·f² / c³.
+#must_use
+fn modal_density(frequency, volume, speed_of_sound) {
+    if (f64_le(speed_of_sound, 0) == 1) { return 0; }
+    var c3 = f64_mul(f64_mul(speed_of_sound, speed_of_sound), speed_of_sound);
+    var numer = f64_mul(f64_mul(f64_mul(f64_from(4), F64_PI), volume),
+        f64_mul(frequency, frequency));
+    return f64_div(numer, c3);
+}
