@@ -1,0 +1,39 @@
+[package]
+name = "goonj"
+version = "${file:VERSION}"
+description = "goonj — acoustics engine (sound propagation, room simulation, impulse responses). Cyrius port of a 14,630-line Rust library."
+license = "GPL-3.0-only"
+repository = "https://github.com/MacCracken/goonj"
+language = "cyrius"
+cyrius = "6.3.12"
+
+[build]
+entry = "src/main.cyr"
+output = "goonj"
+
+# stdlib: the base port set plus `math` (clamp/min/max/lerp/sign,
+# exp/ln polyfills, F64_* constants) and `ganita` (transcendentals:
+# pow/exp/ln/sin/cos/sqrt/acos/atan2/…). Same pairing hisab uses.
+# Do NOT also list `matrix`/`linalg` — ganita subsumes them.
+[deps]
+stdlib = [
+    "syscalls",
+    "string",
+    "alloc",
+    "str",
+    "fmt",
+    "vec",
+    "io",
+    "args",
+    "assert",
+    "math",
+    "ganita",
+]
+
+# hisab — math/geometry (HVec3 and friends). goonj consumes the single
+# distlib bundle, same pattern hisab uses for its own deps. Tag tracks
+# hisab's current release.
+[deps.hisab]
+git = "https://github.com/MacCracken/hisab.git"
+tag = "2.6.7"
+modules = ["dist/hisab.cyr"]

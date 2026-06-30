@@ -1,0 +1,237 @@
+# propagation.cyr -- sound propagation: speed of sound, inverse-square
+# law, SPL/pressure conversions, atmospheric absorption, Doppler, and
+# ground reflection (Miki 1990).
+#
+# Ports rust-old/src/propagation.rs. f32 → f64 throughout (hisab is
+# f64-only). Vec3 wind/temperature profiles use hisab's HVec3. The two
+# closure-based ray-tracing functions (refract_ray_step,
+# trace_ray_atmospheric) remain on the roadmap (M1,
+# docs/development/roadmap.md): they need the fnptr/callback pattern for
+# the speed_fn closure argument.
+#
+# Self-contained: no `include` lines. Relies on error.cyr (GOONJ_EPSILON,
+# F64_NEG_INF) and stdlib math/ganita (F64_PI, F64_ONE, F64_LN10,
+# f64_pow/exp/ln/sqrt/sin/…) being present in the build/test unit.
+
+# ================================================================
+# Constants (f64 bit patterns; decimal in comments for traceability)
+# ================================================================
+var C_SOUND_BASE   = 0x4074B4CCCCCCCCCD;   # 331.3   m/s at 0 °C
+var C_SOUND_TCOEFF = 0x3FE3645A1CAC0831;   # 0.606   m/s per °C
+var KELVIN_OFFSET  = 0x4071126666666666;   # 273.15  °C → K
+var T_REF_K        = 0x4072526666666666;   # 293.15  K (20 °C reference)
+var T_TRIPLE       = 0x4071128F5C28F5C3;   # 273.16  K (triple point of water)
+var CSAT_A         = 0xC01B56A161E4F766;   # -6.8346
+var CSAT_EXP       = 0x3FF42D0E56041893;   # 1.261
+var CSAT_B         = 0x401275DCC63F1412;   # 4.6151
+var FRO2_B         = 0x40E3BA0000000000;   # 4.04e4
+var FRO2_C         = 0x3F947AE147AE147B;   # 0.02
+var FRO2_D         = 0x3FD90624DD2F1AA0;   # 0.391
+var FRN2_C         = 0xC010AE147AE147AE;   # -4.17
+var ONE_THIRD      = 0x3FD5555555555555;   # 0.3333333333333333
+var ALPHA_A        = 0x3DB43B23BAF4CD2D;   # 1.84e-11
+var T_EXP          = 0xC004000000000000;   # -2.5
+var O2_COEFF       = 0x3F8A1CAC083126E9;   # 0.01275
+var O2_EXPNUM      = 0xC0A17E3333333333;   # -2239.1
+var N2_COEFF       = 0x3FBB573EAB367A10;   # 0.10680
+var N2_EXPNUM      = 0xC0AA300000000000;   # -3352.0
+var NP_TO_DB       = 0x40215F3B645A1CAC;   # 8.686   (1 Np = 8.686 dB)
+var P_REF          = 0x3EF4F8B588E368F1;   # 2.0e-5  Pa (20 µPa reference)
+var MIKI_ZR        = 0x3FB1E4F765FD8ADB;   # 0.0699
+var MIKI_EXP       = 0xBFE4395810624DD3;   # -0.632
+var MIKI_ZI        = 0xBFBB6AE7D566CF42;   # -0.1071
+
+# log10(x) = ln(x) / ln(10)
+fn _prop_log10(x) {
+    return f64_div(f64_ln(x), F64_LN10);
+}
+
+# ================================================================
+# Speed of sound: c = 331.3 + 0.606 * T(°C)
+# ================================================================
+#must_use
+fn speed_of_sound(temperature_celsius) {
+    return f64_add(C_SOUND_BASE, f64_mul(C_SOUND_TCOEFF, temperature_celsius));
+}
+
+# Sound intensity at distance via inverse-square law: I = P / (4π r²).
+#must_use
+fn inverse_square_law(power, distance) {
+    if (f64_le(distance, 0) == 1) { return 0; }
+    var denom = f64_mul(f64_mul(f64_from(4), F64_PI), f64_mul(distance, distance));
+    return f64_div(power, denom);
+}
+
+# SPL drop with distance (dB): ΔL = 20·log10(r2/r1).
+#must_use
+fn spl_drop_with_distance(distance_ref, distance) {
+    if (f64_le(distance_ref, 0) == 1) { return 0; }
+    if (f64_le(distance, 0) == 1) { return 0; }
+    return f64_mul(f64_from(20), _prop_log10(f64_div(distance, distance_ref)));
+}
+
+# ================================================================
+# Atmospheric absorption (ISO 9613-1 / ANSI S1.26), dB/m.
+# Valid: 50 Hz–10 kHz, −20–+50 °C, 10–100 % RH.
+# ================================================================
+#must_use
+fn atmospheric_absorption(frequency_hz, humidity_percent, temperature_celsius, pressure_atm) {
+    if (f64_le(frequency_hz, 0) == 1) { return 0; }
+    if (f64_le(humidity_percent, 0) == 1) { return 0; }
+    if (f64_le(pressure_atm, 0) == 1) { return 0; }
+
+    var t_kelvin = f64_max(f64_add(temperature_celsius, KELVIN_OFFSET), F64_ONE);
+    var f = frequency_hz;
+    var p_rel = pressure_atm;
+
+    # Molar concentration of water vapour from relative humidity.
+    var t01_ratio = f64_div(T_TRIPLE, t_kelvin);
+    var c_sat = f64_add(f64_mul(CSAT_A, f64_pow(t01_ratio, CSAT_EXP)), CSAT_B);
+    var h = f64_div(f64_mul(humidity_percent, f64_pow(f64_from(10), c_sat)), p_rel);
+
+    # Oxygen relaxation frequency.
+    var o2_inner = f64_div(f64_mul(f64_mul(FRO2_B, h), f64_add(FRO2_C, h)), f64_add(FRO2_D, h));
+    var fr_o2 = f64_mul(p_rel, f64_add(f64_from(24), o2_inner));
+
+    # Nitrogen relaxation frequency.
+    var tref_ratio = f64_div(T_REF_K, t_kelvin);
+    var n2_exp_arg = f64_mul(FRN2_C, f64_sub(f64_pow(tref_ratio, ONE_THIRD), F64_ONE));
+    var n2_inner = f64_mul(f64_mul(f64_from(280), h), f64_exp(n2_exp_arg));
+    var fr_n2 = f64_mul(f64_mul(p_rel, f64_sqrt(tref_ratio)), f64_add(f64_from(9), n2_inner));
+
+    var f2 = f64_mul(f, f);
+    var t_ratio = f64_div(t_kelvin, T_REF_K);
+
+    # Classical + rotational term.
+    var classical = f64_mul(f64_mul(ALPHA_A, f64_div(F64_ONE, p_rel)), f64_sqrt(t_ratio));
+
+    # O2 and N2 relaxation terms.
+    var o2_term = f64_div(
+        f64_mul(f64_mul(O2_COEFF, f64_exp(f64_div(O2_EXPNUM, t_kelvin))), fr_o2),
+        f64_add(f64_mul(fr_o2, fr_o2), f2));
+    var n2_term = f64_div(
+        f64_mul(f64_mul(N2_COEFF, f64_exp(f64_div(N2_EXPNUM, t_kelvin))), fr_n2),
+        f64_add(f64_mul(fr_n2, fr_n2), f2));
+
+    var relax = f64_mul(f64_pow(t_ratio, T_EXP), f64_add(o2_term, n2_term));
+    var alpha = f64_mul(f2, f64_add(classical, relax));
+
+    # Nepers/m → dB/m, clamp at 0.
+    return f64_max(f64_mul(alpha, NP_TO_DB), 0);
+}
+
+# ================================================================
+# Doppler-shifted frequency: f' = f·(c + v_listener)/(c + v_source)
+# ================================================================
+#must_use
+fn doppler_shift(source_frequency, source_velocity, listener_velocity, c_sound) {
+    var denom = f64_add(c_sound, source_velocity);
+    if (f64_lt(f64_abs(denom), GOONJ_EPSILON) == 1) { return source_frequency; }
+    return f64_div(f64_mul(source_frequency, f64_add(c_sound, listener_velocity)), denom);
+}
+
+# dB SPL → pressure (Pa): p = p_ref · 10^(dB/20), p_ref = 20 µPa.
+#must_use
+fn db_spl_to_pressure(db_spl) {
+    return f64_mul(P_REF, f64_pow(f64_from(10), f64_div(db_spl, f64_from(20))));
+}
+
+# pressure (Pa) → dB SPL: dB = 20·log10(p/p_ref). Returns −inf for p≤0.
+#must_use
+fn pressure_to_db_spl(pressure_pa) {
+    if (f64_le(pressure_pa, 0) == 1) { return F64_NEG_INF; }
+    return f64_mul(f64_from(20), _prop_log10(f64_div(pressure_pa, P_REF)));
+}
+
+# ================================================================
+# Ground impedance (flow resistivity, Pa·s/m²) + Miki (1990) model.
+# ================================================================
+#derive(accessors)
+struct GroundImpedance { flow_resistivity; }
+
+#must_use
+fn ground_impedance_new(flow_resistivity) {
+    var g = alloc(sizeof(GroundImpedance));
+    GroundImpedance_set_flow_resistivity(g, flow_resistivity);
+    return g;
+}
+#must_use
+fn ground_impedance_grass()     { return ground_impedance_new(f64_from(200000)); }
+#must_use
+fn ground_impedance_hard_soil() { return ground_impedance_new(f64_from(2000000)); }
+#must_use
+fn ground_impedance_asphalt()   { return ground_impedance_new(f64_from(20000000)); }
+
+# Ground reflection coefficient magnitude (0..1) via the Miki (1990) model.
+#must_use
+fn ground_reflection_coefficient(frequency_hz, grazing_angle_rad, impedance) {
+    var resistivity = GroundImpedance_flow_resistivity(impedance);
+    if (f64_le(frequency_hz, 0) == 1) { return F64_ONE; }
+    if (f64_le(resistivity, 0) == 1) { return F64_ONE; }
+
+    var x = f64_div(frequency_hz, resistivity);
+    var x_pow = f64_pow(x, MIKI_EXP);
+    var z_real = f64_add(F64_ONE, f64_mul(MIKI_ZR, x_pow));
+    var z_imag = f64_mul(MIKI_ZI, x_pow);
+
+    var sin_theta = f64_sin(grazing_angle_rad);
+    var num_real = f64_sub(f64_mul(z_real, sin_theta), F64_ONE);
+    var num_imag = f64_mul(z_imag, sin_theta);
+    var den_real = f64_add(f64_mul(z_real, sin_theta), F64_ONE);
+    var den_imag = f64_mul(z_imag, sin_theta);
+
+    var num_mag2 = f64_add(f64_mul(num_real, num_real), f64_mul(num_imag, num_imag));
+    var den_mag2 = f64_add(f64_mul(den_real, den_real), f64_mul(den_imag, den_imag));
+
+    if (f64_lt(den_mag2, GOONJ_EPSILON) == 1) { return F64_ONE; }
+    return f64_clamp(f64_sqrt(f64_div(num_mag2, den_mag2)), 0, F64_ONE);
+}
+
+# ================================================================
+# Atmospheric profiles (Vec3-based) — requires hisab HVec3.
+# ================================================================
+
+# Wind profile: `direction` is an HVec3 pointer (normalized direction),
+# speed_ground in m/s, gradient in (m/s)/m.
+#derive(accessors)
+struct WindProfile { direction; speed_ground; gradient; }
+
+# Temperature profile: ground temperature in °C, lapse rate in °C/m
+# (negative = inversion).
+#derive(accessors)
+struct TemperatureProfile { ground_temp_celsius; lapse_rate; }
+
+#must_use
+fn wind_profile_new(direction, speed_ground, gradient) {
+    var w = alloc(sizeof(WindProfile));
+    WindProfile_set_direction(w, direction);
+    WindProfile_set_speed_ground(w, speed_ground);
+    WindProfile_set_gradient(w, gradient);
+    return w;
+}
+
+#must_use
+fn temperature_profile_new(ground_temp_celsius, lapse_rate) {
+    var t = alloc(sizeof(TemperatureProfile));
+    TemperatureProfile_set_ground_temp_celsius(t, ground_temp_celsius);
+    TemperatureProfile_set_lapse_rate(t, lapse_rate);
+    return t;
+}
+
+# Effective speed of sound at height, accounting for wind:
+# c_eff = base + wind_speed(height) · cos(angle between wind & ray).
+#must_use
+fn refracted_speed(base_speed, wind, ray_direction, height) {
+    var wind_speed = f64_add(WindProfile_speed_ground(wind),
+        f64_mul(WindProfile_gradient(wind), height));
+    var cos_angle = hvec3_dot(WindProfile_direction(wind), ray_direction);
+    return f64_add(base_speed, f64_mul(wind_speed, cos_angle));
+}
+
+# Speed of sound at height, from the temperature gradient.
+#must_use
+fn speed_at_height(profile, height) {
+    var temp = f64_add(TemperatureProfile_ground_temp_celsius(profile),
+        f64_mul(TemperatureProfile_lapse_rate(profile), height));
+    return speed_of_sound(temp);
+}

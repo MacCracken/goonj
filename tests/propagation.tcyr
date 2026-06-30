@@ -1,0 +1,135 @@
+# propagation.tcyr -- parity tests for src/propagation.cyr (scalar core)
+# Ported from the #[test] blocks in rust-old/src/propagation.rs.
+# Stdlib (math/ganita) auto-included via cyrius.cyml.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/propagation.cyr"
+
+# Tolerances (f64 bit patterns)
+var TOL_1E1 = 0x3FB999999999999A;   # 0.1
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
+var V_343_42 = 0x407576B851EB851F;  # 343.42
+var V_331_3  = 0x4074B4CCCCCCCCCD;  # 331.3
+var V_6_02   = 0x4018147AE147AE14;  # 6.02
+var V_0_8    = 0x3FE999999999999A;  # 0.8
+var LAPSE_STD = 0xBF7A9FBE76C8B439; # -0.0065  (standard atmosphere lapse rate)
+
+# |a - b| < tol  ->  1
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("speed_of_sound");
+# c(20°C) ≈ 343.42 m/s
+assert(approx(speed_of_sound(f64_from(20)), V_343_42, TOL_1E1), "speed at 20C ~343.42");
+# c(0°C) ≈ 331.3 m/s
+assert(approx(speed_of_sound(f64_from(0)), V_331_3, TOL_1E1), "speed at 0C ~331.3");
+
+# ================================================================
+test_group("inverse_square_law");
+# Intensity drops 4x per doubling of distance.
+var i1 = inverse_square_law(f64_from(100), F64_ONE);
+var i2 = inverse_square_law(f64_from(100), F64_TWO);
+assert(approx(f64_div(i1, i2), f64_from(4), TOL_1E2), "intensity 4x at 2x distance");
+# Guards: zero / negative distance → 0.
+assert_eq(f64_to(inverse_square_law(f64_from(100), 0)), 0, "zero distance -> 0");
+assert_eq(f64_to(inverse_square_law(f64_from(100), f64_neg(f64_from(5)))), 0, "neg distance -> 0");
+
+# ================================================================
+test_group("spl_drop_with_distance");
+# ~6 dB drop per distance doubling.
+assert(approx(spl_drop_with_distance(F64_ONE, F64_TWO), V_6_02, TOL_1E1), "~6 dB per doubling");
+# Equal distances → 0 dB.
+assert(approx(spl_drop_with_distance(f64_from(5), f64_from(5)), 0, TOL_1E3), "equal distance 0 dB");
+# Guards.
+assert_eq(f64_to(spl_drop_with_distance(0, f64_from(5))), 0, "zero ref -> 0");
+assert_eq(f64_to(spl_drop_with_distance(f64_from(5), 0)), 0, "zero distance -> 0");
+
+# ================================================================
+test_group("atmospheric_absorption");
+var a1k = atmospheric_absorption(f64_from(1000), f64_from(50), f64_from(20), F64_ONE);
+var a4k = atmospheric_absorption(f64_from(4000), f64_from(50), f64_from(20), F64_ONE);
+var a8k = atmospheric_absorption(f64_from(8000), f64_from(50), f64_from(20), F64_ONE);
+# Increases with frequency.
+assert(f64_gt(a4k, a1k), "absorption rises with frequency");
+# ISO 9613-1 reference window at 1 kHz: 0.001 < a < 0.02.
+assert(f64_gt(a1k, TOL_1E3), "1kHz absorption > 0.001 dB/m");
+assert(f64_lt(a1k, f64_div(f64_from(2), f64_from(100))), "1kHz absorption < 0.02 dB/m");
+# 8 kHz much higher than 1 kHz.
+assert(f64_gt(a8k, f64_mul(a1k, f64_from(5))), "8kHz >> 1kHz");
+# Guards: zero humidity / negative frequency → 0.
+assert_eq(f64_to(atmospheric_absorption(f64_from(1000), 0, f64_from(20), F64_ONE)), 0, "zero humidity -> 0");
+assert_eq(f64_to(atmospheric_absorption(f64_neg(f64_from(100)), f64_from(50), f64_from(20), F64_ONE)), 0, "neg freq -> 0");
+
+# ================================================================
+test_group("doppler_shift");
+var c20 = speed_of_sound(f64_from(20));
+# Approaching source (negative source velocity) raises frequency.
+assert(f64_gt(doppler_shift(f64_from(440), f64_neg(f64_from(30)), 0, c20), f64_from(440)), "approach raises freq");
+# Receding source lowers frequency.
+assert(f64_lt(doppler_shift(f64_from(440), f64_from(30), 0, c20), f64_from(440)), "recede lowers freq");
+# Stationary → no shift.
+assert(approx(doppler_shift(f64_from(440), 0, 0, c20), f64_from(440), TOL_1E2), "stationary no shift");
+# Denominator ≈ 0 → returns source frequency.
+assert(approx(doppler_shift(f64_from(440), f64_neg(c20), 0, c20), f64_from(440), TOL_1E2), "near-zero denom returns source");
+
+# ================================================================
+test_group("db_spl <-> pressure");
+# 94 dB SPL ≈ 1 Pa; round-trip back to ~94 dB.
+var p94 = db_spl_to_pressure(f64_from(94));
+assert(approx(p94, F64_ONE, TOL_1E2), "94 dB ~ 1 Pa");
+assert(approx(pressure_to_db_spl(p94), f64_from(94), TOL_1E1), "roundtrip ~94 dB");
+# Zero pressure → −inf.
+assert_eq(pressure_to_db_spl(0), F64_NEG_INF, "p<=0 -> -inf");
+
+# ================================================================
+test_group("ground_reflection_coefficient");
+var asphalt = ground_impedance_asphalt();
+var grass = ground_impedance_grass();
+var soil = ground_impedance_hard_soil();
+# Asphalt at grazing angle reflects most energy.
+assert(f64_gt(ground_reflection_coefficient(f64_from(1000), TOL_1E1, asphalt), V_0_8), "asphalt grazing high R");
+# Asphalt reflects more than grass at 30°.
+var ang30 = f64_div(F64_PI, f64_from(6));
+var r_grass = ground_reflection_coefficient(f64_from(1000), ang30, grass);
+var r_asphalt = ground_reflection_coefficient(f64_from(1000), ang30, asphalt);
+assert(f64_gt(r_asphalt, r_grass), "asphalt > grass");
+# Zero frequency / zero resistivity → R = 1.
+assert(approx(ground_reflection_coefficient(0, f64_div(F64_ONE, F64_TWO), soil), F64_ONE, TOL_1E3), "zero freq -> R=1");
+assert(approx(ground_reflection_coefficient(f64_from(1000), f64_div(F64_ONE, F64_TWO), ground_impedance_new(0)), F64_ONE, TOL_1E3), "zero resistivity -> R=1");
+# In-range sweep stays within [0, 1].
+var r_soil = ground_reflection_coefficient(f64_from(500), F64_ONE, soil);
+assert(f64_ge(r_soil, 0), "R >= 0");
+assert(f64_le(r_soil, F64_ONE), "R <= 1");
+
+# ================================================================
+test_group("refracted_speed / speed_at_height (Vec3)");
+var base = speed_of_sound(f64_from(20));
+# Downwind (ray along wind) raises effective speed; upwind lowers it.
+var wind_x = wind_profile_new(hvec3_unit_x(), f64_from(10), 0);
+assert(f64_gt(refracted_speed(base, wind_x, hvec3_unit_x(), 0), base), "downwind raises speed");
+assert(f64_lt(refracted_speed(base, wind_x, hvec3_neg(hvec3_unit_x()), 0), base), "upwind lowers speed");
+# No wind → base speed unchanged.
+var wind_calm = wind_profile_new(hvec3_unit_x(), 0, 0);
+assert(approx(refracted_speed(base, wind_calm, hvec3_unit_x(), 0), base, TOL_1E3), "no wind -> base");
+# Positive gradient → wind (and effective speed) rises with height.
+var wind_grad = wind_profile_new(hvec3_unit_x(), f64_from(5), F64_HALF);
+var eff_lo = refracted_speed(base, wind_grad, hvec3_unit_x(), 0);
+var eff_hi = refracted_speed(base, wind_grad, hvec3_unit_x(), f64_from(100));
+assert(f64_gt(eff_hi, eff_lo), "gradient raises speed with height");
+# Normal lapse → speed decreases with height; inversion → increases.
+var prof = temperature_profile_new(f64_from(20), LAPSE_STD);
+assert(f64_gt(speed_at_height(prof, 0), speed_at_height(prof, f64_from(1000))), "normal lapse decreases with height");
+var prof_inv = temperature_profile_new(f64_from(10), TOL_1E2);
+assert(f64_lt(speed_at_height(prof_inv, 0), speed_at_height(prof_inv, f64_from(100))), "inversion increases with height");
+# Zero height → ground speed.
+assert(approx(speed_at_height(prof, 0), speed_of_sound(f64_from(20)), TOL_1E3), "zero height -> ground speed");
+
+var rc = assert_summary();
+syscall(60, rc);

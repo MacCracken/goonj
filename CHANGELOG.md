@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### 2.0.0 — Cyrius port (in progress)
+
+Major break: goonj is being rewritten from Rust to **Cyrius** (sovereign
+systems language, compiled by `cycc`). The 1.4.3 Rust source is frozen at
+`rust-old/` as the parity oracle. Parity progress is tracked in
+[`docs/development/port-audit.md`](docs/development/port-audit.md); the
+milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md).
+
+#### Added
+- **Cyrius scaffold** — `cyrius port` layout: `src/main.cyr` smoke binary,
+  per-module library sources, `cyrius.cyml` manifest (toolchain pin 6.3.12,
+  stdlib + `math`/`ganita`, hisab 2.6.7 distlib dep), `cyrius.lock`.
+- **error** — `src/error.cyr`. Integer error codes replace the `GoonjError`
+  enum (`ERR_*` + `goonj_is_err`/`goonj_err_name`); shared `GOONJ_EPSILON`
+  and `F64_NEG_INF`.
+- **propagation** — `src/propagation.cyr`. Scalar core (speed of sound,
+  inverse-square law, SPL↔pressure, ISO 9613-1 atmospheric absorption,
+  Doppler, Miki 1990 ground reflection) plus the `HVec3` wind/temperature
+  profiles (`refracted_speed`, `speed_at_height`). 35 parity assertions in
+  `tests/propagation.tcyr`, all green.
+
+#### Changed (port-wide conventions)
+- **f32 → f64** throughout — hisab's `HVec3` is f64-only.
+- **Rust enums with String payloads → integer error codes**.
+- **`hisab::Vec3` → hisab `HVec3`** (consumed via the `dist/hisab.cyr` bundle).
+
+#### Breaking
+- Entire public API moves from Rust to Cyrius. Rust consumers stay on the
+  1.4.x line; Cyrius consumers target 2.0.0. Migration is per-module as the
+  port lands — see the port audit.
+
 ## [1.4.3] - 2026-05-01
 
 Third rung of the v1.4.x ladder: dispersion characterization and a

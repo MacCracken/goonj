@@ -1,0 +1,40 @@
+# error.cyr -- goonj error codes + shared tolerances
+# Usage: included by build/test entry; do not `include` other src modules.
+#
+# Ports rust-old/src/error.rs (GoonjError enum). Rust carried a String
+# payload per variant; Cyrius uses integer codes — functions return 0
+# (ERR_NONE) on success or a negative code on failure. Diagnostic
+# strings, where needed, come from goonj_err_name().
+
+var ERR_NONE              = 0;
+var ERR_INVALID_GEOMETRY  = (0 - 1);   # invalid room/wall geometry (too few vertices, etc.)
+var ERR_INVALID_MATERIAL  = (0 - 2);   # invalid material params (absorption outside 0..1)
+var ERR_INVALID_FREQUENCY = (0 - 3);   # invalid frequency (negative Hz, etc.)
+var ERR_PROPAGATION_FAILED = (0 - 4);  # propagation computation failed
+var ERR_COMPUTATION       = (0 - 5);   # general computation error (e.g. WAV export I/O)
+
+# ================================================================
+# Shared tolerances / sentinels (f64 bit patterns)
+# ================================================================
+# goonj's Rust source was f32; the Cyrius port is f64 throughout
+# (hisab's HVec3 is f64-only). GOONJ_EPSILON preserves the f32::EPSILON
+# guard thresholds the Rust code used, promoted to f64.
+var GOONJ_EPSILON = 0x3E80000000000000;   # f32::EPSILON = 1.1920929e-7
+var F64_NEG_INF   = 0xFFF0000000000000;   # -inf (pressure_to_db_spl of <=0 pressure)
+
+# 1 if `code` is an error (negative), 0 otherwise.
+fn goonj_is_err(code) {
+    if (code < 0) { return 1; }
+    return 0;
+}
+
+# Static name for an error code (for diagnostics / logging).
+fn goonj_err_name(code) {
+    if (code == ERR_NONE) { return "none"; }
+    if (code == ERR_INVALID_GEOMETRY) { return "invalid geometry"; }
+    if (code == ERR_INVALID_MATERIAL) { return "invalid material"; }
+    if (code == ERR_INVALID_FREQUENCY) { return "invalid frequency"; }
+    if (code == ERR_PROPAGATION_FAILED) { return "propagation failed"; }
+    if (code == ERR_COMPUTATION) { return "computation error"; }
+    return "unknown error";
+}
