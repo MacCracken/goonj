@@ -83,7 +83,7 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 | ray          | 1146 | ✅ | 275 | material, room — hot path; ported solo + `tests/ray.bcyr` benchmark |
 | radiosity    |  283 | ✅ | 7 | material, room |
 | image_source |  634 | ✅ | 30 | material, propagation, room |
-| dwm          | 1407 | ⬜ | — | fdtd ✅, hybrid, material — largest module |
+| dwm          | 1407 | 🟡 | 36 | fdtd ✅, hybrid, material — largest module. Sub-bite A done: config, `BoundaryFilter`, dispersion char/correction, `required_dx`/`mesh_frequency` (36 tests). Pending: `solve_dwm_3d` solver + benchmark. `DWM_`-prefixed to avoid fdtd's `MAX_GRID_CELLS`/`band_energies`. |
 
 ### L4 — energy & metrics
 
@@ -106,7 +106,7 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 | integration/kiran   | 168 | ⬜ | (consumer API) |
 | integration/soorat  | 165 | ⬜ | (consumer API) |
 
-**Totals:** 24 / 37 done, 13 pending · 14,630 Rust lines · **1015 parity assertions green**.
+**Totals:** 24 / 37 done (+ dwm partial), 13 pending · 14,630 Rust lines · **1051 parity assertions green**.
 Toolchain: cyrius **6.3.14** (pinned deliberately — held here, not chased to
 newer wrappers). Two parallel workflows landed the L2 batch (13) and wave 2 (6);
 `ray` (hot path, 275 assertions + a benchmark) was ported solo. Remaining: dwm

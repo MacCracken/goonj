@@ -60,9 +60,17 @@ milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md
   the stdlib deps. Tuple returns → `RayHit`/`NearestWall` structs;
   `Option<f32>` → negative sentinel.
 
+- **dwm** (partial) — `src/dwm.cyr`. 3D rectilinear Digital Waveguide Mesh.
+  Sub-bite A: `WallMaterials`, `DwmConfig`, `BoundaryFilter` (1-pole IIR
+  reflection filter fitted to 63 Hz/8 kHz absorption), `DwmSource`/`DwmReceiver`/
+  `DwmResult`, `required_dx`, `mesh_frequency`, `dispersion_factor`, and
+  `DispersionCorrection` (2-tap FIR). 36 parity assertions in `tests/dwm.tcyr`.
+  `DWM_`-prefixed constants + `dwm_band_energies` avoid flat-namespace clashes
+  with the co-compiled `fdtd`. Pending: the `solve_dwm_3d` solver + benchmark.
+
 ### Changed
 - Toolchain pin **6.3.12 → 6.3.14** (`cyrius.cyml`); stdlib re-vendored. No
-  source changes required — all 1015 assertions stay green. Pin held at 6.3.14.
+  source changes required — all 1051 assertions stay green. Pin held at 6.3.14.
 
 #### Changed (port-wide conventions)
 - **f32 → f64** throughout — hisab's `HVec3` is f64-only.

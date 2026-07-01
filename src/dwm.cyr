@@ -1,0 +1,289 @@
+# dwm.cyr -- 3D rectilinear Digital Waveguide Mesh (Smith / Van Duyne):
+# wave-based room acoustics on a regular lattice with per-face IIR
+# boundary reflection filters, plus dispersion characterization/correction.
+#
+# Ports rust-old/src/dwm.rs. f32 -> f64. serde dropped. Flat-namespace
+# care: the co-compiled `fdtd` already defines MAX_GRID_CELLS,
+# MAX_TIME_STEPS and band_energies, so this module uses DWM_-prefixed grid
+# constants, `dwm_band_energies` (delegates to fdtd's `band_energies`), and
+# `_dwm_`-prefixed private helpers.
+#
+# This file is sub-bite A: everything EXCEPT the solve_dwm_3d solver, which
+# lands next (see docs/development/roadmap.md M3). Requires (build/test
+# unit): error.cyr, material.cyr (NUM_BANDS, am_*, _am_make), hybrid.cyr,
+# fdtd.cyr (band_energies), stdlib math/ganita/vec. alloc_init() first.
+
+var DWM_SQRT_3         = 0x3FFBB67AE6502B91;   # 1.7320508  (√3)
+var DWM_K              = 6;                     # waveguide ports per node
+var DWM_SCATTER        = 0x3FD5555555555555;   # 2/K = 0.33333…
+var DWM_MAX_GRID_CELLS = 4000000;
+var DWM_MAX_TIME_STEPS = 1000000;
+var DWM_DX_WARN_TOL    = 0x3F847AE147AE147B;   # 0.01
+var DWM_DX_FAIL_TOL    = 0x3FB999999999999A;   # 0.10
+var DWM_DEFAULT_BOOST  = 0x3FF0CCCCCCCCCCCD;   # 1.05
+var DWM_DX_DEFAULT     = 0x3F9B9628CBD1244A;   # 0.02694
+var DWM_DUR_DEFAULT    = 0x3FA999999999999A;   # 0.05
+var DWM_POS_099        = 0x3FEFAE147AE147AE;   # 0.99
+var DWM_NEG_099        = 0xBFEFAE147AE147AE;   # -0.99
+
+# ================================================================
+# WallMaterials — per-face materials (each an AcousticMaterial ptr).
+# ================================================================
+#derive(accessors)
+struct WallMaterials { x_neg; x_pos; y_neg; y_pos; z_neg; z_pos; }
+
+#must_use
+fn wall_materials_new(x_neg, x_pos, y_neg, y_pos, z_neg, z_pos) {
+    var w = alloc(sizeof(WallMaterials));
+    WallMaterials_set_x_neg(w, x_neg);
+    WallMaterials_set_x_pos(w, x_pos);
+    WallMaterials_set_y_neg(w, y_neg);
+    WallMaterials_set_y_pos(w, y_pos);
+    WallMaterials_set_z_neg(w, z_neg);
+    WallMaterials_set_z_pos(w, z_pos);
+    return w;
+}
+
+# All six faces share one material (read-only sharing; Rust cloned).
+#must_use
+fn wall_materials_uniform(material) {
+    return wall_materials_new(material, material, material, material, material, material);
+}
+
+# Fully rigid walls: zero absorption everywhere (R = 1).
+#must_use
+fn wall_materials_rigid() {
+    return wall_materials_uniform(_am_make("rigid", 0, 0, 0, 0, 0, 0, 0, 0, 0));
+}
+
+# ================================================================
+# DwmConfig
+# ================================================================
+#derive(accessors)
+struct DwmConfig { sample_rate; dx; speed_of_sound; nx; ny; nz; duration_seconds; wall_materials; }
+
+#must_use
+fn dwm_config_new(sample_rate, dx, speed_of_sound, nx, ny, nz, duration_seconds, wall_materials) {
+    var c = alloc(sizeof(DwmConfig));
+    DwmConfig_set_sample_rate(c, sample_rate);
+    DwmConfig_set_dx(c, dx);
+    DwmConfig_set_speed_of_sound(c, speed_of_sound);
+    DwmConfig_set_nx(c, nx);
+    DwmConfig_set_ny(c, ny);
+    DwmConfig_set_nz(c, nz);
+    DwmConfig_set_duration_seconds(c, duration_seconds);
+    DwmConfig_set_wall_materials(c, wall_materials);
+    return c;
+}
+
+# Default: 22050 Hz, dx≈0.02694, c=343, 30×25×20, 0.05 s, rigid walls.
+#must_use
+fn dwm_config_default() {
+    return dwm_config_new(22050, DWM_DX_DEFAULT, f64_from(343), 30, 25, 20,
+    DWM_DUR_DEFAULT, wall_materials_rigid());
+}
+
+# Builder: set all faces to one material; mutate + return the config.
+#must_use
+fn dwm_config_with_acoustic_material(config, material) {
+    DwmConfig_set_wall_materials(config, wall_materials_uniform(material));
+    return config;
+}
+#must_use
+fn dwm_config_with_wall_materials(config, walls) {
+    DwmConfig_set_wall_materials(config, walls);
+    return config;
+}
+
+# ================================================================
+# BoundaryFilter — 1-pole IIR reflection filter H(z)=b0/(1-a1 z^-1),
+# fitted to a material's 63 Hz and 8 kHz absorption.
+# ================================================================
+#derive(accessors)
+struct BoundaryFilter { b0; a1; }
+
+#must_use
+fn boundary_filter_from_material(material) {
+    var alpha_low = f64_clamp(am_absorption_band(material, 0), 0, F64_ONE);
+    var alpha_high = f64_clamp(am_absorption_band(material, NUM_BANDS - 1), 0, F64_ONE);
+    var r_low = f64_sqrt(f64_max(f64_sub(F64_ONE, alpha_low), 0));
+    var r_high = f64_sqrt(f64_max(f64_sub(F64_ONE, alpha_high), 0));
+    var denom = f64_add(r_low, r_high);
+    var a1 = 0;
+    if (f64_gt(denom, GOONJ_EPSILON) == 1) {
+        a1 = f64_clamp(f64_div(f64_sub(r_low, r_high), denom), DWM_NEG_099, DWM_POS_099);
+    }
+    var b0 = f64_mul(r_low, f64_sub(F64_ONE, a1));
+    var f = alloc(sizeof(BoundaryFilter));
+    BoundaryFilter_set_b0(f, b0);
+    BoundaryFilter_set_a1(f, a1);
+    return f;
+}
+
+# y[n] = b0·x + a1·prev_y
+#must_use
+fn boundary_filter_process(filter, x, prev_y) {
+    return f64_add(f64_mul(BoundaryFilter_b0(filter), x), f64_mul(BoundaryFilter_a1(filter), prev_y));
+}
+
+# ================================================================
+# DwmSource / DwmReceiver / DwmResult
+# ================================================================
+#derive(accessors)
+struct DwmSource { ix; iy; iz; signal; }
+
+# Gaussian pulse centred at peak_step, width sigma_steps; ~6σ long.
+#must_use
+fn dwm_source_gaussian_pulse(ix, iy, iz, peak_step, sigma_steps, amplitude) {
+    var n = f64_to(f64_ceil(f64_add(f64_from(peak_step), f64_mul(f64_from(6), sigma_steps))));
+    if (n < 1) { n = 1; }
+    var inv_sigma = f64_div(F64_ONE, f64_max(sigma_steps, F64_ONE));
+    var signal = vec_new();
+    var i = 0;
+    while (i < n) {
+        var arg = f64_mul(f64_sub(f64_from(i), f64_from(peak_step)), inv_sigma);
+        var val = f64_mul(amplitude, f64_exp(f64_mul(f64_neg(F64_HALF), f64_mul(arg, arg))));
+        vec_push(signal, val);
+        i = i + 1;
+    }
+    var s = alloc(sizeof(DwmSource));
+    DwmSource_set_ix(s, ix);
+    DwmSource_set_iy(s, iy);
+    DwmSource_set_iz(s, iz);
+    DwmSource_set_signal(s, signal);
+    return s;
+}
+
+#derive(accessors)
+struct DwmReceiver { ix; iy; iz; }
+
+#must_use
+fn dwm_receiver_new(ix, iy, iz) {
+    var r = alloc(sizeof(DwmReceiver));
+    DwmReceiver_set_ix(r, ix);
+    DwmReceiver_set_iy(r, iy);
+    DwmReceiver_set_iz(r, iz);
+    return r;
+}
+
+#derive(accessors)
+struct DwmResult { receiver_signals; final_pressure; time_steps; dt; }
+
+#must_use
+fn _dwm_empty_result() {
+    var r = alloc(sizeof(DwmResult));
+    DwmResult_set_receiver_signals(r, vec_new());
+    DwmResult_set_final_pressure(r, vec_new());
+    DwmResult_set_time_steps(r, 0);
+    DwmResult_set_dt(r, 0);
+    return r;
+}
+
+# Row-major flat index (z*ny + y)*nx + x.
+#must_use
+fn _dwm_idx(x, y, z, nx, ny) {
+    return (z * ny + y) * nx + x;
+}
+
+# ================================================================
+# Convenience / characterization functions
+# ================================================================
+# Grid spacing required for a sample rate + sound speed: Δx = c·√3 / fs.
+#must_use
+fn required_dx(sample_rate, speed_of_sound) {
+    if (sample_rate == 0) { return 0; }
+    return f64_div(f64_mul(speed_of_sound, DWM_SQRT_3), f64_from(sample_rate));
+}
+
+# Per-band energies (delegates to fdtd's Goertzel helper).
+#must_use
+fn dwm_band_energies(signal, sample_rate) {
+    return band_energies(signal, sample_rate);
+}
+
+# Mesh frequency f_mesh = c / (2·Δx); 0 if dx ≤ 0.
+#must_use
+fn mesh_frequency(config) {
+    var dx = DwmConfig_dx(config);
+    if (f64_le(dx, 0) == 1) { return 0; }
+    return f64_div(DwmConfig_speed_of_sound(config), f64_mul(F64_TWO, dx));
+}
+
+# Dispersion factor f_sim/f_true for axis-aligned propagation (1 at DC,
+# → 0 at the mesh limit, 0 above it, 1 for invalid input).
+#must_use
+fn dispersion_factor(config, frequency_hz) {
+    if (f64_le(frequency_hz, 0) == 1) { return F64_ONE; }
+    if (DwmConfig_sample_rate(config) == 0) { return F64_ONE; }
+    if (f64_le(DwmConfig_speed_of_sound(config), 0) == 1) { return F64_ONE; }
+    if (f64_ge(frequency_hz, mesh_frequency(config)) == 1) { return 0; }
+
+    var dt = f64_div(F64_ONE, f64_from(DwmConfig_sample_rate(config)));
+    var omega_true = f64_mul(F64_TAU, frequency_hz);
+    var arg = f64_div(f64_mul(f64_mul(omega_true, dt), DWM_SQRT_3), F64_TWO);
+    var sin_arg = f64_clamp(f64_div(f64_sin(arg), DWM_SQRT_3), f64_neg(F64_ONE), F64_ONE);
+    var omega_sim = f64_div(f64_mul(F64_TWO, f64_asin(sin_arg)), dt);
+    if (f64_lt(f64_abs(omega_true), GOONJ_EPSILON) == 1) { return F64_ONE; }
+    return f64_div(omega_sim, omega_true);
+}
+
+# ================================================================
+# DispersionCorrection — 2-tap FIR y[n] = b0·x[n] + b1·x[n-1].
+# ================================================================
+#derive(accessors)
+struct DispersionCorrection { b0; b1; }
+
+#must_use
+fn dispersion_correction_new(b0, b1) {
+    var d = alloc(sizeof(DispersionCorrection));
+    DispersionCorrection_set_b0(d, b0);
+    DispersionCorrection_set_b1(d, b1);
+    return d;
+}
+
+#must_use
+fn dispersion_correction_passthrough() {
+    return dispersion_correction_new(F64_ONE, 0);
+}
+
+# Calibrate so the boost at f_mesh/2 matches `boost` with unity DC gain.
+#must_use
+fn dispersion_correction_calibrated(config, boost) {
+    var f_mesh = mesh_frequency(config);
+    if (f64_le(f_mesh, 0) == 1) { return dispersion_correction_passthrough(); }
+    if (DwmConfig_sample_rate(config) == 0) { return dispersion_correction_passthrough(); }
+
+    var omega_target = f64_div(f64_mul(F64_TAU, f64_mul(F64_HALF, f_mesh)),
+    f64_from(DwmConfig_sample_rate(config)));
+    var cos_t = f64_cos(omega_target);
+    var denom = f64_mul(F64_TWO, f64_sub(cos_t, F64_ONE));
+    if (f64_lt(f64_abs(denom), GOONJ_EPSILON) == 1) { return dispersion_correction_passthrough(); }
+
+    var target_sq = f64_mul(boost, boost);
+    var rhs = f64_div(f64_sub(target_sq, F64_ONE), denom);
+    var disc = f64_sub(F64_ONE, f64_mul(f64_from(4), rhs));
+    if (f64_lt(disc, 0) == 1) { return dispersion_correction_passthrough(); }
+    var root = f64_sqrt(disc);
+    var b0 = f64_mul(f64_add(F64_ONE, root), F64_HALF);
+    return dispersion_correction_new(b0, f64_sub(F64_ONE, b0));
+}
+
+#must_use
+fn dispersion_correction_for_config(config) {
+    return dispersion_correction_calibrated(config, DWM_DEFAULT_BOOST);
+}
+
+# Apply the FIR in place to a vec signal (backwards so x[i-1] survives).
+fn dispersion_correction_apply(dc, signal) {
+    var n = vec_len(signal);
+    if (n == 0) { return 0; }
+    var b0 = DispersionCorrection_b0(dc);
+    var b1 = DispersionCorrection_b1(dc);
+    var i = n - 1;
+    while (i >= 1) {
+        vec_set(signal, i, f64_add(f64_mul(b0, vec_get(signal, i)), f64_mul(b1, vec_get(signal, i - 1))));
+        i = i - 1;
+    }
+    vec_set(signal, 0, f64_mul(b0, vec_get(signal, 0)));
+    return 0;
+}

@@ -67,9 +67,11 @@ The workflow proved the recipe scales: no new patterns, all gates green.
 ### M3 — Acceleration & sources (L3) — 🟡 3/4
 
 radiosity ✅ + image_source ✅ (wave 2); **ray ✅** ported solo (275 assertions
-+ `tests/ray.bcyr` benchmark — BVH vs linear crossover documented in
-docs/benchmarks/results.md). Remaining: **dwm** (largest module, 1407 ln; deps
-all done) — solo, with a benchmark.
++ `tests/ray.bcyr` benchmark). **dwm 🟡** — being ported solo in two sub-bites
+(too large for one): **A ✅** non-solver API (config, `BoundaryFilter`,
+dispersion characterization/correction, 36 tests, `DWM_`-prefixed to dodge
+fdtd's flat-namespace symbols); **B pending** — the `solve_dwm_3d` 3D grid
+solver + a benchmark.
 
 ### M4 — Energy & metrics (L4)
 

@@ -26,15 +26,15 @@
 
 Per-module parity is tracked in [`port-audit.md`](port-audit.md). Summary:
 
-**24 / 37 modules ported · 1015 parity assertions green across 23 suites.**
+**24 / 37 modules ported (+ dwm partial) · 1051 parity assertions green across 24 suites.**
 
 | Layer | Modules (✅) |
 |-------|-------------|
 | L0    | error, propagation (full, 44), resonance (15), ambisonics (20), scattering (211), dark_velvet_noise (18) |
 | L1    | material (65) |
 | L2    | hybrid (20), directivity (19), metamaterial (51), room (10), fdn (14), gfpe (23), diffusion (7), fdtd (39), outdoor (28), portal (14), udfa (15), underwater (36), vibroacoustics (25), bridge (29) |
-| L3    | radiosity (7), image_source (30), ray (275, + benchmark) |
-| pending | dwm (largest), logging (→ sakshi); L4 (diffuse, diffraction, analysis, beam), L5 (impulse, coupled), L6 (wav, binaural, integration ×3) — 13 modules |
+| L3    | radiosity (7), image_source (30), ray (275, + benchmark); dwm 🟡 (non-solver API, 36) |
+| pending | dwm solver (`solve_dwm_3d` + benchmark), logging (→ sakshi); L4 (diffuse, diffraction, analysis, beam), L5 (impulse, coupled), L6 (wav, binaural, integration ×3) |
 
 Per-module detail in [`port-audit.md`](port-audit.md). Benchmarks in
 [`../benchmarks/results.md`](../benchmarks/results.md). Toolchain: cyrius **6.3.14**.

@@ -1,0 +1,178 @@
+# dwm.tcyr -- parity tests for src/dwm.cyr (sub-bite A: non-solver API).
+# Ported from the non-solver #[test] blocks in rust-old/src/dwm.rs
+# (serde tests dropped; solver tests land with solve_dwm_3d).
+
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/hybrid.cyr"
+include "src/fdtd.cyr"
+include "src/dwm.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E4 = 0x3F1A36E2EB1C432D;   # ~1e-4
+var TOL_1E5 = 0x3EE4F8B588E368F1;   # 1e-5
+var TOL_1E6 = 0x3EB0C6F7A0B5ED8D;   # 1e-6
+var V_6364  = 0x40B8DC0000000000;   # 6364.0
+var V_0_9   = 0x3FECCCCCCCCCCCCD;   # 0.9
+var V_1_10  = 0x3FF199999999999A;   # 1.10
+var V_3_6   = 0x400CCCCCCCCCCCCD;   # 3.6
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+fn small_config() {
+    return dwm_config_new(22050, required_dx(22050, f64_from(343)), f64_from(343),
+    30, 25, 20, DWM_DUR_DEFAULT, wall_materials_rigid());
+}
+
+# Magnitude of H(z)=b0/(1-a1 z^-1) at normalized frequency omega.
+fn iir_magnitude(filter, omega) {
+    var a1 = BoundaryFilter_a1(filter);
+    var cos_w = f64_cos(omega);
+    var sin_w = f64_sin(omega);
+    var re = f64_sub(F64_ONE, f64_mul(a1, cos_w));
+    var im = f64_mul(a1, sin_w);
+    var denom = f64_max(f64_sqrt(f64_add(f64_mul(re, re), f64_mul(im, im))), GOONJ_EPSILON);
+    return f64_div(f64_abs(BoundaryFilter_b0(filter)), denom);
+}
+
+# All 8 absorption bands of a wall face equal to `expected`?
+fn face_all_absorption(face, expected, tol) {
+    var i = 0;
+    while (i < 8) {
+        if (approx(am_absorption_band(face, i), expected, tol) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("required_dx");
+assert(approx(required_dx(22050, f64_from(343)),
+f64_div(f64_mul(f64_from(343), DWM_SQRT_3), f64_from(22050)), TOL_1E6), "matches formula");
+assert_eq(f64_to(required_dx(0, f64_from(343))), 0, "zero sample rate -> 0");
+
+# ================================================================
+test_group("WallMaterials / DwmConfig");
+# Default config uses rigid (zero-absorption) walls.
+var cfg_def = dwm_config_default();
+assert(face_all_absorption(WallMaterials_x_neg(DwmConfig_wall_materials(cfg_def)), 0, TOL_1E6), "default walls rigid");
+# Rigid faces have zero absorption on every band.
+var rigid = wall_materials_rigid();
+assert(face_all_absorption(WallMaterials_z_pos(rigid), 0, TOL_1E6), "rigid zero absorption");
+# uniform(carpet) clones carpet to all six faces.
+var carpet = acoustic_material_carpet();
+var avg_carpet = average_absorption(carpet);
+var uni = wall_materials_uniform(carpet);
+assert(approx(average_absorption(WallMaterials_x_neg(uni)), avg_carpet, TOL_1E6), "uniform x_neg");
+assert(approx(average_absorption(WallMaterials_y_pos(uni)), avg_carpet, TOL_1E6), "uniform y_pos");
+assert(approx(average_absorption(WallMaterials_z_neg(uni)), avg_carpet, TOL_1E6), "uniform z_neg");
+# with_acoustic_material sets all faces to the material's avg absorption.
+var cfg_carpet = dwm_config_with_acoustic_material(dwm_config_default(), carpet);
+assert(approx(average_absorption(WallMaterials_x_pos(DwmConfig_wall_materials(cfg_carpet))), avg_carpet, TOL_1E6), "with_acoustic_material");
+
+# ================================================================
+test_group("BoundaryFilter");
+# Rigid (α=0) -> identity: b0=1, a1=0, process passes x through.
+var rigid_mat = _am_make("rigid", 0, 0, 0, 0, 0, 0, 0, 0, 0);
+var f_rigid = boundary_filter_from_material(rigid_mat);
+assert(approx(BoundaryFilter_b0(f_rigid), F64_ONE, TOL_1E6), "rigid b0=1");
+assert(approx(BoundaryFilter_a1(f_rigid), 0, TOL_1E6), "rigid a1=0");
+assert(approx(boundary_filter_process(f_rigid, f64_div(f64_from(7), f64_from(10)), f64_from(999)),
+f64_div(f64_from(7), f64_from(10)), TOL_1E6), "rigid passes through");
+# Fully absorbing (α=1) -> b0=0, a1=0, zeros the signal.
+var absorb_mat = _am_make("absorb", F64_ONE, F64_ONE, F64_ONE, F64_ONE, F64_ONE, F64_ONE, F64_ONE, F64_ONE, 0);
+var f_absorb = boundary_filter_from_material(absorb_mat);
+assert(approx(BoundaryFilter_b0(f_absorb), 0, TOL_1E6), "absorb b0=0");
+assert(approx(boundary_filter_process(f_absorb, F64_ONE, 0), 0, TOL_1E6), "absorb zeros signal");
+# DC / Nyquist magnitudes match low/high-band reflection.
+var f_carpet = boundary_filter_from_material(carpet);
+var r_low = f64_sqrt(f64_sub(F64_ONE, am_absorption_band(carpet, 0)));
+var r_high = f64_sqrt(f64_sub(F64_ONE, am_absorption_band(carpet, 7)));
+assert(approx(iir_magnitude(f_carpet, 0), r_low, TOL_1E4), "|H(0)| = R_low");
+assert(approx(iir_magnitude(f_carpet, F64_PI), r_high, TOL_1E4), "|H(pi)| = R_high");
+# Carpet: low-pass (a1>0), reflects low freq more.
+assert(f64_gt(iir_magnitude(f_carpet, f64_div(f64_from(5), f64_from(100))),
+iir_magnitude(f_carpet, f64_sub(F64_PI, f64_div(f64_from(5), f64_from(100))))), "carpet low>high");
+assert(f64_gt(BoundaryFilter_a1(f_carpet), 0), "carpet a1>0");
+# Glass: high-pass (a1<0), reflects high freq more.
+var f_glass = boundary_filter_from_material(acoustic_material_glass());
+assert(f64_gt(iir_magnitude(f_glass, f64_sub(F64_PI, f64_div(f64_from(5), f64_from(100)))),
+iir_magnitude(f_glass, f64_div(f64_from(5), f64_from(100)))), "glass high>low");
+assert(f64_lt(BoundaryFilter_a1(f_glass), 0), "glass a1<0");
+# Pole stays in [-0.99, 0.99] for all named materials.
+assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_concrete()))), DWM_POS_099), "concrete pole stable");
+assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_wood()))), DWM_POS_099), "wood pole stable");
+assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_drywall()))), DWM_POS_099), "drywall pole stable");
+
+# ================================================================
+test_group("mesh_frequency / dispersion_factor");
+var cfg = small_config();
+assert(approx(mesh_frequency(cfg), V_6364, f64_from(50)), "mesh freq ~6364");
+var cfg_zdx = dwm_config_new(22050, 0, f64_from(343), 30, 25, 20, DWM_DUR_DEFAULT, wall_materials_rigid());
+assert_eq(f64_to(mesh_frequency(cfg_zdx)), 0, "zero dx -> 0");
+# dispersion factor: 1 at DC, decreases toward mesh, 0 above it.
+assert(approx(dispersion_factor(cfg, 0), F64_ONE, TOL_1E6), "dc factor = 1");
+var f_mesh = mesh_frequency(cfg);
+var mid = dispersion_factor(cfg, f64_mul(f_mesh, f64_div(F64_ONE, f64_from(4))));
+var near = dispersion_factor(cfg, f64_mul(f_mesh, f64_div(f64_from(3), f64_from(4))));
+assert(f64_gt(mid, near), "decreases toward mesh");
+assert(f64_lt(mid, F64_ONE), "quarter-mesh < 1");
+assert(f64_gt(mid, V_0_9), "quarter-mesh > 0.9");
+assert_eq(f64_to(dispersion_factor(cfg, f64_mul(f_mesh, f64_div(f64_from(3), F64_TWO)))), 0, "above mesh -> 0");
+
+# ================================================================
+test_group("DispersionCorrection");
+# passthrough is identity
+var sigp = vec_new();
+vec_push(sigp, F64_ONE);
+vec_push(sigp, F64_TWO);
+vec_push(sigp, f64_from(3));
+vec_push(sigp, f64_from(4));
+dispersion_correction_apply(dispersion_correction_passthrough(), sigp);
+assert(approx(vec_get(sigp, 0), F64_ONE, TOL_1E6), "passthrough[0]");
+assert(approx(vec_get(sigp, 2), f64_from(3), TOL_1E6), "passthrough[2]");
+# DC gain b0+b1 = 1
+var dc = dispersion_correction_for_config(cfg);
+assert(approx(f64_add(DispersionCorrection_b0(dc), DispersionCorrection_b1(dc)), F64_ONE, TOL_1E5), "dc gain unity");
+# preserves a constant DC signal after warm-up
+var sigdc = vec_new();
+var kk = 0;
+while (kk < 100) { vec_push(sigdc, f64_from(5)); kk = kk + 1; }
+dispersion_correction_apply(dc, sigdc);
+assert(approx(vec_get(sigdc, 50), f64_from(5), TOL_1E2), "dc preserved after warmup");
+# empty signal: no panic
+dispersion_correction_apply(dispersion_correction_for_config(cfg), vec_new());
+assert_eq(1, 1, "empty signal no panic");
+# single sample: y[0] = b0*x[0]; b0=1.2 -> 3.6
+var sigs = vec_new();
+vec_push(sigs, f64_from(3));
+dispersion_correction_apply(dispersion_correction_new(f64_div(f64_from(12), f64_from(10)), f64_div(f64_neg(F64_TWO), f64_from(10))), sigs);
+assert(approx(vec_get(sigs, 0), V_3_6, TOL_1E6), "single sample y0 = 3.6");
+# boosts amplitude at f_mesh/2 by ~boost
+var dcb = dispersion_correction_calibrated(cfg, V_1_10);
+var fs = f64_from(22050);
+var ftar = f64_mul(F64_HALF, f_mesh);
+var ntone = f64_to(f64_mul(fs, F64_HALF));
+var tone = vec_new();
+var ei = 0;
+while (ei < ntone) {
+    vec_push(tone, f64_sin(f64_div(f64_mul(f64_mul(F64_TAU, ftar), f64_from(ei)), fs)));
+    ei = ei + 1;
+}
+var e_before = 0;
+var bi2 = 0;
+while (bi2 < ntone) { e_before = f64_add(e_before, f64_mul(vec_get(tone, bi2), vec_get(tone, bi2))); bi2 = bi2 + 1; }
+dispersion_correction_apply(dcb, tone);
+var e_after = 0;
+var ai2 = 0;
+while (ai2 < ntone) { e_after = f64_add(e_after, f64_mul(vec_get(tone, ai2), vec_get(tone, ai2))); ai2 = ai2 + 1; }
+var ratio = f64_sqrt(f64_div(e_after, e_before));
+assert(approx(ratio, V_1_10, f64_div(f64_from(5), f64_from(100))), "boost ~1.10 at f_mesh/2");
+
+var rc = assert_summary();
+syscall(60, rc);
