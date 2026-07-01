@@ -1,73 +1,66 @@
 # Goonj Architecture
 
-## Module Map
+goonj is a Cyrius library (v2.0.0): 37 self-contained modules in `src/*.cyr`
+(plus `src/main.cyr`, a smoke binary that does not include the library). Modules
+carry no `include` lines; stdlib + hisab resolve from `cyrius.cyml`. All 37
+concatenate — in the dependency order below — into `dist/goonj.cyr` via
+`cyrius distlib`. There are **no Cargo-style feature flags**; every module ships
+in the bundle, and consumers pull the single file.
+
+## Module map (by dependency layer)
 
 ```
-goonj
-├── error.rs              — GoonjError (5 variants)
-├── material.rs           — AcousticMaterial, 7 presets, frequency-dependent absorption
-├── propagation.rs        — speed_of_sound, inverse_square_law, doppler_shift, atmospheric_absorption
-│                           WindProfile, TemperatureProfile, GroundImpedance, atmospheric ray tracing
-├── room.rs               — Wall, RoomGeometry, AcousticRoom, AcceleratedRoom (BVH)
-├── impulse.rs            — ImpulseResponse, MultibandIr, IrConfig, generate_ir
-│                           sabine_rt60, eyring_rt60, energy_decay_curve
-├── ray.rs                — AcousticRay, MultibandRay, RayPath, RayBounce
-│                           ray_wall_intersection, reflect_ray, trace_ray, trace_ray_bvh
-├── image_source.rs       — Image-source method: compute_early_reflections, ImageSource
-├── diffuse.rs            — Diffuse rain: generate_diffuse_rain, fibonacci_sphere
-├── analysis.rs           — Room metrics: clarity_c50, clarity_c80, definition_d50
-│                           sti_estimate, suggest_absorption_placement
-├── diffraction.rs        — edge_diffraction_loss, is_occluded, diffraction_path_extra
-├── resonance.rs          — room_mode, axial_modes, schroeder_frequency, modal_density
-├── wav.rs [feature: wav] — write_wav_mono, write_wav_stereo (16-bit PCM)
-├── binaural.rs [feature: binaural] — BinauralIr, HrtfDataset, generate_binaural_ir
-└── integration/
-    ├── dhvani.rs [feature: dhvani-compat]  — DhvaniIr, generate_dhvani_ir
-    ├── kiran.rs  [feature: kiran-compat]   — OcclusionEngine, OcclusionResult
-    └── soorat.rs [feature: soorat-compat]  — RayVisualization, PressureMap, ModeVisualization
+L0  error.cyr             — integer error codes (ERR_*), GOONJ_EPSILON, F64_NEG_INF
+    propagation.cyr       — speed_of_sound, inverse_square_law, doppler_shift, atmospheric_absorption,
+                            Miki ground reflection, Snell atmospheric ray tracing (fnptr callback)
+    resonance.cyr         — room_mode, axial_modes, schroeder_frequency, modal_density
+    ambisonics.cyr        — B-format + 3rd-order HOA (real spherical harmonics, ACN/SN3D)
+    scattering.cyr        — cosine-weighted hemisphere sampling (caller-supplied randoms)
+    dark_velvet_noise.cyr — sparse stochastic late reverb (inline xorshift64 PRNG)
+    logging.cyr           — real sakshi-backed logging + verbose mode (goonj_log_*)
+L1  material.cyr          — AcousticMaterial (7 presets), WallConstruction (TL), JcalMaterial (JCAL)
+L2  hybrid, directivity, room (Wall/RoomGeometry/AcousticRoom/AcceleratedRoom-BVH), metamaterial,
+    fdn, gfpe, diffusion, fdtd, outdoor, portal, udfa, underwater, vibroacoustics, bridge
+L3  ray (AcousticRay/MultibandRay/RayPath, trace_ray, trace_ray_bvh), radiosity,
+    image_source (compute_early_reflections), dwm (3D Digital Waveguide Mesh solver)
+L4  diffuse (generate_diffuse_rain, fibonacci_sphere), diffraction (UTD/BTM), beam,
+    analysis (C50/C80/D50/EDT/G/ts/LF/IACC/STI)
+L5  impulse (RT60 estimators, ImpulseResponse, MultibandIr, generate_ir), coupled
+L6  wav (16-bit PCM byte-buffer export), binaural (HRTF), dhvani, kiran, soorat (integration APIs)
 ```
 
-## Data Flow
+The integration modules are **flat top-level files** (`src/dhvani.cyr`,
+`src/kiran.cyr`, `src/soorat.cyr`) — not a `src/integration/` subdirectory.
+
+## Data flow
 
 ```
 Source + Listener + Room
         │
-        ├── Image-Source Method ──→ Early Reflections (exact specular)
-        │                                    │
-        ├── Diffuse Rain ─────────→ Late Reverb (stochastic)
-        │                                    │
-        └── generate_ir() ←─────────────────┘
+        ├── image_source: compute_early_reflections ──→ early reflections (exact specular)
+        ├── diffuse: generate_diffuse_rain ───────────→ late reverb (stochastic)
+        │                                                    │
+        └── impulse: generate_ir ←───────────────────────────┘
                 │
-                ├── MultibandIr (6 bands) ──→ to_broadband() ──→ ImpulseResponse
-                │
-                ├── analysis: C50, C80, D50, STI
-                │
-                ├── wav: write_wav_mono/stereo
-                │
+                ├── MultibandIr (8 bands) ──→ broadband ──→ ImpulseResponse
+                ├── analysis: C50/C80/D50/EDT/STI/…
+                ├── wav: write_wav_mono/stereo (byte buffer)
                 └── binaural: generate_binaural_ir (+ HRTF)
 ```
 
+## Dependency stack
+
+```
+goonj (Cyrius acoustics)
+  ├── hisab (math/geometry — HVec3, geo, BVH; consumed as dist/hisab.cyr)
+  ├── sakshi (structured logging; transitive via hisab; used by logging.cyr)
+  └── Cyrius stdlib (math, ganita, vec, fnptr, bench, string, …)
+```
+
+No Rust dependencies (serde/thiserror/tracing/criterion dropped in the port).
+
 ## Consumers
 
-- **dhvani** — computed impulse responses feed convolution reverb
-- **shruti** — room simulation for mixing (virtual studio acoustics)
-- **kiran/joshua** — game audio propagation, occlusion, spatial effects
-- **aethersafha** — spatial audio for video conferencing
-
-## Dependency Stack
-
-```
-goonj (acoustics)
-  └── hisab (math — Vec3, geometry, BVH, FFT)
-```
-
-## Feature Flags
-
-| Feature | Modules | Purpose |
-|---------|---------|---------|
-| `wav` | `wav.rs` | WAV file export |
-| `binaural` | `binaural.rs` | Binaural IR with HRTF |
-| `dhvani-compat` | `integration/dhvani.rs` | dhvani IR handoff |
-| `kiran-compat` | `integration/kiran.rs` | Game audio occlusion |
-| `soorat-compat` | `integration/soorat.rs` | Visualization data |
-| `logging` | `logging.rs` | tracing-subscriber init |
+dhvani (impulse responses for convolution reverb), shruti (room simulation for
+mixing), kiran/joshua (game audio propagation, occlusion), aethersafha (spatial
+audio for conferencing). None consume the Cyrius bundle yet.

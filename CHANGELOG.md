@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-### 2.0.0 — Cyrius port
+_Nothing yet._
+
+## [2.0.0] - 2026-06-30
 
 Major break: goonj is rewritten from Rust to **Cyrius** (sovereign systems
 language, compiled by `cycc`). The 1.4.3 Rust source is frozen at `rust-old/`
@@ -10,7 +12,7 @@ as the parity oracle. **All 37 modules are ported** — 3585 parity assertions
 across 36 suites, all green — and ship as the single `dist/goonj.cyr` distlib
 bundle. Parity detail: [`docs/development/port-audit.md`](docs/development/port-audit.md).
 
-#### Added — release infrastructure
+### Added — release infrastructure
 - **`dist/goonj.cyr` distlib bundle** — all 37 modules concatenated in
   dependency order via `cyrius distlib` (`[lib]` in `cyrius.cyml`), ready for
   consumers to pull the single file (hisab + stdlib + sakshi resolved consumer-
@@ -24,7 +26,7 @@ bundle. Parity detail: [`docs/development/port-audit.md`](docs/development/port-
   dx-tolerance guard) now emit via `goonj_log_warn`, surfaced by the sakshi
   verbose mode (`logging_init_verbose`).
 
-#### Added
+### Added — modules
 - **Cyrius scaffold** — `cyrius port` layout: `src/main.cyr` smoke binary,
   per-module library sources, `cyrius.cyml` manifest (toolchain pin 6.3.12,
   stdlib + `math`/`ganita`, hisab 2.6.7 distlib dep), `cyrius.lock`.
@@ -130,15 +132,16 @@ bundle. Parity detail: [`docs/development/port-audit.md`](docs/development/port-
   6.3.14** deliberately even though the `cycc` wrapper has since drifted to
   6.3.16 (drift warning is benign; builds work).
 
-#### Changed (port-wide conventions)
+### Changed — port-wide conventions
 - **f32 → f64** throughout — hisab's `HVec3` is f64-only.
 - **Rust enums with String payloads → integer error codes**.
 - **`hisab::Vec3` → hisab `HVec3`** (consumed via the `dist/hisab.cyr` bundle).
 
-#### Breaking
+### Breaking
 - Entire public API moves from Rust to Cyrius. Rust consumers stay on the
-  1.4.x line; Cyrius consumers target 2.0.0. Migration is per-module as the
-  port lands — see the port audit.
+  1.4.x line; Cyrius consumers target 2.0.0. The port itself is complete; what
+  remains is per-consumer migration as each Cyrius consumer ports up the stack —
+  see the port audit.
 
 ## [1.4.3] - 2026-05-01
 

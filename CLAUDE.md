@@ -38,8 +38,9 @@ Project was scaffolded with `cyrius port`. Original Rust at `rust-old/` is the r
 
 ```sh
 cyrius deps                              # resolve dependencies
-cyrius build src/main.cyr build/goonj    # compile
-cyrius test                              # run tests/*.tcyr
+cyrius build src/main.cyr build/goonj    # compile the smoke binary
+cyrius test tests/propagation.tcyr       # run ONE suite (explicit path — no auto-discovery)
+cyrius distlib                           # regenerate dist/goonj.cyr (the bundle)
 ```
 
 ## Key Principles
@@ -66,7 +67,7 @@ cyrius test                              # run tests/*.tcyr
 - [`docs/adr/`](docs/adr/) — Architecture Decision Records (*why X over Y?*)
 - [`docs/architecture/`](docs/architecture/) — Non-obvious constraints
 - [`docs/guides/`](docs/guides/) — Task-oriented how-tos
-- [`docs/examples/`](docs/examples/) — Runnable examples
 - [`docs/development/state.md`](docs/development/state.md) — Live state
-- [`docs/development/roadmap.md`](docs/development/roadmap.md) — Milestones through v1.0
+- [`docs/development/roadmap.md`](docs/development/roadmap.md) — Milestones (2.0.0 Cyrius port)
+- [`docs/benchmarks-rust-vs-cyrius.md`](docs/benchmarks-rust-vs-cyrius.md) — Rust vs Cyrius performance
 

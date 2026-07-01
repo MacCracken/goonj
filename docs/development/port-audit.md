@@ -57,7 +57,8 @@ the relevant row whenever a module's status changes.
 
 13 of 14 ported in one parallel workflow (worktree-isolated agents, one per
 module), then integrated + independently re-verified in main. Test counts are
-the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wave.
+the parity assertions that pass. `fdtd` landed in the next wave once `hybrid`
+was done, completing L2 (14/14).
 
 | Module         | LOC | Status | Tests | Deps |
 |----------------|----:|--------|------:|------|
@@ -118,14 +119,13 @@ Release close-out status:
   Validated by `tests/bundle.tcyr` (cross-layer smoke, 11 assertions).
 - ✅ **Diagnostics** — the 2 Rust `tracing::warn!` sites (dwm dx-tolerance) wired
   to `goonj_log_warn` + sakshi verbose mode.
+- ✅ **2.0.0 released** — tagged 2026-06-30.
 - ⏳ **Consumer-green** — deferred; downstream consumers (dhvani/shruti/kiran)
   aren't ported yet (working up the stack).
-- ⏳ **Tag 2.0.0** — user handles git.
 Toolchain: cyrius **6.3.14** (pinned deliberately — held here, not chased to
-newer wrappers). Two parallel workflows landed the L2 batch (13) and wave 2 (6);
-`ray` (hot path, 275 assertions + a benchmark) was ported solo. Remaining: dwm
-(all deps done), logging (→ sakshi); then L4 (diffuse, diffraction, analysis,
-beam), L5 (impulse, coupled), L6 (wav, binaural, integration ×3).
+newer wrappers). Six parallel workflows plus solo bites landed all 37 modules;
+`ray` and `dwm` (hot paths, with benchmarks) were ported solo. Remaining: none —
+all 37 modules ported.
 
 ### RNG / randomness (no new pattern needed)
 - **scattering** takes `u1,u2` uniform randoms as **parameters** (caller's RNG).

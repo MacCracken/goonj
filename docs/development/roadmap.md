@@ -11,7 +11,7 @@
 - [x] **Each module has a `tests/*.tcyr` suite** ported from its Rust `#[test]`s
       (3585 assertions, 36 suites, all green)
 - [x] Per-module cleanliness green: canonical `cyrius fmt` diff + `cyrius lint`
-      (0 warnings). Still to do: whole-project `cyrius vet`.
+      (0 warnings) + whole-project `cyrius vet`.
 - [x] Benchmarks captured — the **full suite** (34 benchmarks / 15 modules) ported
       to `.bcyr`, with a Rust→Cyrius comparison
       ([`../benchmarks-rust-vs-cyrius.md`](../benchmarks-rust-vs-cyrius.md)):
@@ -44,7 +44,7 @@ stdlib are available to every layer.
 - `cyrius.cyml` wired: stdlib + math/ganita + hisab 2.6.7; `cyrius.lock` committed
 - Smoke binary builds and runs
 
-### M1 — Foundation (L0 + material) — *in progress*
+### M1 — Foundation (L0 + material) — ✅ complete
 
 Acceptance: every L0 module + `material` ported with a green parity suite.
 
@@ -56,10 +56,12 @@ Acceptance: every L0 module + `material` ported with a green parity suite.
       Resolved manual struct layout (inline arrays) + string fields.
 - [x] **resonance** — room modes, Schroeder freq, modal density (15 tests).
       Resolved the `Vec<T>` dynamic-array pattern (stdlib `vec` + f64 sort).
-- [ ] **ambisonics** — B-format + 3rd-order HOA encoding
-- [ ] **dark_velvet_noise** — sparse stochastic late reverb
-- [ ] **scattering** — cosine-weighted hemisphere sampling
-- [ ] **logging** — tracing shim (maps to `sakshi`)
+- [x] **ambisonics** — B-format + 3rd-order HOA encoding (20 tests)
+- [x] **dark_velvet_noise** — sparse stochastic late reverb (18 tests;
+      inline xorshift64 PRNG)
+- [x] **scattering** — cosine-weighted hemisphere sampling (211 tests)
+- [x] **logging** — real sakshi-backed logging + verbose mode
+      (`logging_init_verbose`, `goonj_log_*`; 11 tests)
 
 ### M2 — Geometric & wave spine (L2) — ✅ 13/14 (parallel workflow)
 
@@ -96,8 +98,8 @@ ISO 3382-1 + IEC 60268-16) [analysis/coupled/wav batch].
    zero remaining), `[lib]` in `cyrius.cyml`, validated by `tests/bundle.tcyr`.
 2. ⏳ Green a downstream consumer — **deferred** (consumers not ported yet).
 3. ✅ Diagnostics threaded — the 2 `tracing::warn!` sites (dwm) → `goonj_log_warn`.
-4. ✅ `cyrius vet` clean; benchmarks captured (ray + dwm). ⏳ final CHANGELOG +
-   tag **2.0.0** (user handles git).
+4. ✅ `cyrius vet` clean; benchmarks captured (ray + dwm); CHANGELOG finalized;
+   **2.0.0 tagged 2026-06-30**.
 
 ## Known port challenges (capture as ADRs when resolved)
 

@@ -5,9 +5,10 @@
 
 ## Version
 
-**2.0.0** — Cyrius port *in progress*. goonj's Rust line shipped through
-1.4.3; the Cyrius rewrite is a major break, so it lands as **2.0.0**. The
-14,630-line Rust source is frozen at `rust-old/` as the parity oracle.
+**2.0.0** — Cyrius port **complete** (released 2026-06-30). goonj's Rust line
+shipped through 1.4.3; the Cyrius rewrite is a major break, so it lands as
+**2.0.0**. The 14,630-line Rust source is frozen at `rust-old/` as the parity
+oracle.
 
 ## Toolchain
 
@@ -83,9 +84,9 @@ mostly done:**
 - ✅ Diagnostics: the 2 `tracing::warn!` sites (dwm) → `goonj_log_warn` + sakshi
   verbose mode.
 - ✅ `cyrius vet` clean; benchmarks captured (ray + dwm).
+- ✅ **2.0.0 released** — tagged 2026-06-30.
 - ⏳ **Consumer-green** — deferred until a downstream consumer (dhvani/shruti/
   kiran) is itself ported (working up the stack).
-- ⏳ **Tag 2.0.0** — user handles git.
 
 **Every language pattern is now proven** (f32→f64, hex literals, integer errors,
 HVec3, manual layout, `Vec`, closures→fnptr+ctx, tuple→struct, bit-ops/xorshift,
