@@ -72,18 +72,20 @@ API (config, `BoundaryFilter`, dispersion, 36 tests); **B** the `solve_dwm_3d`
 3D grid solver (raw-buffer hot loop) + `tests/dwm.bcyr` benchmark (53 tests
 total). `DWM_`-prefixed to dodge fdtd's flat-namespace symbols.
 
-### M4 — Energy & metrics (L4) — 🟡 3/4
+### M4 — Energy & metrics (L4) — ✅ 4/4
 
-**diffuse ✅** (2306) + **diffraction ✅** (17) [L4 batch]; **beam ✅** (43;
-volumetric beam tracing) [impulse/beam batch]. Remaining: **analysis**
-(C50/C80/D50/EDT/STI/…) — now unblocked (impulse done).
+**diffuse ✅** (2306) + **diffraction ✅** (17) [L4 batch]; **beam ✅** (43)
+[impulse/beam batch]; **analysis ✅** (48; C50/C80/D50/EDT/G/ts/LF/IACC/STI per
+ISO 3382-1 + IEC 60268-16) [analysis/coupled/wav batch].
 
-### M5 — Impulse responses & integration (L5–L6) — 🟡 1/6
+### M5 — Impulse responses & integration (L5–L6) — 🟡 3/6
 
-**impulse ✅** (30; RT60 estimators + Schroeder EDC + generate_ir via
-image-source early reflections + diffuse-rain late reverb) [impulse/beam batch].
-Remaining: coupled + wav (unblocked), binaural (needs wav), integration ×3.
-Then build `dist/goonj.cyr`, green a downstream consumer, tag **2.0.0**.
+**impulse ✅** (30) [impulse/beam batch]; **coupled ✅** (7; multi-room energy
+exchange) + **wav ✅** (16; 16-bit PCM RIFF/WAVE via in-memory byte buffer)
+[analysis/coupled/wav batch]. Also **logging ✅** (real sakshi-backed, verbose
+mode). Remaining: **binaural** (now unblocked) + **integration ×3** — one final
+batch. Then build `dist/goonj.cyr`, green a downstream consumer, thread
+`goonj_log_*` diagnostics into the ex-`tracing` paths, tag **2.0.0**.
 
 ## Known port challenges (capture as ADRs when resolved)
 

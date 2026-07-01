@@ -45,7 +45,7 @@ the relevant row whenever a module's status changes.
 | ambisonics        | 259 | ✅ | B-format + 3rd-order HOA (real SH, ACN/SN3D). 20 tests. |
 | dark_velvet_noise | 405 | ✅ | Sparse stochastic late reverb. Self-contained **xorshift64** PRNG (C-style bit ops `^ << >> &`) — no stdlib `random` needed. 18 tests. |
 | scattering        | 165 | ✅ | Cosine-weighted hemisphere sampling. **Randoms are caller-supplied params** (`u1,u2`) — no internal RNG. orthonormal_basis tuple → struct. 211 tests (100-sample sweep). |
-| logging           |  33 | ⬜ | Tracing shim → `sakshi`. |
+| logging           |  33 | ✅ | Real **sakshi-backed** logging (not a stub): `logging_init`/`logging_init_verbose` (WARN/TRACE thresholds), `logging_set_level`, `goonj_log_{fatal..trace}`. Verbose mode for diagnosis; level gating verified via the ring buffer. 11 tests. |
 
 ### L1 — the spine
 
@@ -91,7 +91,7 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 |-------------|----:|--------|------:|------|
 | diffuse     | 513 | ✅ | 2306 | material, propagation, ray, room — inline xorshift64 (`_diffuse_`-prefixed), fibonacci_sphere, diffuse-rain via ray API |
 | diffraction | 311 | ✅ | 17 | material, propagation, ray, room — UTD/BTM edge diffraction |
-| analysis    | 895 | ⬜ | — | impulse ✅, material, room — now unblocked |
+| analysis    | 895 | ✅ | 48 | impulse, material, room — C50/C80/D50/EDT/G/ts/LF/IACC/STI (ISO 3382-1, IEC 60268-16) |
 | beam        | 297 | ✅ | 43 | diffuse, material, room — volumetric beam tracing |
 
 ### L5–L6 — impulse responses & integration
@@ -99,14 +99,15 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 | Module              | LOC | Status | Tests | Deps |
 |---------------------|----:|--------|------:|------|
 | impulse             | 643 | ✅ | 30 | diffuse, image_source, material, propagation, room — RT60 (Sabine/Eyring/Fitzroy/Kuttruff), ImpulseResponse (Schroeder EDC), MultibandIr, generate_ir |
-| coupled             | 177 | ⬜ | — | impulse ✅, material, portal, propagation, room — now unblocked |
-| wav                 | 257 | ⬜ | — | error, impulse ✅ — now unblocked |
-| binaural            | 317 | ⬜ | — | error, image_source, impulse ✅, material, propagation, room, wav — waits on wav |
+| coupled             | 177 | ✅ | 7 | impulse, material, portal, propagation, room — multi-room energy exchange, double-slope decay |
+| wav                 | 257 | ✅ | 16 | error, impulse — 16-bit PCM RIFF/WAVE via in-memory byte buffer (`store8`/LE encoding); no file-I/O syscalls |
+| binaural            | 317 | ⬜ | — | error, image_source, impulse, material, propagation, room, wav ✅ — now unblocked |
 | integration/dhvani  | 129 | ⬜ | — | (consumer API) |
 | integration/kiran   | 168 | ⬜ | — | (consumer API) |
 | integration/soorat  | 165 | ⬜ | — | (consumer API) |
 
-**Totals:** 29 / 37 done, 8 pending · 14,630 Rust lines · **3464 parity assertions green**.
+**Totals:** 33 / 37 done, 4 pending · 14,630 Rust lines · **3546 parity assertions green**.
+Remaining: binaural (now unblocked — wav done) + integration/{dhvani,kiran,soorat}.
 Toolchain: cyrius **6.3.14** (pinned deliberately — held here, not chased to
 newer wrappers). Two parallel workflows landed the L2 batch (13) and wave 2 (6);
 `ray` (hot path, 275 assertions + a benchmark) was ported solo. Remaining: dwm

@@ -1,0 +1,61 @@
+# logging.cyr -- diagnostic logging, backed by sakshi.
+#
+# Ports rust-old/src/logging.rs (which set up a `tracing_subscriber`). The
+# Cyrius port routes logging through the sakshi dependency (lib/sakshi.cyr,
+# pulled transitively via hisab) so goonj can emit error-locating diagnostics
+# when the library is in use, with a **verbose mode** for deeper diagnosis.
+#
+# Levels mirror sakshi's SK_* (0 = fatal … 5 = trace); the runtime threshold
+# is set via sakshi_set_level (a message at level L is emitted iff
+# L <= threshold). Output defaults to stderr. sakshi compiles all level
+# bodies in (SAKSHI_LEVEL defaults to 5), so the runtime threshold is the
+# only control needed.
+#
+# Names are `logging_`/`goonj_log_`-prefixed (flat namespace). Requires
+# lib/sakshi.cyr + stdlib string (strlen) in the build unit.
+
+enum LogLevel {
+    LOG_FATAL = 0,
+    LOG_ERROR = 1,
+    LOG_WARN  = 2,
+    LOG_INFO  = 3,
+    LOG_DEBUG = 4,
+    LOG_TRACE = 5,
+}
+
+# Initialize logging at the default WARN threshold (matches the Rust default
+# of "warn"), emitting to stderr. Returns 0.
+fn logging_init() {
+    sakshi_set_output(SK_OUT_STDERR);
+    sakshi_set_level(LOG_WARN);
+    return 0;
+}
+
+# Verbose init: TRACE threshold to stderr — emit everything, for diagnosis.
+fn logging_init_verbose() {
+    sakshi_set_output(SK_OUT_STDERR);
+    sakshi_set_level(LOG_TRACE);
+    return 0;
+}
+
+# Try-init parity shim: same as logging_init; the sakshi model never fails.
+fn logging_try_init() {
+    return logging_init();
+}
+
+# Set / get the runtime log threshold (LOG_FATAL … LOG_TRACE).
+fn logging_set_level(level) {
+    sakshi_set_level(level);
+    return 0;
+}
+fn logging_get_level() {
+    return sakshi_get_level();
+}
+
+# Level-gated log calls. `msg` is a cstring literal; length via strlen.
+fn goonj_log_fatal(msg) { sakshi_fatal(msg, strlen(msg)); return 0; }
+fn goonj_log_error(msg) { sakshi_error(msg, strlen(msg)); return 0; }
+fn goonj_log_warn(msg)  { sakshi_warn(msg, strlen(msg)); return 0; }
+fn goonj_log_info(msg)  { sakshi_info(msg, strlen(msg)); return 0; }
+fn goonj_log_debug(msg) { sakshi_debug(msg, strlen(msg)); return 0; }
+fn goonj_log_trace(msg) { sakshi_trace(msg, strlen(msg)); return 0; }

@@ -1,0 +1,560 @@
+# analysis.cyr -- room-acoustics metrics per ISO 3382-1 and IEC 60268-16.
+#
+# Scalar/vector math over an ImpulseResponse and its sample vec: clarity
+# (C50/C80), definition (D50), Speech Transmission Index (STI), early decay
+# time (EDT), sound strength (G), centre time (ts), a 4th-order octave-band
+# filter, lateral energy fraction (LF), interaural cross-correlation (IACC),
+# and absorption-placement suggestions.
+#
+# Ports rust-old/src/analysis.rs. f32 -> f64 throughout (hisab is f64-only).
+# Rust's `serde` derive on AbsorptionSuggestion is dropped (no serde in
+# Cyrius); no serde round-trip test exists in the oracle to port. The
+# `Vec<f32>` sample buffers are stdlib `vec` (f64 stored directly). Non-
+# integer literals reuse material.cyr's pct(n)/milli(n) exact-hundredth/
+# thousandth helpers; f32::INFINITY on the degenerate clarity/EDT paths
+# becomes the +inf bit pattern (ANL_POS_INF), f32::NEG_INFINITY the shared
+# F64_NEG_INF from error.cyr.
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON,
+# F64_NEG_INF), material.cyr (average_absorption, pct, milli), room.cyr
+# (AcousticRoom_geometry, RoomGeometry_walls, Wall_material, wall_area,
+# room_geometry_volume_shoebox, room_geometry_total_absorption),
+# impulse.cyr (ImpulseResponse accessors, impulse_response_energy_decay_curve,
+# sabine_rt60), stdlib math/ganita (F64_*, f64_*) + vec. alloc_init() must
+# have run.
+
+# +inf bit pattern (f32::INFINITY on the degenerate clarity / EDT paths).
+var ANL_POS_INF = 0x7FF0000000000000;   # +inf
+
+# log10(x) = ln(x) / ln(10).
+#must_use
+fn _analysis_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
+
+# STI modulation frequency (Hz) by index 0..13 (IEC 60268-16:2020).
+#must_use
+fn _analysis_mod_freq(i) {
+    if (i == 0) { return pct(63); }
+    if (i == 1) { return pct(80); }
+    if (i == 2) { return F64_ONE; }
+    if (i == 3) { return pct(125); }
+    if (i == 4) { return pct(160); }
+    if (i == 5) { return F64_TWO; }
+    if (i == 6) { return pct(250); }
+    if (i == 7) { return pct(315); }
+    if (i == 8) { return f64_from(4); }
+    if (i == 9) { return f64_from(5); }
+    if (i == 10) { return pct(630); }
+    if (i == 11) { return f64_from(8); }
+    if (i == 12) { return f64_from(10); }
+    if (i == 13) { return pct(1250); }
+    return 0;
+}
+
+# STI alpha_k per-band weights (IEC 60268-16:2020 Table 2), index 0..6.
+#must_use
+fn _analysis_alpha_k(k) {
+    if (k == 0) { return milli(85); }
+    if (k == 1) { return milli(127); }
+    if (k == 2) { return milli(230); }
+    if (k == 3) { return milli(233); }
+    if (k == 4) { return milli(309); }
+    if (k == 5) { return milli(224); }
+    if (k == 6) { return milli(173); }
+    return 0;
+}
+
+# STI beta_k redundancy weights (IEC 60268-16:2020 Table 3), index 0..5.
+#must_use
+fn _analysis_beta_k(k) {
+    if (k == 0) { return milli(85); }
+    if (k == 1) { return milli(78); }
+    if (k == 2) { return milli(65); }
+    if (k == 3) { return milli(11); }
+    if (k == 4) { return milli(47); }
+    if (k == 5) { return milli(95); }
+    return 0;
+}
+
+# ================================================================
+# Clarity / definition
+# ================================================================
+# Generic clarity: 10·log10(E_early / E_late) in dB at a time boundary.
+# Empty samples or zero rate -> 0; near-zero late energy -> +inf.
+#must_use
+fn _analysis_clarity(ir, boundary_seconds) {
+    var samples = ImpulseResponse_samples(ir);
+    var n = vec_len(samples);
+    var rate = ImpulseResponse_sample_rate(ir);
+    if (n == 0) { return 0; }
+    if (rate == 0) { return 0; }
+    var bs = f64_to(f64_mul(boundary_seconds, f64_from(rate)));
+    if (bs > n) { bs = n; }
+    var early = 0;
+    var i = 0;
+    while (i < bs) {
+        var s = vec_get(samples, i);
+        early = f64_add(early, f64_mul(s, s));
+        i = i + 1;
+    }
+    var late = 0;
+    i = bs;
+    while (i < n) {
+        var s = vec_get(samples, i);
+        late = f64_add(late, f64_mul(s, s));
+        i = i + 1;
+    }
+    if (f64_lt(late, GOONJ_EPSILON) == 1) { return ANL_POS_INF; }
+    return f64_mul(f64_from(10), _analysis_log10(f64_div(early, late)));
+}
+
+# Clarity C50 -- early (0-50 ms) vs late energy, dB.
+#must_use
+fn clarity_c50(ir) { return _analysis_clarity(ir, milli(50)); }
+
+# Clarity C80 -- early (0-80 ms) vs late energy, dB.
+#must_use
+fn clarity_c80(ir) { return _analysis_clarity(ir, milli(80)); }
+
+# Definition D50 -- early (0-50 ms) to total energy ratio (0..1).
+#must_use
+fn definition_d50(ir) {
+    var samples = ImpulseResponse_samples(ir);
+    var n = vec_len(samples);
+    var rate = ImpulseResponse_sample_rate(ir);
+    if (n == 0) { return 0; }
+    if (rate == 0) { return 0; }
+    var bs = f64_to(f64_mul(milli(50), f64_from(rate)));
+    if (bs > n) { bs = n; }
+    var early = 0;
+    var i = 0;
+    while (i < bs) {
+        var s = vec_get(samples, i);
+        early = f64_add(early, f64_mul(s, s));
+        i = i + 1;
+    }
+    var total = 0;
+    i = 0;
+    while (i < n) {
+        var s = vec_get(samples, i);
+        total = f64_add(total, f64_mul(s, s));
+        i = i + 1;
+    }
+    if (f64_lt(total, GOONJ_EPSILON) == 1) { return 0; }
+    return f64_div(early, total);
+}
+
+# ================================================================
+# Speech Transmission Index (STI) -- IEC 60268-16:2020
+# ================================================================
+# 7-band x 14-modulation-frequency framework applied to the broadband IR
+# (identical MTF broadcast to every band -- comparative approximation).
+# Empty samples, zero rate, or silent IR -> 0. Result clamped to 0..1.
+#must_use
+fn sti_estimate(ir) {
+    var samples = ImpulseResponse_samples(ir);
+    var n = vec_len(samples);
+    var rate = ImpulseResponse_sample_rate(ir);
+    if (n == 0) { return 0; }
+    if (rate == 0) { return 0; }
+    var total_energy = 0;
+    var ei = 0;
+    while (ei < n) {
+        var s = vec_get(samples, ei);
+        total_energy = f64_add(total_energy, f64_mul(s, s));
+        ei = ei + 1;
+    }
+    if (f64_lt(total_energy, GOONJ_EPSILON) == 1) { return 0; }
+
+    var dt = f64_div(F64_ONE, f64_from(rate));
+    var ti_sum = 0;
+    var m = 0;
+    while (m < 14) {
+        var omega = f64_mul(F64_TAU, _analysis_mod_freq(m));
+        var real = 0;
+        var imag = 0;
+        var i = 0;
+        while (i < n) {
+            var s = vec_get(samples, i);
+            var h2 = f64_mul(s, s);
+            var angle = f64_mul(omega, f64_mul(f64_from(i), dt));
+            real = f64_add(real, f64_mul(h2, f64_cos(angle)));
+            imag = f64_add(imag, f64_mul(h2, f64_sin(angle)));
+            i = i + 1;
+        }
+        var mag = f64_sqrt(f64_add(f64_mul(real, real), f64_mul(imag, imag)));
+        var mtf = f64_clamp(f64_div(mag, total_energy), 0, F64_ONE);
+        var snr = 0;
+        if (f64_ge(mtf, F64_ONE) == 1) {
+            snr = f64_from(15);
+        } else {
+            if (f64_le(mtf, GOONJ_EPSILON) == 1) {
+                snr = f64_neg(f64_from(15));
+            } else {
+                snr = f64_mul(_analysis_log10(f64_div(mtf, f64_sub(F64_ONE, mtf))), f64_from(10));
+            }
+        }
+        var snr_c = f64_clamp(snr, f64_neg(f64_from(15)), f64_from(15));
+        ti_sum = f64_add(ti_sum, f64_div(f64_add(snr_c, f64_from(15)), f64_from(30)));
+        m = m + 1;
+    }
+    var mti = f64_div(ti_sum, f64_from(14));
+
+    # STI = Sum(alpha_k * MTI_k) - Sum(beta_k * sqrt(MTI_k * MTI_{k+1})).
+    # All bands share the same MTI, so band_mti[k] = mti for every k.
+    var sti = 0;
+    var k = 0;
+    while (k < 7) {
+        sti = f64_add(sti, f64_mul(_analysis_alpha_k(k), mti));
+        k = k + 1;
+    }
+    k = 0;
+    while (k < 6) {
+        sti = f64_sub(sti, f64_mul(_analysis_beta_k(k), f64_sqrt(f64_mul(mti, mti))));
+        k = k + 1;
+    }
+    return f64_clamp(sti, 0, F64_ONE);
+}
+
+# ================================================================
+# ISO 3382-1 decay / energy parameters
+# ================================================================
+# Early Decay Time -- 6 x T10 from the Schroeder energy-decay curve.
+# No -10 dB crossing -> +inf; empty samples / zero rate / empty EDC -> 0.
+#must_use
+fn early_decay_time(ir) {
+    var samples = ImpulseResponse_samples(ir);
+    var n = vec_len(samples);
+    var rate = ImpulseResponse_sample_rate(ir);
+    if (n == 0) { return 0; }
+    if (rate == 0) { return 0; }
+    var edc = impulse_response_energy_decay_curve(ir);
+    var m = vec_len(edc);
+    if (m == 0) { return 0; }
+    var t10 = m;
+    var found = 0;
+    var i = 0;
+    while (i < m) {
+        if (found == 0) {
+            if (f64_le(vec_get(edc, i), f64_neg(f64_from(10))) == 1) {
+                t10 = i;
+                found = 1;
+            }
+        }
+        i = i + 1;
+    }
+    if (t10 == 0) { return 0; }
+    if (t10 >= m) { return ANL_POS_INF; }
+    return f64_div(f64_mul(f64_from(6), f64_from(t10)), f64_from(rate));
+}
+
+# Sound Strength G -- total energy in dB relative to a 10 m free-field
+# reference. Empty samples / zero rate -> 0; near-zero energy -> -inf.
+#must_use
+fn sound_strength_g(ir) {
+    var samples = ImpulseResponse_samples(ir);
+    var n = vec_len(samples);
+    var rate = ImpulseResponse_sample_rate(ir);
+    if (n == 0) { return 0; }
+    if (rate == 0) { return 0; }
+    var total_energy = 0;
+    var i = 0;
+    while (i < n) {
+        var s = vec_get(samples, i);
+        total_energy = f64_add(total_energy, f64_mul(s, s));
+        i = i + 1;
+    }
+    var dt = f64_div(F64_ONE, f64_from(rate));
+    var integrated = f64_mul(total_energy, dt);
+    if (f64_lt(integrated, GOONJ_EPSILON) == 1) { return F64_NEG_INF; }
+    var ref_energy = f64_mul(
+    f64_div(F64_ONE, f64_mul(f64_mul(f64_from(4), F64_PI), f64_from(100))), dt);
+    return f64_mul(f64_from(10), _analysis_log10(f64_div(integrated, ref_energy)));
+}
+
+# Centre Time ts -- first moment of the squared IR, in seconds.
+# Empty samples / zero rate / near-zero energy -> 0.
+#must_use
+fn centre_time_ts(ir) {
+    var samples = ImpulseResponse_samples(ir);
+    var n = vec_len(samples);
+    var rate = ImpulseResponse_sample_rate(ir);
+    if (n == 0) { return 0; }
+    if (rate == 0) { return 0; }
+    var dt = f64_div(F64_ONE, f64_from(rate));
+    var numerator = 0;
+    var denominator = 0;
+    var i = 0;
+    while (i < n) {
+        var s = vec_get(samples, i);
+        var h2 = f64_mul(s, s);
+        var t = f64_mul(f64_from(i), dt);
+        numerator = f64_add(numerator, f64_mul(t, h2));
+        denominator = f64_add(denominator, h2);
+        i = i + 1;
+    }
+    if (f64_lt(denominator, GOONJ_EPSILON) == 1) { return 0; }
+    return f64_div(numerator, denominator);
+}
+
+# ================================================================
+# Octave-band filter (4th-order bandpass, Direct Form II transposed)
+# ================================================================
+# Bilinear-transformed 2nd-order bandpass, cascaded to 4th order, centred
+# on `centre_freq` with a one-octave bandwidth. Returns the filtered
+# samples. Empty / zero-rate / non-positive frequency -> empty vec; a
+# degenerate a0 -> all-zero vec of the input length.
+#must_use
+fn octave_band_filter(ir, centre_freq) {
+    var samples = ImpulseResponse_samples(ir);
+    var n = vec_len(samples);
+    var rate = ImpulseResponse_sample_rate(ir);
+    if (n == 0) { return vec_new(); }
+    if (rate == 0) { return vec_new(); }
+    if (f64_le(centre_freq, 0) == 1) { return vec_new(); }
+
+    var fs = f64_from(rate);
+    var sqrt2 = F64_SQRT2;
+    var f_low = f64_div(centre_freq, sqrt2);
+    var f_high = f64_mul(centre_freq, sqrt2);
+
+    var w_low = f64_tan(f64_div(f64_mul(F64_PI, f_low), fs));
+    var w_high = f64_tan(f64_div(f64_mul(F64_PI, f_high), fs));
+    var bw = f64_sub(w_high, w_low);
+    var ww = f64_mul(w_low, w_high);
+
+    # a0 = 1 + sqrt2*bw + bw*bw + ww*(2 + sqrt2*bw)
+    var a0 = f64_add(f64_add(f64_add(F64_ONE, f64_mul(sqrt2, bw)), f64_mul(bw, bw)),
+    f64_mul(ww, f64_add(F64_TWO, f64_mul(sqrt2, bw))));
+    if (f64_lt(f64_abs(a0), GOONJ_EPSILON) == 1) {
+        var zeros = vec_new();
+        var zi = 0;
+        while (zi < n) {
+            vec_push(zeros, 0);
+            zi = zi + 1;
+        }
+        return zeros;
+    }
+    var inv_a0 = f64_div(F64_ONE, a0);
+
+    # b1 = 0, b3 = 0 (omitted); b0, b2 = -2*b0, b4 = b0.
+    var b0 = f64_mul(f64_mul(bw, bw), inv_a0);
+    var b2 = f64_mul(f64_neg(F64_TWO), b0);
+    var b4 = b0;
+
+    # a1 = (2*(ww*(2 + sqrt2*bw) - 1 - sqrt2*bw)) * inv_a0
+    var a1 = f64_mul(f64_mul(F64_TWO,
+    f64_sub(f64_sub(f64_mul(ww, f64_add(F64_TWO, f64_mul(sqrt2, bw))), F64_ONE),
+    f64_mul(sqrt2, bw))), inv_a0);
+    # a2 = (2*(1 - bw*bw + ww*(2*ww - 2))) * inv_a0
+    var a2 = f64_mul(f64_mul(F64_TWO,
+    f64_add(f64_sub(F64_ONE, f64_mul(bw, bw)),
+    f64_mul(ww, f64_sub(f64_mul(F64_TWO, ww), F64_TWO)))), inv_a0);
+    # a3 = (2*(ww*(2 - sqrt2*bw) - 1 + sqrt2*bw)) * inv_a0
+    var a3 = f64_mul(f64_mul(F64_TWO,
+    f64_add(f64_sub(f64_mul(ww, f64_sub(F64_TWO, f64_mul(sqrt2, bw))), F64_ONE),
+    f64_mul(sqrt2, bw))), inv_a0);
+    # a4 = (1 - sqrt2*bw + bw*bw + ww*(2 - sqrt2*bw)) * inv_a0
+    var a4 = f64_mul(
+    f64_add(f64_add(f64_sub(F64_ONE, f64_mul(sqrt2, bw)), f64_mul(bw, bw)),
+    f64_mul(ww, f64_sub(F64_TWO, f64_mul(sqrt2, bw)))), inv_a0);
+
+    var out = vec_new();
+    var oi = 0;
+    while (oi < n) {
+        vec_push(out, 0);
+        oi = oi + 1;
+    }
+    var x1 = 0;
+    var x2 = 0;
+    var x3 = 0;
+    var x4 = 0;
+    var y1 = 0;
+    var y2 = 0;
+    var y3 = 0;
+    var y4 = 0;
+    var i = 0;
+    while (i < n) {
+        var x = vec_get(samples, i);
+        var y = f64_add(f64_mul(b0, x), f64_add(f64_mul(b2, x2), f64_mul(b4, x4)));
+        y = f64_sub(y, f64_mul(a1, y1));
+        y = f64_sub(y, f64_mul(a2, y2));
+        y = f64_sub(y, f64_mul(a3, y3));
+        y = f64_sub(y, f64_mul(a4, y4));
+        vec_set(out, i, y);
+        x4 = x3;
+        x3 = x2;
+        x2 = x1;
+        x1 = x;
+        y4 = y3;
+        y3 = y2;
+        y2 = y1;
+        y1 = y;
+        i = i + 1;
+    }
+    return out;
+}
+
+# ================================================================
+# Spatial metrics (binaural)
+# ================================================================
+# Lateral Energy Fraction (LF/JLF) -- early lateral to early total energy
+# (0-80 ms). Lateral component from the L-R figure-8, omni from (L+R)/2.
+# Empty channels / zero rate / near-zero energy -> 0. Clamped to 0..1.
+#must_use
+fn lateral_fraction_lf(left, right, sample_rate) {
+    var nl = vec_len(left);
+    var nr = vec_len(right);
+    if (nl == 0) { return 0; }
+    if (nr == 0) { return 0; }
+    if (sample_rate == 0) { return 0; }
+    var boundary = f64_to(f64_mul(milli(80), f64_from(sample_rate)));
+    var n = nl;
+    if (nr < n) { n = nr; }
+    if (boundary < n) { n = boundary; }
+    var lateral_energy = 0;
+    var total_energy = 0;
+    var i = 0;
+    while (i < n) {
+        var l = vec_get(left, i);
+        var r = vec_get(right, i);
+        var omni = f64_mul(f64_add(l, r), F64_HALF);
+        var figure8 = f64_mul(f64_sub(l, r), F64_HALF);
+        total_energy = f64_add(total_energy, f64_mul(omni, omni));
+        lateral_energy = f64_add(lateral_energy, f64_mul(figure8, figure8));
+        i = i + 1;
+    }
+    if (f64_lt(total_energy, GOONJ_EPSILON) == 1) { return 0; }
+    return f64_clamp(f64_div(lateral_energy, total_energy), 0, F64_ONE);
+}
+
+# Interaural Cross-Correlation (IACC) -- max normalized |cross-correlation|
+# of the early L/R signals (0-80 ms) over a +-1 ms lag range. Empty
+# channels / zero rate / near-zero norm -> 0. Clamped to 0..1.
+#must_use
+fn iacc(left, right, sample_rate) {
+    var nl = vec_len(left);
+    var nr = vec_len(right);
+    if (nl == 0) { return 0; }
+    if (nr == 0) { return 0; }
+    if (sample_rate == 0) { return 0; }
+    var boundary = f64_to(f64_mul(milli(80), f64_from(sample_rate)));
+    var n = nl;
+    if (nr < n) { n = nr; }
+    if (boundary < n) { n = boundary; }
+    if (n == 0) { return 0; }
+    var energy_l = 0;
+    var energy_r = 0;
+    var i = 0;
+    while (i < n) {
+        var l = vec_get(left, i);
+        var r = vec_get(right, i);
+        energy_l = f64_add(energy_l, f64_mul(l, l));
+        energy_r = f64_add(energy_r, f64_mul(r, r));
+        i = i + 1;
+    }
+    var norm = f64_sqrt(f64_mul(energy_l, energy_r));
+    if (f64_lt(norm, GOONJ_EPSILON) == 1) { return 0; }
+    var max_lag = f64_to(f64_mul(milli(1), f64_from(sample_rate)));
+    if (max_lag < 1) { max_lag = 1; }
+    var max_xcorr = 0;
+    var lag = 0;
+    while (lag <= max_lag) {
+        var xcorr_pos = 0;
+        var xcorr_neg = 0;
+        var j = 0;
+        while (j < n) {
+            if (j + lag < n) {
+                xcorr_pos = f64_add(xcorr_pos, f64_mul(vec_get(left, j), vec_get(right, j + lag)));
+            }
+            if (j >= lag) {
+                xcorr_neg = f64_add(xcorr_neg, f64_mul(vec_get(left, j), vec_get(right, j - lag)));
+            }
+            j = j + 1;
+        }
+        max_xcorr = f64_max(max_xcorr, f64_max(f64_abs(xcorr_pos), f64_abs(xcorr_neg)));
+        lag = lag + 1;
+    }
+    return f64_clamp(f64_div(max_xcorr, norm), 0, F64_ONE);
+}
+
+# ================================================================
+# Absorption-placement suggestions
+# ================================================================
+# A single wall's treatment suggestion: index, RT60 sensitivity (seconds,
+# negative reduces reverb), and the wall's current average absorption.
+#derive(accessors)
+struct AbsorptionSuggestion { wall_index; rt60_sensitivity; current_absorption; }
+
+#must_use
+fn absorption_suggestion_new(wall_index, rt60_sensitivity, current_absorption) {
+    var a = alloc(sizeof(AbsorptionSuggestion));
+    AbsorptionSuggestion_set_wall_index(a, wall_index);
+    AbsorptionSuggestion_set_rt60_sensitivity(a, rt60_sensitivity);
+    AbsorptionSuggestion_set_current_absorption(a, current_absorption);
+    return a;
+}
+
+# Ascending insertion sort of a suggestion vec by rt60_sensitivity
+# (mutates in place; stable, matching Rust's sort_by partial_cmp).
+fn _analysis_sort_suggestions(v) {
+    var n = vec_len(v);
+    var i = 1;
+    while (i < n) {
+        var key = vec_get(v, i);
+        var key_val = AbsorptionSuggestion_rt60_sensitivity(key);
+        var j = i - 1;
+        var go = 1;
+        while (go == 1) {
+            if (j < 0) { go = 0; }
+            if (go == 1) {
+                if (f64_gt(AbsorptionSuggestion_rt60_sensitivity(vec_get(v, j)), key_val) == 1) {
+                    vec_set(v, j + 1, vec_get(v, j));
+                    j = j - 1;
+                } else {
+                    go = 0;
+                }
+            }
+        }
+        vec_set(v, j + 1, key);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Suggest which walls most affect RT60 if treated. Bumps each wall's
+# absorption (bump scaled by the current/target RT60 ratio), measures the
+# Sabine RT60 delta, and returns suggestions sorted most-impactful first.
+#must_use
+fn suggest_absorption_placement(room, target_rt60) {
+    var geom = AcousticRoom_geometry(room);
+    var volume = room_geometry_volume_shoebox(geom);
+    var current_total_abs = room_geometry_total_absorption(geom);
+    var current_rt60 = sabine_rt60(volume, current_total_abs);
+
+    var rt60_ratio = F64_ONE;
+    if (f64_gt(target_rt60, GOONJ_EPSILON) == 1) {
+        if (f64_gt(current_rt60, GOONJ_EPSILON) == 1) {
+            rt60_ratio = f64_clamp(f64_div(current_rt60, target_rt60), pct(10), f64_from(10));
+        }
+    }
+    var bump = f64_min(f64_mul(pct(20), rt60_ratio), F64_HALF);
+
+    var suggestions = vec_new();
+    var walls = RoomGeometry_walls(geom);
+    var nw = vec_len(walls);
+    var i = 0;
+    while (i < nw) {
+        var wall = vec_get(walls, i);
+        var area = wall_area(wall);
+        var current_abs = average_absorption(Wall_material(wall));
+        var new_abs = f64_min(f64_add(current_abs, bump), F64_ONE);
+        var delta_abs = f64_mul(f64_sub(new_abs, current_abs), area);
+        var new_total_abs = f64_add(current_total_abs, delta_abs);
+        var new_rt60 = sabine_rt60(volume, new_total_abs);
+        var sensitivity = f64_sub(new_rt60, current_rt60);
+        vec_push(suggestions, absorption_suggestion_new(i, sensitivity, current_abs));
+        i = i + 1;
+    }
+    _analysis_sort_suggestions(suggestions);
+    return suggestions;
+}

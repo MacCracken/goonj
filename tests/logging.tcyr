@@ -1,0 +1,51 @@
+# logging.tcyr -- tests for src/logging.cyr (sakshi-backed logging).
+# Extends the Rust logging.rs parity test (try_init doesn't panic) with
+# real level-control + verbose-mode + emission-gating checks.
+
+include "lib/sakshi.cyr"
+include "src/logging.cyr"
+
+fn gt(a, b) {
+    if (a > b) { return 1; }
+    return 0;
+}
+
+alloc_init();
+
+test_group("logging: init / level control");
+# Parity: try_init / init never panic (return 0).
+assert_eq(logging_try_init(), 0, "try_init does not panic (Ok)");
+assert_eq(logging_init(), 0, "init does not panic");
+# init sets the WARN threshold (matches the Rust default).
+assert_eq(logging_get_level(), LOG_WARN, "init -> WARN threshold");
+# Verbose mode raises the threshold to TRACE.
+logging_init_verbose();
+assert_eq(logging_get_level(), LOG_TRACE, "verbose -> TRACE threshold");
+# Explicit level control.
+logging_set_level(LOG_DEBUG);
+assert_eq(logging_get_level(), LOG_DEBUG, "set_level -> DEBUG");
+
+test_group("logging: wrappers emit without error");
+logging_init_verbose();
+assert_eq(goonj_log_error("err diag"), 0, "error wrapper ok");
+assert_eq(goonj_log_warn("warn diag"), 0, "warn wrapper ok");
+assert_eq(goonj_log_info("info diag"), 0, "info wrapper ok");
+assert_eq(goonj_log_debug("debug diag"), 0, "debug wrapper ok");
+
+test_group("logging: level gating via ring buffer");
+# Route emits to the in-memory ring so we can observe gating.
+sakshi_output_buffer();
+# At TRACE, a WARN message is emitted.
+logging_set_level(LOG_TRACE);
+sakshi_ring_clear();
+var before = sakshi_ring_event_count();
+goonj_log_warn("emitted at trace");
+assert(gt(sakshi_ring_event_count(), before), "warn emitted when threshold >= warn");
+# At ERROR threshold, a DEBUG message is suppressed (no new events).
+logging_set_level(LOG_ERROR);
+var mid = sakshi_ring_event_count();
+goonj_log_debug("suppressed below threshold");
+assert_eq(sakshi_ring_event_count(), mid, "debug suppressed below threshold");
+
+var rc = assert_summary();
+syscall(60, rc);

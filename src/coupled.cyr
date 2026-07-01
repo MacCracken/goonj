@@ -1,0 +1,136 @@
+# coupled.cyr -- coupled room acoustics: multi-room energy exchange.
+#
+# Models sound energy flow between two rooms connected by a portal,
+# producing characteristic double-slope reverberant decay. Uses a
+# statistical energy analysis (SEA) approach with a portal-derived
+# coupling coefficient and two coupled decay eigenvalues.
+#
+# Ports rust-old/src/coupled.rs. f32 -> f64 throughout (hisab is f64-only).
+# Rust's `serde` derive is dropped (no serde in Cyrius); the serde
+# round-trip test is omitted.
+#
+# Requires (from the build/test unit): stdlib math/ganita (f64_*, F64_ONE,
+# F64_HALF, F64_LN10), impulse.cyr (sabine_rt60), portal.cyr (portal_area),
+# propagation.cyr (speed_of_sound), room.cyr (room_geometry_volume_shoebox,
+# room_geometry_total_absorption, AcousticRoom_geometry,
+# AcousticRoom_temperature_celsius). alloc_init() must have run.
+
+# +inf bit pattern -- degenerate RT60 sentinel from sabine_rt60 (used to
+# reject non-finite reverberation times, matching Rust `rt60.is_finite()`).
+var COUPLED_POS_INF = 0x7FF0000000000000;   # +inf
+
+# ================================================================
+# Structs
+# ================================================================
+# A pair of acoustically coupled rooms connected by a portal.
+# room_a is the source room, room_b the receiving room.
+#derive(accessors)
+struct CoupledRooms { room_a; room_b; portal; }
+
+# Result of coupled room energy decay analysis. rt60_early/rt60_late are
+# the fast/slow decay components (seconds), early_amplitude the relative
+# amplitude of the early component (0..1), coupling_strength the coupling
+# ratio (0 = isolated, 1 = fully coupled).
+#derive(accessors)
+struct CoupledDecay { rt60_early; rt60_late; early_amplitude; coupling_strength; }
+
+# ================================================================
+# Helpers
+# ================================================================
+# Finite test: true (1) iff x is neither +/-inf nor NaN. abs(x) < +inf
+# holds for finite x, fails for infinities (inf < inf is false) and NaN
+# (any NaN compare is false).
+#must_use
+fn _coupled_is_finite(x) {
+    return f64_lt(f64_abs(x), COUPLED_POS_INF);
+}
+
+# ================================================================
+# Coupled decay
+# ================================================================
+# Compute the coupled decay characteristics for two rooms joined by a
+# portal. Statistical coupling model (Kuttruff): the coupled system
+# produces a double-slope decay where the early slope depends on the more
+# absorptive room and the late slope on the less absorptive one.
+#must_use
+fn coupled_room_decay(coupled) {
+    var room_a = CoupledRooms_room_a(coupled);
+    var room_b = CoupledRooms_room_b(coupled);
+    var portal = CoupledRooms_portal(coupled);
+
+    var geom_a = AcousticRoom_geometry(room_a);
+    var geom_b = AcousticRoom_geometry(room_b);
+    var vol_a = room_geometry_volume_shoebox(geom_a);
+    var vol_b = room_geometry_volume_shoebox(geom_b);
+    var abs_a = room_geometry_total_absorption(geom_a);
+    var abs_b = room_geometry_total_absorption(geom_b);
+
+    var rt60_a = sabine_rt60(vol_a, abs_a);
+    var rt60_b = sabine_rt60(vol_b, abs_b);
+
+    # Portal coupling coefficient: kappa = (c * A_portal) / (4 * V)
+    var c = speed_of_sound(AcousticRoom_temperature_celsius(room_a));
+    var portal_a = portal_area(portal);
+    var kappa_a = 0;
+    if (f64_gt(vol_a, 0) == 1) {
+        kappa_a = f64_div(f64_mul(c, portal_a), f64_mul(f64_from(4), vol_a));
+    }
+    var kappa_b = 0;
+    if (f64_gt(vol_b, 0) == 1) {
+        kappa_b = f64_div(f64_mul(c, portal_a), f64_mul(f64_from(4), vol_b));
+    }
+
+    # Coupling strength: ratio of portal coupling to room absorption.
+    var coupling = 0;
+    if (f64_gt(f64_add(abs_a, abs_b), 0) == 1) {
+        coupling = f64_clamp(f64_div(f64_mul(c, portal_a), f64_add(abs_a, abs_b)), 0, F64_ONE);
+    }
+
+    # Energy decay rates (1/seconds): gamma = 6*ln(10) / RT60 = 13.8155 / RT60.
+    var decay_const = f64_mul(f64_from(6), F64_LN10);
+    var gamma_a = 0;
+    if (f64_gt(rt60_a, 0) == 1) {
+        if (_coupled_is_finite(rt60_a) == 1) {
+            gamma_a = f64_div(decay_const, rt60_a);
+        }
+    }
+    var gamma_b = 0;
+    if (f64_gt(rt60_b, 0) == 1) {
+        if (_coupled_is_finite(rt60_b) == 1) {
+            gamma_b = f64_div(decay_const, rt60_b);
+        }
+    }
+
+    # Coupled decay eigenvalues.
+    var ga = f64_add(gamma_a, kappa_a);
+    var gb = f64_add(gamma_b, kappa_b);
+    var sum = f64_add(ga, gb);
+    var product = f64_sub(f64_mul(ga, gb), f64_mul(kappa_a, kappa_b));
+    var discriminant = f64_max(f64_sub(f64_mul(sum, sum), f64_mul(f64_from(4), product)), 0);
+    var sqrt_disc = f64_sqrt(discriminant);
+
+    var lambda1 = f64_mul(f64_add(sum, sqrt_disc), F64_HALF);   # fast decay
+    var lambda2 = f64_mul(f64_sub(sum, sqrt_disc), F64_HALF);   # slow decay
+
+    var rt60_early = 0;
+    if (f64_gt(lambda1, 0) == 1) {
+        rt60_early = f64_div(decay_const, lambda1);
+    }
+    var rt60_late = 0;
+    if (f64_gt(lambda2, 0) == 1) {
+        rt60_late = f64_div(decay_const, lambda2);
+    }
+
+    # Early component amplitude (energy partition).
+    var early_amp = F64_HALF;
+    if (f64_gt(lambda1, lambda2) == 1) {
+        early_amp = f64_div(f64_sub(f64_sub(lambda1, gamma_b), kappa_b), f64_sub(lambda1, lambda2));
+    }
+
+    var out = alloc(sizeof(CoupledDecay));
+    CoupledDecay_set_rt60_early(out, rt60_early);
+    CoupledDecay_set_rt60_late(out, rt60_late);
+    CoupledDecay_set_early_amplitude(out, f64_clamp(early_amp, 0, F64_ONE));
+    CoupledDecay_set_coupling_strength(out, coupling);
+    return out;
+}

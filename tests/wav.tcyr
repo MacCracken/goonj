@@ -1,0 +1,134 @@
+# wav.tcyr -- parity tests for src/wav.cyr
+# Ported from the #[test] blocks in rust-old/src/wav.rs. The oracle has no
+# serde round-trip test to drop (the module never derived serde). Multi-byte
+# little-endian header fields are read back with local _t_rd16/_t_rd32
+# helpers; PCM values are sign-extended from their two 16-bit bytes.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/image_source.cyr"
+include "src/diffuse.cyr"
+include "src/impulse.cyr"
+include "src/wav.cyr"
+
+# a/b as an f64 fraction (for non-integer sample amplitudes).
+fn _t_frac(a, b) { return f64_div(f64_from(a), f64_from(b)); }
+
+# Read a little-endian u16 at byte offset off.
+fn _t_rd16(data, off) {
+    var lo = load8(data + off);
+    var hi = load8(data + off + 1);
+    return lo | (hi << 8);
+}
+
+# Read a little-endian u32 at byte offset off.
+fn _t_rd32(data, off) {
+    var b0 = load8(data + off);
+    var b1 = load8(data + off + 1);
+    var b2 = load8(data + off + 2);
+    var b3 = load8(data + off + 3);
+    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}
+
+# Read a little-endian signed i16 at byte offset off (sign-extended).
+fn _t_rd_i16(data, off) {
+    var v = _t_rd16(data, off);
+    if ((v & 0x8000) != 0) { v = v - 0x10000; }
+    return v;
+}
+
+# 1 if the four bytes at off equal a,b,c,d; else 0.
+fn _t_str4(data, off, a, b, c, d) {
+    if (load8(data + off) != a) { return 0; }
+    if (load8(data + off + 1) != b) { return 0; }
+    if (load8(data + off + 2) != c) { return 0; }
+    if (load8(data + off + 3) != d) { return 0; }
+    return 1;
+}
+
+# Build a sample vec of `count` copies of `val`.
+fn _t_fill(count, val) {
+    var v = vec_new();
+    var i = 0;
+    while (i < count) {
+        vec_push(v, val);
+        i = i + 1;
+    }
+    return v;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("mono wav header valid");
+var m1_samples = _t_fill(100, f64_from(0));
+var m1 = write_wav_mono(m1_samples, 48000);
+var m1_data = WavBytes_data(m1);
+assert(_t_str4(m1_data, 0, 82, 73, 70, 70), "RIFF magic at [0..4]");
+assert(_t_str4(m1_data, 8, 87, 65, 86, 69), "WAVE magic at [8..12]");
+assert(_t_str4(m1_data, 12, 102, 109, 116, 32), "fmt  tag at [12..16]");
+assert(_t_str4(m1_data, 36, 100, 97, 116, 97), "data tag at [36..40]");
+assert_eq(WavBytes_len(m1), 244, "mono length 44 + 100*2 = 244");
+
+# ================================================================
+test_group("stereo wav header valid");
+var s1_left = _t_fill(50, _t_frac(1, 2));
+var s1_right = _t_fill(50, f64_neg(_t_frac(1, 2)));
+var s1 = write_wav_stereo(s1_left, s1_right, 44100);
+var s1_data = WavBytes_data(s1);
+assert(_t_str4(s1_data, 0, 82, 73, 70, 70), "stereo RIFF magic");
+assert(_t_str4(s1_data, 8, 87, 65, 86, 69), "stereo WAVE magic");
+assert_eq(WavBytes_len(s1), 244, "stereo length 44 + 50*2*2 = 244");
+
+# ================================================================
+test_group("stereo mismatched lengths errors");
+var sm_left = _t_fill(50, f64_from(0));
+var sm_right = _t_fill(30, f64_from(0));
+var sm = write_wav_stereo(sm_left, sm_right, 48000);
+assert_eq(goonj_is_err(sm), 1, "mismatched channel lengths -> error");
+
+# ================================================================
+test_group("mono wav sample clamping");
+var mc_samples = vec_new();
+vec_push(mc_samples, f64_neg(f64_from(2)));
+vec_push(mc_samples, f64_neg(f64_from(1)));
+vec_push(mc_samples, f64_from(0));
+vec_push(mc_samples, f64_from(1));
+vec_push(mc_samples, f64_from(2));
+var mc = write_wav_mono(mc_samples, 48000);
+var mc_data = WavBytes_data(mc);
+assert_eq(_t_rd_i16(mc_data, 44), 0 - 32767, "-2.0 clamps to -1.0 -> -32767");
+assert_eq(_t_rd_i16(mc_data, 52), 32767, "2.0 clamps to 1.0 -> 32767");
+
+# ================================================================
+test_group("mono wav silence");
+var ms = write_wav_mono(_t_fill(480, f64_from(0)), 48000);
+var ms_data = WavBytes_data(ms);
+var ms_len = WavBytes_len(ms);
+var ms_all_zero = 1;
+var ms_i = 44;
+while (ms_i < ms_len) {
+    if (_t_rd_i16(ms_data, ms_i) != 0) { ms_all_zero = 0; }
+    ms_i = ms_i + 2;
+}
+assert_eq(ms_all_zero, 1, "silence should produce zero PCM values");
+
+# ================================================================
+test_group("wav roundtrip header fields");
+var rt = write_wav_mono(_t_fill(1000, _t_frac(1, 10)), 44100);
+var rt_data = WavBytes_data(rt);
+assert_eq(_t_rd32(rt_data, 24), 44100, "sample_rate field == 44100");
+assert_eq(_t_rd16(rt_data, 22), 1, "num_channels field == 1");
+assert_eq(_t_rd16(rt_data, 34), 16, "bits_per_sample field == 16");
+
+# ================================================================
+test_group("empty wav valid");
+var ew = write_wav_mono(vec_new(), 48000);
+assert_eq(WavBytes_len(ew), 44, "empty samples -> header only (44 bytes)");
+
+var rc = assert_summary();
+syscall(60, rc);

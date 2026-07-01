@@ -1,0 +1,372 @@
+# analysis.tcyr -- parity tests for src/analysis.cyr
+# Ported from the #[test] blocks in rust-old/src/analysis.rs. The oracle has
+# no serde round-trip test to drop (serde only decorated AbsorptionSuggestion).
+# f32 tolerances loosened to f64. STI tests use an 8 kHz sample rate (the MTF
+# is sample-rate-independent for these <=12.5 Hz modulation frequencies) to
+# keep the O(samples * 14) DFT fast.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/image_source.cyr"
+include "src/diffuse.cyr"
+include "src/impulse.cyr"
+include "src/analysis.cyr"
+
+var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+fn is_inf(x) {
+    if (x == 0x7FF0000000000000) { return 1; }
+    return 0;
+}
+
+# A vec of `n` copies of `val`.
+fn filled_vec(n, val) {
+    var v = vec_new();
+    var i = 0;
+    while (i < n) {
+        vec_push(v, val);
+        i = i + 1;
+    }
+    return v;
+}
+# Sum of squares of a sample vec.
+fn energy_of(v) {
+    var e = 0;
+    var i = 0;
+    var n = vec_len(v);
+    while (i < n) {
+        var s = vec_get(v, i);
+        e = f64_add(e, f64_mul(s, s));
+        i = i + 1;
+    }
+    return e;
+}
+# exp(-rate_decimal * i), i in 0..n.
+fn exp_signal(n, rate_decimal) {
+    var v = vec_new();
+    var i = 0;
+    while (i < n) {
+        vec_push(v, f64_exp(f64_mul(f64_neg(rate_decimal), f64_from(i))));
+        i = i + 1;
+    }
+    return v;
+}
+# exp(-rate_decimal * i) * scale.
+fn exp_signal_scaled(n, rate_decimal, scale) {
+    var v = vec_new();
+    var i = 0;
+    while (i < n) {
+        vec_push(v, f64_mul(f64_exp(f64_mul(f64_neg(rate_decimal), f64_from(i))), scale));
+        i = i + 1;
+    }
+    return v;
+}
+# exp(-rate_decimal * (i + offset)).
+fn exp_signal_offset(n, rate_decimal, offset) {
+    var v = vec_new();
+    var i = 0;
+    while (i < n) {
+        vec_push(v, f64_exp(f64_mul(f64_neg(rate_decimal), f64_add(f64_from(i), f64_from(offset)))));
+        i = i + 1;
+    }
+    return v;
+}
+# 0.5 if (i % modulo) == 0, else -0.5.
+fn alt_signal(n, modulo) {
+    var v = vec_new();
+    var i = 0;
+    while (i < n) {
+        if ((i % modulo) == 0) {
+            vec_push(v, F64_HALF);
+        } else {
+            vec_push(v, f64_neg(F64_HALF));
+        }
+        i = i + 1;
+    }
+    return v;
+}
+# Exponentially decaying IR: exp(-(ln1000/rt60) * t), num_samples = dur*rate.
+fn make_exponential_ir(rt60, sample_rate, duration) {
+    var decay_rate = f64_div(milli(6908), rt60);
+    var num_samples = f64_to(f64_mul(duration, f64_from(sample_rate)));
+    var samples = vec_new();
+    var i = 0;
+    while (i < num_samples) {
+        var t = f64_div(f64_from(i), f64_from(sample_rate));
+        vec_push(samples, f64_exp(f64_mul(f64_neg(decay_rate), t)));
+        i = i + 1;
+    }
+    return impulse_response_new(samples, sample_rate, rt60);
+}
+# rt60_sensitivity of the suggestion with the given wall_index (0 if absent).
+fn find_sens(sug, widx) {
+    var n = vec_len(sug);
+    var i = 0;
+    while (i < n) {
+        var s = vec_get(sug, i);
+        if (AbsorptionSuggestion_wall_index(s) == widx) {
+            return AbsorptionSuggestion_rt60_sensitivity(s);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+# 10x8x3 concrete shoebox room.
+fn concrete_room() {
+    return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+}
+
+alloc_init();
+
+# ================================================================
+test_group("clarity_c50 exponential");
+var t1_c50 = clarity_c50(make_exponential_ir(pct(30), 48000, F64_TWO));
+assert(f64_gt(t1_c50, 0), "C50 positive for short RT60 decay");
+
+# ================================================================
+test_group("clarity_c80 greater than c50");
+var t2_ir = make_exponential_ir(F64_ONE, 48000, F64_TWO);
+assert(f64_gt(clarity_c80(t2_ir), clarity_c50(t2_ir)), "C80 > C50");
+
+# ================================================================
+test_group("short RT60 higher clarity");
+var t3_short = clarity_c80(make_exponential_ir(pct(30), 48000, F64_TWO));
+var t3_long = clarity_c80(make_exponential_ir(F64_TWO, 48000, F64_TWO));
+assert(f64_gt(t3_short, t3_long), "short RT60 higher C80 than long");
+
+# ================================================================
+test_group("definition_d50 in range");
+var t4_d50 = definition_d50(make_exponential_ir(F64_ONE, 48000, F64_TWO));
+assert(f64_ge(t4_d50, 0), "D50 >= 0");
+assert(f64_le(t4_d50, F64_ONE), "D50 <= 1");
+
+# ================================================================
+test_group("definition_d50 short reverb higher");
+var t5_short = definition_d50(make_exponential_ir(pct(30), 48000, F64_TWO));
+var t5_long = definition_d50(make_exponential_ir(F64_TWO, 48000, F64_TWO));
+assert(f64_gt(t5_short, t5_long), "short reverb higher D50");
+
+# ================================================================
+test_group("sti clear ir high");
+var t6_sti = sti_estimate(make_exponential_ir(pct(20), 8000, F64_TWO));
+assert(f64_gt(t6_sti, F64_HALF), "clear room (0.2s RT60) STI > 0.5");
+
+# ================================================================
+test_group("sti reverberant ir lower");
+var t7_clear = sti_estimate(make_exponential_ir(pct(30), 8000, F64_TWO));
+var t7_rev = sti_estimate(make_exponential_ir(f64_from(3), 8000, f64_from(4)));
+assert(f64_gt(t7_clear, t7_rev), "clear STI > reverberant STI");
+
+# ================================================================
+test_group("sti in valid range");
+var t8_sti = sti_estimate(make_exponential_ir(F64_ONE, 8000, F64_TWO));
+assert(f64_ge(t8_sti, 0), "STI >= 0");
+assert(f64_le(t8_sti, F64_ONE), "STI <= 1");
+
+# ================================================================
+test_group("empty ir returns zero");
+var t9_ir = impulse_response_new(vec_new(), 48000, F64_ONE);
+assert_eq(f64_to(clarity_c50(t9_ir)), 0, "empty clarity_c50 = 0");
+assert_eq(f64_to(definition_d50(t9_ir)), 0, "empty definition_d50 = 0");
+assert_eq(f64_to(sti_estimate(t9_ir)), 0, "empty sti = 0");
+
+# ================================================================
+test_group("absorption suggestions sorted by sensitivity");
+var t10_sug = suggest_absorption_placement(concrete_room(), F64_HALF);
+assert_eq(vec_len(t10_sug), 6, "6 wall suggestions");
+var t10_all_neg = 1;
+var t10_i = 0;
+while (t10_i < 6) {
+    if (f64_ge(AbsorptionSuggestion_rt60_sensitivity(vec_get(t10_sug, t10_i)), 0) == 1) {
+        t10_all_neg = 0;
+    }
+    t10_i = t10_i + 1;
+}
+assert_eq(t10_all_neg, 1, "all sensitivities negative");
+var t10_sorted = 1;
+var t10_k = 1;
+while (t10_k < 6) {
+    var t10_a = AbsorptionSuggestion_rt60_sensitivity(vec_get(t10_sug, t10_k - 1));
+    var t10_b = AbsorptionSuggestion_rt60_sensitivity(vec_get(t10_sug, t10_k));
+    if (f64_gt(t10_a, t10_b) == 1) { t10_sorted = 0; }
+    t10_k = t10_k + 1;
+}
+assert_eq(t10_sorted, 1, "sorted ascending by sensitivity");
+
+# ================================================================
+test_group("larger wall more sensitive");
+var t11_sug = suggest_absorption_placement(concrete_room(), F64_HALF);
+var t11_floor = find_sens(t11_sug, 0);
+var t11_side = find_sens(t11_sug, 4);
+assert(f64_gt(f64_abs(t11_floor), f64_abs(t11_side)), "floor more sensitive than side wall");
+
+# ================================================================
+test_group("clarity zero sample rate");
+var t12_ir = impulse_response_new(filled_vec(100, F64_ONE), 0, F64_ONE);
+assert_eq(f64_to(clarity_c50(t12_ir)), 0, "zero rate clarity_c50 = 0");
+assert_eq(f64_to(clarity_c80(t12_ir)), 0, "zero rate clarity_c80 = 0");
+
+# ================================================================
+test_group("clarity all energy early");
+var t13_s = filled_vec(48000, 0);
+vec_set(t13_s, 0, F64_ONE);
+var t13_ir = impulse_response_new(t13_s, 48000, pct(1));
+assert_eq(is_inf(clarity_c50(t13_ir)), 1, "all-early clarity_c50 -> +inf");
+
+# ================================================================
+test_group("definition_d50 all early");
+var t14_s = filled_vec(48000, 0);
+vec_set(t14_s, 0, F64_ONE);
+var t14_ir = impulse_response_new(t14_s, 48000, pct(1));
+assert(approx(definition_d50(t14_ir), F64_ONE, TOL_1E3), "all-early D50 ~ 1.0");
+
+# ================================================================
+test_group("sti silent ir returns zero");
+var t15_ir = impulse_response_new(filled_vec(48000, 0), 48000, F64_ONE);
+assert_eq(f64_to(sti_estimate(t15_ir)), 0, "silent sti = 0");
+
+# ================================================================
+test_group("sti impulse response range");
+var t16_rt = vec_new();
+vec_push(t16_rt, pct(10));
+vec_push(t16_rt, F64_HALF);
+vec_push(t16_rt, F64_ONE);
+vec_push(t16_rt, F64_TWO);
+vec_push(t16_rt, f64_from(5));
+var t16_ok = 1;
+var t16_i = 0;
+while (t16_i < 5) {
+    var t16_sti = sti_estimate(make_exponential_ir(vec_get(t16_rt, t16_i), 8000, f64_from(3)));
+    if (f64_lt(t16_sti, 0) == 1) { t16_ok = 0; }
+    if (f64_gt(t16_sti, F64_ONE) == 1) { t16_ok = 0; }
+    t16_i = t16_i + 1;
+}
+assert_eq(t16_ok, 1, "STI in [0,1] for all RT60");
+
+# ================================================================
+test_group("suggest absorption already at target");
+var t17_room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_carpet());
+var t17_geom = AcousticRoom_geometry(t17_room);
+var t17_rt = sabine_rt60(room_geometry_volume_shoebox(t17_geom), room_geometry_total_absorption(t17_geom));
+var t17_sug = suggest_absorption_placement(t17_room, t17_rt);
+assert(f64_gt(f64_from(vec_len(t17_sug)), 0), "suggestions non-empty at target");
+
+# ================================================================
+test_group("clarity zero total energy");
+var t18_ir = impulse_response_new(filled_vec(48000, 0), 48000, F64_ONE);
+assert_eq(f64_to(definition_d50(t18_ir)), 0, "zero total energy -> D50 = 0");
+
+# ================================================================
+test_group("sti mtf saturation branches");
+var t19_s = filled_vec(8000, 0);
+vec_set(t19_s, 0, F64_ONE);
+var t19_ir = impulse_response_new(t19_s, 8000, milli(1));
+assert(f64_gt(sti_estimate(t19_ir), pct(80)), "delta impulse -> high STI");
+
+# ================================================================
+test_group("suggest absorption zero target");
+var t20_sug = suggest_absorption_placement(concrete_room(), 0);
+assert(f64_gt(f64_from(vec_len(t20_sug)), 0), "zero target suggestions non-empty");
+
+# ================================================================
+test_group("edt positive for reverberant ir");
+var t21_edt = early_decay_time(make_exponential_ir(F64_ONE, 48000, f64_from(3)));
+assert(f64_gt(t21_edt, 0), "EDT positive");
+assert(f64_lt(t21_edt, f64_from(3)), "EDT < duration");
+
+# ================================================================
+test_group("edt shorter for absorptive room");
+var t22_short = early_decay_time(make_exponential_ir(pct(30), 48000, F64_TWO));
+var t22_long = early_decay_time(make_exponential_ir(F64_TWO, 48000, f64_from(3)));
+assert(f64_lt(t22_short, t22_long), "shorter RT60 shorter EDT");
+
+# ================================================================
+test_group("edt empty ir");
+assert_eq(f64_to(early_decay_time(impulse_response_new(vec_new(), 48000, F64_ONE))), 0, "empty EDT = 0");
+
+# ================================================================
+test_group("sound strength finite");
+var t24_g = sound_strength_g(make_exponential_ir(F64_ONE, 48000, F64_TWO));
+assert(f64_lt(f64_abs(t24_g), f64_from(1000)), "G finite");
+
+# ================================================================
+test_group("centre time positive");
+var t25_ts = centre_time_ts(make_exponential_ir(F64_ONE, 48000, F64_TWO));
+assert(f64_gt(t25_ts, 0), "ts positive");
+assert(f64_lt(t25_ts, F64_TWO), "ts < IR duration");
+
+# ================================================================
+test_group("centre time shorter for clear room");
+var t26_clear = centre_time_ts(make_exponential_ir(pct(20), 48000, F64_TWO));
+var t26_rev = centre_time_ts(make_exponential_ir(F64_TWO, 48000, f64_from(3)));
+assert(f64_lt(t26_clear, t26_rev), "clearer room lower centre time");
+
+# ================================================================
+test_group("centre time empty");
+assert_eq(f64_to(centre_time_ts(impulse_response_new(vec_new(), 48000, F64_ONE))), 0, "empty ts = 0");
+
+# ================================================================
+test_group("octave band filter produces output");
+var t28_ir = make_exponential_ir(F64_ONE, 48000, F64_ONE);
+var t28_f = octave_band_filter(t28_ir, f64_from(1000));
+assert_eq(vec_len(t28_f), vec_len(ImpulseResponse_samples(t28_ir)), "filter length matches input");
+assert(f64_gt(energy_of(t28_f), 0), "filtered output has energy");
+
+# ================================================================
+test_group("octave band filter empty");
+var t29_empty = octave_band_filter(impulse_response_new(vec_new(), 48000, F64_ONE), f64_from(1000));
+assert_eq(vec_len(t29_empty), 0, "empty ir -> empty filter");
+
+# ================================================================
+test_group("octave band filter zero freq");
+assert_eq(vec_len(octave_band_filter(make_exponential_ir(F64_ONE, 48000, F64_ONE), 0)), 0,
+"zero freq -> empty filter");
+
+# ================================================================
+test_group("lf identical channels zero");
+var t31_sig = exp_signal(4800, pct(1));
+assert(f64_lt(lateral_fraction_lf(t31_sig, t31_sig, 48000), pct(1)), "identical channels near-zero LF");
+
+# ================================================================
+test_group("lf unbalanced channels measurable");
+var t32_left = exp_signal(4800, pct(1));
+var t32_right = exp_signal_scaled(4800, pct(1), pct(10));
+assert(f64_gt(lateral_fraction_lf(t32_left, t32_right, 48000), pct(10)), "unbalanced channels LF > 0.1");
+
+# ================================================================
+test_group("lf empty returns zero");
+assert_eq(f64_to(lateral_fraction_lf(vec_new(), vec_new(), 48000)), 0, "empty LF = 0");
+
+# ================================================================
+test_group("iacc identical channels one");
+var t34_sig = exp_signal(4800, pct(1));
+assert(f64_gt(iacc(t34_sig, t34_sig, 48000), pct(95)), "identical channels IACC ~ 1.0");
+
+# ================================================================
+test_group("iacc uncorrelated low");
+var t35_left = alt_signal(4800, 2);
+var t35_right = alt_signal(4800, 3);
+assert(f64_lt(iacc(t35_left, t35_right, 48000), pct(80)), "uncorrelated IACC < 0.8");
+
+# ================================================================
+test_group("iacc empty returns zero");
+assert_eq(f64_to(iacc(vec_new(), vec_new(), 48000)), 0, "empty IACC = 0");
+
+# ================================================================
+test_group("iacc in valid range");
+var t37_left = exp_signal(4800, milli(5));
+var t37_right = exp_signal_offset(4800, milli(5), 5);
+var t37_val = iacc(t37_left, t37_right, 48000);
+assert(f64_ge(t37_val, 0), "IACC >= 0");
+assert(f64_le(t37_val, F64_ONE), "IACC <= 1");
+
+var rc = assert_summary();
+syscall(60, rc);

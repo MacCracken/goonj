@@ -1,0 +1,54 @@
+# coupled.tcyr -- parity tests for src/coupled.cyr
+# Ported from the #[test] blocks in rust-old/src/coupled.rs.
+# (coupled_decay_serializes omitted -- no serde in Cyrius.)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/image_source.cyr"
+include "src/diffuse.cyr"
+include "src/impulse.cyr"
+include "src/portal.cyr"
+include "src/coupled.cyr"
+
+# Rust two_rooms(): concrete 10x8x3 source room, carpet 8x6x3 receiving
+# room, portal at (10, 1, 4) with +X normal, 0.9 x 2.1 m.
+fn two_rooms() {
+    var cr = alloc(sizeof(CoupledRooms));
+    CoupledRooms_set_room_a(cr,
+    acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete()));
+    CoupledRooms_set_room_b(cr,
+    acoustic_room_shoebox(f64_from(8), f64_from(6), f64_from(3), acoustic_material_carpet()));
+    CoupledRooms_set_portal(cr,
+    portal_new(hvec3_new(f64_from(10), F64_ONE, f64_from(4)), hvec3_unit_x(),
+    f64_div(f64_from(9), f64_from(10)), f64_div(f64_from(21), f64_from(10))));
+    return cr;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("coupled_produces_double_slope");
+var decay = coupled_room_decay(two_rooms());
+assert(f64_gt(CoupledDecay_rt60_early(decay), 0), "rt60_early > 0");
+assert(f64_gt(CoupledDecay_rt60_late(decay), 0), "rt60_late > 0");
+assert(f64_gt(CoupledDecay_rt60_late(decay), CoupledDecay_rt60_early(decay)),
+"late should be longer than early");
+
+# ================================================================
+test_group("coupling_strength_in_range");
+var d2 = coupled_room_decay(two_rooms());
+assert(f64_ge(CoupledDecay_coupling_strength(d2), 0), "coupling >= 0");
+assert(f64_le(CoupledDecay_coupling_strength(d2), F64_ONE), "coupling <= 1");
+
+# ================================================================
+test_group("early_amplitude_in_range");
+var d3 = coupled_room_decay(two_rooms());
+assert(f64_ge(CoupledDecay_early_amplitude(d3), 0), "early_amplitude >= 0");
+assert(f64_le(CoupledDecay_early_amplitude(d3), F64_ONE), "early_amplitude <= 1");
+
+var rc = assert_summary();
+syscall(60, rc);

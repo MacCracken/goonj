@@ -88,9 +88,22 @@ milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md
   `impulse` is the first module to co-compile `image_source` + `diffuse`
   (verified collision-free beforehand). Unblocks `analysis`, `coupled`, `wav`.
 
+- **analysis + coupled + wav** — `analysis` (room-acoustics metrics: C50/C80,
+  D50, EDT, G, ts, LF, IACC, STI per ISO 3382-1 + IEC 60268-16; 48 assertions),
+  `coupled` (multi-room energy exchange / double-slope decay; 7), `wav` (16-bit
+  PCM RIFF/WAVE export built in an **in-memory byte buffer** via `store8` +
+  little-endian encoding — no file-I/O syscalls; 16). Fifth parallel workflow
+  (3 worktree-isolated agents), integrated + independently re-verified; fmt +
+  lint clean, zero cleanup. `binaural` is now unblocked.
+- **logging** — `src/logging.cyr`. Real **sakshi-backed** diagnostic logging
+  (not a stub): `logging_init` (WARN) / `logging_init_verbose` (TRACE) /
+  `logging_set_level`, and `goonj_log_{fatal,error,warn,info,debug,trace}`.
+  Verbose mode for error-locating diagnosis; runtime level gating verified. 11
+  assertions.
+
 ### Changed
 - Toolchain pin **6.3.12 → 6.3.14** (`cyrius.cyml`); stdlib re-vendored. No
-  source changes required — all 3464 assertions stay green. **Pin held at
+  source changes required — all 3546 assertions stay green. **Pin held at
   6.3.14** deliberately even though the `cycc` wrapper has since drifted to
   6.3.15 (drift warning is benign; builds work).
 

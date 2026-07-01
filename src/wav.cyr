@@ -1,0 +1,152 @@
+# wav.cyr -- WAV export (16-bit PCM, mono + stereo).
+#
+# Writes an impulse response (or raw sample buffers) as a minimal 44-byte
+# RIFF/WAVE file with 16-bit PCM data. No external dependency; the header
+# is emitted byte-for-byte.
+#
+# Ports rust-old/src/wav.rs. The Rust writer took a `&mut impl Write` and
+# streamed bytes into it; Cyrius has no such trait, so each writer builds
+# a byte buffer in memory (alloc'd to the exact final size) and returns a
+# WavBytes handle (data pointer + byte length). f32 -> f64 throughout:
+# each sample is a clamped, scaled, truncated i16 written little-endian.
+#
+# Requires (from the build/test unit): error.cyr (ERR_COMPUTATION),
+# impulse.cyr (ImpulseResponse_samples/_sample_rate), stdlib math (f64_*),
+# vec, and a live allocator (alloc_init() must have run).
+
+# ================================================================
+# WavBytes -- an in-memory WAV file: byte buffer + its length.
+# ================================================================
+#derive(accessors)
+struct WavBytes { data; len; }
+
+#must_use
+fn wav_bytes_new(data, len) {
+    var w = alloc(sizeof(WavBytes));
+    WavBytes_set_data(w, data);
+    WavBytes_set_len(w, len);
+    return w;
+}
+
+# ================================================================
+# Little-endian byte emitters (mutate buf at pos, return next pos).
+# ================================================================
+# Write a u16 as two little-endian bytes: low then high.
+fn _wav_le16(buf, pos, v) {
+    store8(buf + pos, v & 0xFF);
+    store8(buf + pos + 1, (v >> 8) & 0xFF);
+    return pos + 2;
+}
+
+# Write a u32 as four little-endian bytes.
+fn _wav_le32(buf, pos, v) {
+    store8(buf + pos, v & 0xFF);
+    store8(buf + pos + 1, (v >> 8) & 0xFF);
+    store8(buf + pos + 2, (v >> 16) & 0xFF);
+    store8(buf + pos + 3, (v >> 24) & 0xFF);
+    return pos + 4;
+}
+
+# Write four raw ASCII codes (a four-char chunk tag).
+fn _wav_str4(buf, pos, a, b, c, d) {
+    store8(buf + pos, a);
+    store8(buf + pos + 1, b);
+    store8(buf + pos + 2, c);
+    store8(buf + pos + 3, d);
+    return pos + 4;
+}
+
+# Emit the 44-byte RIFF/WAVE header into buf at pos; return next pos.
+fn _wav_write_header(buf, pos, file_size, num_channels, sample_rate, byte_rate,
+block_align, bits_per_sample, data_size) {
+    # RIFF chunk descriptor.
+    pos = _wav_str4(buf, pos, 82, 73, 70, 70);   # "RIFF"
+    pos = _wav_le32(buf, pos, file_size);
+    pos = _wav_str4(buf, pos, 87, 65, 86, 69);   # "WAVE"
+    # fmt sub-chunk.
+    pos = _wav_str4(buf, pos, 102, 109, 116, 32);   # "fmt "
+    pos = _wav_le32(buf, pos, 16);   # PCM fmt chunk size
+    pos = _wav_le16(buf, pos, 1);    # audio format 1 = PCM
+    pos = _wav_le16(buf, pos, num_channels);
+    pos = _wav_le32(buf, pos, sample_rate);
+    pos = _wav_le32(buf, pos, byte_rate);
+    pos = _wav_le16(buf, pos, block_align);
+    pos = _wav_le16(buf, pos, bits_per_sample);
+    # data sub-chunk.
+    pos = _wav_str4(buf, pos, 100, 97, 116, 97);   # "data"
+    pos = _wav_le32(buf, pos, data_size);
+    return pos;
+}
+
+# Convert one f64 sample to a 16-bit PCM value: clamp to [-1, 1], scale by
+# 32767, truncate toward zero. Returns a signed i64 in [-32767, 32767].
+#must_use
+fn _wav_sample_to_pcm(s) {
+    var clamped = f64_clamp(s, f64_neg(F64_ONE), F64_ONE);
+    var scaled = f64_mul(clamped, f64_from(32767));
+    return f64_to(f64_trunc(scaled));
+}
+
+# ================================================================
+# Public writers
+# ================================================================
+# Write a mono 16-bit PCM WAV from a sample vec. Returns a WavBytes on
+# success or ERR_COMPUTATION if the data would overflow the 32-bit header.
+#must_use
+fn write_wav_mono(samples, sample_rate) {
+    var num_channels = 1;
+    var bits_per_sample = 16;
+    var byte_rate = sample_rate * num_channels * bits_per_sample / 8;
+    var block_align = num_channels * bits_per_sample / 8;
+    var n = vec_len(samples);
+    var data_size = n * block_align;
+    if (data_size > 0xFFFFFFFF) { return ERR_COMPUTATION; }
+    var file_size = 36 + data_size;
+    var total = 44 + data_size;
+    var buf = alloc(total);
+    var pos = _wav_write_header(buf, 0, file_size, num_channels, sample_rate, byte_rate,
+    block_align, bits_per_sample, data_size);
+    var i = 0;
+    while (i < n) {
+        var pcm = _wav_sample_to_pcm(vec_get(samples, i));
+        pos = _wav_le16(buf, pos, pcm & 0xFFFF);
+        i = i + 1;
+    }
+    return wav_bytes_new(buf, total);
+}
+
+# Write a stereo 16-bit PCM WAV from equal-length left/right vecs (samples
+# interleaved L,R). Returns ERR_COMPUTATION on mismatched lengths or
+# 32-bit-header overflow.
+#must_use
+fn write_wav_stereo(left, right, sample_rate) {
+    var nl = vec_len(left);
+    var nr = vec_len(right);
+    if (nl != nr) { return ERR_COMPUTATION; }
+    var num_channels = 2;
+    var bits_per_sample = 16;
+    var byte_rate = sample_rate * num_channels * bits_per_sample / 8;
+    var block_align = num_channels * bits_per_sample / 8;
+    var data_size = nl * block_align;
+    if (data_size > 0xFFFFFFFF) { return ERR_COMPUTATION; }
+    var file_size = 36 + data_size;
+    var total = 44 + data_size;
+    var buf = alloc(total);
+    var pos = _wav_write_header(buf, 0, file_size, num_channels, sample_rate, byte_rate,
+    block_align, bits_per_sample, data_size);
+    var i = 0;
+    while (i < nl) {
+        var l_pcm = _wav_sample_to_pcm(vec_get(left, i));
+        var r_pcm = _wav_sample_to_pcm(vec_get(right, i));
+        pos = _wav_le16(buf, pos, l_pcm & 0xFFFF);
+        pos = _wav_le16(buf, pos, r_pcm & 0xFFFF);
+        i = i + 1;
+    }
+    return wav_bytes_new(buf, total);
+}
+
+# Write an ImpulseResponse as a mono WAV (its samples at its sample rate).
+#must_use
+fn impulse_response_to_wav(ir) {
+    return write_wav_mono(ImpulseResponse_samples(ir), ImpulseResponse_sample_rate(ir));
+}

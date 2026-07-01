@@ -26,17 +26,18 @@
 
 Per-module parity is tracked in [`port-audit.md`](port-audit.md). Summary:
 
-**29 / 37 modules ported · 3464 parity assertions green across 28 suites.**
+**33 / 37 modules ported · 3546 parity assertions green across 32 suites.**
 
 | Layer | Modules (✅) |
 |-------|-------------|
-| L0    | error, propagation (full, 44), resonance (15), ambisonics (20), scattering (211), dark_velvet_noise (18) |
+| L0    | error, propagation (full, 44), resonance (15), ambisonics (20), scattering (211), dark_velvet_noise (18), logging (11, real sakshi) |
 | L1    | material (65) |
 | L2    | hybrid (20), directivity (19), metamaterial (51), room (10), fdn (14), gfpe (23), diffusion (7), fdtd (39), outdoor (28), portal (14), udfa (15), underwater (36), vibroacoustics (25), bridge (29) |
 | L3    | radiosity (7), image_source (30), ray (275, +bench), dwm (53, +bench) — **L3 complete** |
-| L4    | diffuse (2306), diffraction (17), beam (43) |
-| L5    | impulse (30) |
-| pending | analysis (unblocked), coupled (unblocked), wav (unblocked), logging (→ sakshi); binaural (needs wav), integration ×3 — 8 modules |
+| L4    | diffuse (2306), diffraction (17), beam (43), analysis (48) — **L4 complete** |
+| L5    | impulse (30), coupled (7) — **L5 complete** |
+| L6    | wav (16) |
+| pending | binaural (unblocked — wav done), integration ×3 — **4 modules** |
 
 Per-module detail in [`port-audit.md`](port-audit.md). Benchmarks in
 [`../benchmarks/results.md`](../benchmarks/results.md). Toolchain: cyrius **6.3.14**.
@@ -45,9 +46,11 @@ Per-module detail in [`port-audit.md`](port-audit.md). Benchmarks in
 
 One `tests/<module>.tcyr` suite per ported module, each ported one-for-one
 from that module's Rust `#[test]` blocks (serde round-trips dropped — no
-serde). **28 suites, 3464 assertions, all green.** Run a suite with
-`cyrius test tests/<module>.tcyr`. Four parallel workflows landed 23 of the 29
-modules (L2 ×13 + wave-2 ×6 + L4 ×2 + impulse/beam ×2); the rest were ported solo. Each batch was independently re-verified in main (tests +
+serde). **32 suites, 3546 assertions, all green.** Run a suite with
+`cyrius test tests/<module>.tcyr`. Five parallel workflows landed 26 of the 33
+modules (L2 ×13 + wave-2 ×6 + L4 ×2 + impulse/beam ×2 + analysis/coupled/wav ×3);
+the rest were ported solo. `logging` is real sakshi-backed logging with a
+verbose mode (`logging_init_verbose`) for diagnosis. Each batch was independently re-verified in main (tests +
 canonical-fmt diff + lint). `ray` and `dwm` have hot-path benchmarks
 (`cyrius bench tests/{ray,dwm}.bcyr`).
 
@@ -70,13 +73,12 @@ port yet* (gated on the distlib bundle, roadmap M5).
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). 8 modules remain. `impulse` ✅ unblocked a wave:
-- **Batch (unblocked, independent):** `analysis` (C50/C80/D50/EDT/STI…),
-  `coupled` (multi-room energy exchange), `wav` (16-bit PCM export), `logging`
-  (→ `sakshi`) — a 4-agent parallel workflow.
-- Then **`binaural`** (needs `wav` — HRTF spatialization) and the three
-  `integration/*` consumer APIs (dhvani, kiran, soorat) — final batch.
-- After those: `dist/goonj.cyr` distlib bundle, green a consumer, tag **2.0.0**.
+See [`roadmap.md`](roadmap.md). **4 modules remain** — the final batch:
+- **`binaural`** (HRTF spatialization; now unblocked — wav done) + the three
+  **`integration/*`** consumer APIs (dhvani, kiran, soorat) — one parallel workflow.
+- Then: the **v1.0/2.0.0 close-out** — `dist/goonj.cyr` distlib bundle, green a
+  downstream consumer, thread `goonj_log_*` diagnostics into the error/hot paths
+  the Rust `tracing` macros covered, CHANGELOG, tag **2.0.0**.
 
 **Every language pattern is now proven** (f32→f64, hex literals, integer errors,
 HVec3, manual layout, `Vec`, closures→fnptr+ctx, tuple→struct, bit-ops/xorshift,
