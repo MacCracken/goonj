@@ -1,0 +1,95 @@
+# beam.tcyr -- parity tests for src/beam.cyr
+# Ported from the #[test] blocks in rust-old/src/beam.rs. The
+# `beam_path_serializes` serde round-trip test is dropped (no serde in
+# Cyrius). Float equalities use approx(a, b, tol); f32 comparisons are
+# widened to f64.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/diffuse.cyr"
+include "src/beam.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+fn dfrac(a, b) { return f64_div(f64_from(a), f64_from(b)); }
+
+# Shoebox wall lists from the Rust test fixtures (length 10, width 8, height 3).
+fn concrete_walls() {
+    return RoomGeometry_walls(
+    room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3),
+    acoustic_material_concrete()));
+}
+fn carpet_walls() {
+    return RoomGeometry_walls(
+    room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3),
+    acoustic_material_carpet()));
+}
+
+# Standard test beam: apex (5, 1.5, 4), +Z axis, given half-angle.
+fn test_beam(half_angle) {
+    return acoustic_beam_new(hvec3_new(f64_from(5), dfrac(3, 2), f64_from(4)),
+    hvec3_unit_z(), half_angle);
+}
+
+alloc_init();
+
+# ================================================================
+test_group("beam traces through shoebox");
+var bt_path = trace_beam(test_beam(dfrac(1, 10)), concrete_walls(), 10);
+assert(vec_len(beam_path_hits(bt_path)) > 0, "beam should hit walls in shoebox");
+assert(f64_gt(beam_path_total_distance(bt_path), 0), "total distance positive");
+
+# ================================================================
+test_group("beam energy decreases");
+var be_path = trace_beam(test_beam(dfrac(1, 10)), carpet_walls(), 20);
+var be_i = 0;
+while (be_i < 8) {
+    assert(f64_lt(beam_path_final_energy(be_path, be_i), F64_ONE), "energy should decrease");
+    be_i = be_i + 1;
+}
+
+# ================================================================
+test_group("beam set covers sphere");
+var bs_beams = generate_beam_set(hvec3_zero(), 0);
+assert_eq(vec_len(bs_beams), 20, "20 beams at subdivision 0");
+var bs_i = 0;
+while (bs_i < vec_len(bs_beams)) {
+    var bs_dir = beam_direction(vec_get(bs_beams, bs_i));
+    assert(approx(hvec3_length(bs_dir), F64_ONE, TOL_1E2), "direction unit length");
+    bs_i = bs_i + 1;
+}
+
+# ================================================================
+test_group("beam set subdivision increases count");
+var sd_b0 = generate_beam_set(hvec3_zero(), 0);
+var sd_b1 = generate_beam_set(hvec3_zero(), 1);
+assert(vec_len(sd_b1) > vec_len(sd_b0), "more beams at higher subdivision");
+
+# ================================================================
+test_group("beam empty scene");
+var es_path = trace_beam(
+acoustic_beam_new(hvec3_zero(), hvec3_unit_x(), dfrac(1, 10)), vec_new(), 10);
+assert_eq(vec_len(beam_path_hits(es_path)), 0, "empty scene no hits");
+
+# ================================================================
+test_group("beam wall hit coverage in range");
+var cv_path = trace_beam(test_beam(dfrac(1, 20)), concrete_walls(), 5);
+var cv_hits = beam_path_hits(cv_path);
+var cv_i = 0;
+while (cv_i < vec_len(cv_hits)) {
+    var cv_c = BeamWallHit_coverage(vec_get(cv_hits, cv_i));
+    assert(f64_ge(cv_c, 0), "coverage >= 0");
+    assert(f64_le(cv_c, F64_ONE), "coverage <= 1");
+    cv_i = cv_i + 1;
+}
+
+var rc = assert_summary();
+syscall(60, rc);

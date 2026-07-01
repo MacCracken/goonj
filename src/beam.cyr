@@ -1,0 +1,278 @@
+# beam.cyr -- beam tracing: volumetric sound propagation without the
+# per-ray sampling artifacts of discrete ray tracing.
+#
+# A beam is a pyramidal frustum originating at a source (AcousticBeam).
+# When its axis intersects a wall, the beam is reflected specularly and a
+# child beam continues up to `max_order` reflections, losing per-band
+# energy at each bounce. Ports rust-old/src/beam.rs. f32 -> f64. Rust's
+# `serde` derive is dropped (no serde in Cyrius); the serde round-trip
+# test is therefore omitted.
+#
+# Reference: Funkhouser et al., "A Beam Tracing Method for Interactive
+# Architectural Acoustics," JASA 115(2), 2004.
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON),
+# material.cyr (NUM_BANDS, am_absorption_band), room.cyr (Wall_*,
+# wall_area, RoomGeometry_walls), diffuse.cyr (fibonacci_sphere), stdlib
+# math/ganita (F64_*, f64_tan/f64_sqrt/f64_clamp) and hisab (hvec3_*).
+# alloc_init() must have run.
+
+var BEAM_DEAD = 0x3F50624DD2F1A9FC;   # 0.001 — beam dead below this max band energy
+var BEAM_NONE = 0xBFF0000000000000;   # -1.0 — "no intersection" sentinel
+
+# AcousticBeam inline layout:
+# apex | direction | half_angle | energy[8] | path_length | order.
+enum BeamLayout {
+    BEAM_APEX   = 0,
+    BEAM_DIR    = 8,
+    BEAM_HALF   = 16,
+    BEAM_ENERGY = 24,   # offsets 24..88 (8 f64)
+    BEAM_PATH   = 88,
+    BEAM_ORDER  = 96,
+    BEAM_SIZE   = 104,
+}
+
+# BeamPath inline layout: hits (vec) | final_energy[8] | total | order.
+enum BeamPathLayout {
+    BP_HITS  = 0,
+    BP_FINAL = 8,       # offsets 8..72 (8 f64)
+    BP_TOTAL = 72,
+    BP_ORDER = 80,
+    BP_SIZE  = 88,
+}
+
+# ================================================================
+# AcousticBeam accessors (manual inline layout)
+# ================================================================
+fn beam_apex(b)             { return load64(b + BEAM_APEX); }
+fn beam_direction(b)        { return load64(b + BEAM_DIR); }
+fn beam_half_angle(b)       { return load64(b + BEAM_HALF); }
+fn beam_energy_band(b, i)   { return load64(b + BEAM_ENERGY + i * 8); }
+fn beam_path_length(b)      { return load64(b + BEAM_PATH); }
+fn beam_order(b)            { return load64(b + BEAM_ORDER); }
+
+# A beam with all-1.0 per-band energy, zero path length, order 0.
+#must_use
+fn acoustic_beam_new(apex, direction, half_angle) {
+    var b = alloc(BEAM_SIZE);
+    store64(b + BEAM_APEX, apex);
+    store64(b + BEAM_DIR, direction);
+    store64(b + BEAM_HALF, half_angle);
+    var i = 0;
+    while (i < NUM_BANDS) {
+        store64(b + BEAM_ENERGY + i * 8, F64_ONE);
+        i = i + 1;
+    }
+    store64(b + BEAM_PATH, 0);
+    store64(b + BEAM_ORDER, 0);
+    return b;
+}
+
+# Deep copy (Rust clone) — trace mutates a working copy, not the input.
+#must_use
+fn _beam_clone(src) {
+    var b = alloc(BEAM_SIZE);
+    store64(b + BEAM_APEX, beam_apex(src));
+    store64(b + BEAM_DIR, beam_direction(src));
+    store64(b + BEAM_HALF, beam_half_angle(src));
+    var i = 0;
+    while (i < NUM_BANDS) {
+        store64(b + BEAM_ENERGY + i * 8, beam_energy_band(src, i));
+        i = i + 1;
+    }
+    store64(b + BEAM_PATH, beam_path_length(src));
+    store64(b + BEAM_ORDER, beam_order(src));
+    return b;
+}
+
+# ================================================================
+# BeamWallHit
+# ================================================================
+#derive(accessors)
+struct BeamWallHit { centre; distance; wall_index; coverage; }
+
+#must_use
+fn beam_wall_hit_new(centre, distance, wall_index, coverage) {
+    var h = alloc(sizeof(BeamWallHit));
+    BeamWallHit_set_centre(h, centre);
+    BeamWallHit_set_distance(h, distance);
+    BeamWallHit_set_wall_index(h, wall_index);
+    BeamWallHit_set_coverage(h, coverage);
+    return h;
+}
+
+# ================================================================
+# BeamPath accessors (manual inline layout)
+# ================================================================
+fn beam_path_hits(p)           { return load64(p + BP_HITS); }
+fn beam_path_final_energy(p, i) { return load64(p + BP_FINAL + i * 8); }
+fn beam_path_total_distance(p) { return load64(p + BP_TOTAL); }
+fn beam_path_order(p)          { return load64(p + BP_ORDER); }
+
+# ================================================================
+# Beam / wall geometry
+# ================================================================
+# Distance along the beam axis to a wall plane, or BEAM_NONE if the beam
+# does not intersect it in front (fewer than 3 vertices, axis parallel to
+# the wall, or the plane behind the apex).
+#must_use
+fn _beam_wall_distance(beam, wall) {
+    var verts = Wall_vertices(wall);
+    if (vec_len(verts) < 3) { return BEAM_NONE; }
+    var n = Wall_normal(wall);
+    var d_dot_n = hvec3_dot(beam_direction(beam), n);
+    if (f64_lt(f64_abs(d_dot_n), GOONJ_EPSILON) == 1) { return BEAM_NONE; }
+    var p0 = vec_get(verts, 0);
+    var t = f64_div(hvec3_dot(hvec3_sub(p0, beam_apex(beam)), n), d_dot_n);
+    if (f64_lt(t, GOONJ_EPSILON) == 1) { return BEAM_NONE; }
+    return t;
+}
+
+# ================================================================
+# Beam tracing
+# ================================================================
+# Trace a beam through a wall list, recording wall intersections. At the
+# nearest wall the beam is reflected and tracing continues up to
+# `max_order` reflections; the beam's energy is reduced per-band at each
+# reflection and tracing stops once the strongest band falls below 0.001.
+#must_use
+fn trace_beam(beam, walls, max_order) {
+    var current = _beam_clone(beam);
+    var hits = vec_new();
+    var last_wall = (0 - 1);
+    var nwalls = vec_len(walls);
+
+    var iter = 0;
+    var running = 1;
+    while (running == 1) {
+        if (iter >= max_order) {
+            running = 0;
+        } else {
+            # Find nearest wall intersection along the beam axis.
+            var found = 0;
+            var best_t = 0;
+            var best_idx = 0;
+            var i = 0;
+            while (i < nwalls) {
+                var skip = 0;
+                if (last_wall == i) { skip = 1; }
+                if (skip == 0) {
+                    var t = _beam_wall_distance(current, vec_get(walls, i));
+                    if (f64_ge(t, 0) == 1) {
+                        if (found == 0) {
+                            found = 1;
+                            best_t = t;
+                            best_idx = i;
+                        } else {
+                            if (f64_lt(t, best_t) == 1) {
+                                best_t = t;
+                                best_idx = i;
+                            }
+                        }
+                    }
+                }
+                i = i + 1;
+            }
+
+            if (found == 0) {
+                running = 0;
+            } else {
+                var wall = vec_get(walls, best_idx);
+                var t2 = best_t;
+
+                # Coverage = fraction of the beam solid angle intercepted.
+                # Wall larger than the footprint -> ~1.0; smaller ->
+                # wall_area / beam_footprint_area.
+                var footprint_radius = f64_mul(t2, f64_tan(beam_half_angle(current)));
+                var warea = wall_area(wall);
+                var beam_area = f64_mul(f64_mul(F64_PI, footprint_radius), footprint_radius);
+                var coverage = F64_ONE;
+                if (f64_gt(beam_area, GOONJ_EPSILON) == 1) {
+                    coverage = f64_clamp(f64_div(warea, beam_area), 0, F64_ONE);
+                }
+
+                var hit_point = hvec3_add(beam_apex(current),
+                hvec3_scale(beam_direction(current), t2));
+                vec_push(hits, beam_wall_hit_new(hit_point, t2, best_idx, coverage));
+
+                # Reflect the axis direction specularly about the wall normal.
+                var n = Wall_normal(wall);
+                var d_dot_n = hvec3_dot(beam_direction(current), n);
+                var reflected_dir = hvec3_sub(beam_direction(current),
+                hvec3_scale(n, f64_mul(F64_TWO, d_dot_n)));
+                var len = hvec3_length(reflected_dir);
+                if (f64_gt(len, GOONJ_EPSILON) == 1) {
+                    reflected_dir = hvec3_scale(reflected_dir, f64_div(F64_ONE, len));
+                } else {
+                    reflected_dir = beam_direction(current);
+                }
+
+                # Apply per-band absorption; track the strongest band.
+                var next = alloc(BEAM_SIZE);
+                var mat = Wall_material(wall);
+                var max_e = 0;
+                var band = 0;
+                while (band < NUM_BANDS) {
+                    var ne = f64_mul(beam_energy_band(current, band),
+                    f64_sub(F64_ONE, am_absorption_band(mat, band)));
+                    store64(next + BEAM_ENERGY + band * 8, ne);
+                    max_e = f64_max(max_e, ne);
+                    band = band + 1;
+                }
+
+                if (f64_lt(max_e, BEAM_DEAD) == 1) {
+                    running = 0;
+                } else {
+                    store64(next + BEAM_APEX, hit_point);
+                    store64(next + BEAM_DIR, reflected_dir);
+                    store64(next + BEAM_HALF, beam_half_angle(current));
+                    store64(next + BEAM_PATH, f64_add(beam_path_length(current), t2));
+                    store64(next + BEAM_ORDER, beam_order(current) + 1);
+                    current = next;
+                    last_wall = best_idx;
+                }
+            }
+            iter = iter + 1;
+        }
+    }
+
+    var path = alloc(BP_SIZE);
+    store64(path + BP_HITS, hits);
+    store64(path + BP_TOTAL, beam_path_length(current));
+    store64(path + BP_ORDER, beam_order(current));
+    var fb = 0;
+    while (fb < NUM_BANDS) {
+        store64(path + BP_FINAL + fb * 8, beam_energy_band(current, fb));
+        fb = fb + 1;
+    }
+    return path;
+}
+
+# ================================================================
+# Beam set generation
+# ================================================================
+# A set of beams covering the full sphere from a source, via a Fibonacci
+# sphere. `subdivisions` sets resolution: 0 -> 20 beams, 1 -> 80, 2 ->
+# 320, capped at 3. Half-angle = pi / sqrt(n).
+#must_use
+fn generate_beam_set(source, subdivisions) {
+    var s = subdivisions;
+    if (s > 3) { s = 3; }
+    var p = 1;
+    var k = 0;
+    while (k < s) {
+        p = p * 4;
+        k = k + 1;
+    }
+    var n = 20 * p;
+    var half_angle = f64_div(F64_PI, f64_sqrt(f64_from(n)));
+
+    var dirs = fibonacci_sphere(n);
+    var beams = vec_new();
+    var i = 0;
+    while (i < n) {
+        vec_push(beams, acoustic_beam_new(source, vec_get(dirs, i), half_angle));
+        i = i + 1;
+    }
+    return beams;
+}

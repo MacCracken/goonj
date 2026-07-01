@@ -1,0 +1,350 @@
+# impulse.cyr -- impulse-response generation + reverberation time (RT60).
+#
+# Scalar RT60 estimators (Sabine, Eyring, shoebox, Fitzroy, Kuttruff),
+# the ImpulseResponse type (samples + Schroeder energy-decay curve), the
+# MultibandIr type (one IR buffer per octave band + broadband collapse),
+# and generate_ir, which combines image-source early reflections with
+# diffuse-rain late reverb into a per-band impulse response.
+#
+# Ports rust-old/src/impulse.rs. f32 -> f64 throughout (hisab is f64-only).
+# Rust's `serde` derive on the config/IR structs is dropped (no serde in
+# Cyrius); no serde round-trip test exists in the oracle to port. The
+# `Vec<f32>` sample buffers become stdlib `vec` (f64 stored directly). The
+# `[Vec<f32>; NUM_BANDS]` band array on MultibandIr uses manual inline
+# layout (8 vec handles, like ray.cyr's RayBounce block). f32::INFINITY on
+# the degenerate RT60 paths becomes the +inf bit pattern (IMP_POS_INF).
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON),
+# material.cyr (NUM_BANDS, pct/milli), propagation.cyr (speed_of_sound),
+# room.cyr (AcousticRoom_*, RoomGeometry queries), image_source.cyr
+# (compute_early_reflections, early_reflection_*), diffuse.cyr
+# (diffuse_rain_config_new, generate_diffuse_rain, DiffuseRainResult_*,
+# lrc_time/lrc_energy_band), stdlib math/ganita + vec + hisab.
+# alloc_init() must have run.
+
+# Non-integer f64 bit patterns (decimals in comments).
+var IMP_SABINE  = 0x3FC49BA5E353F7CF;   # 0.161  Sabine constant (0.161·V/A)
+var IMP_POS_INF = 0x7FF0000000000000;   # +inf   degenerate RT60 (f32::INFINITY)
+
+# MultibandIr inline layout: 8 band-vec handles | sample_rate | rt60.
+enum MiLayout { MI_BANDS = 0, MI_RATE = 64, MI_RT60 = 72, MI_SIZE = 80 }
+
+# log10(x) = ln(x) / ln(10).
+#must_use
+fn _impulse_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
+
+# ================================================================
+# RT60 estimators
+# ================================================================
+# Sabine reverberation time: T = 0.161·V / A. Non-positive absorption
+# (anechoic / nonsensical) returns +inf.
+#must_use
+fn sabine_rt60(volume, total_absorption) {
+    if (f64_le(total_absorption, 0) == 1) { return IMP_POS_INF; }
+    return f64_div(f64_mul(IMP_SABINE, volume), total_absorption);
+}
+
+# Eyring reverberation time: T = 0.161·V / (-S·ln(1 - a)). More accurate
+# than Sabine at high absorption. Non-positive absorption / surface → +inf;
+# total absorption (a >= 1) → 0 (anechoic).
+#must_use
+fn eyring_rt60(volume, surface_area, average_absorption) {
+    if (f64_le(average_absorption, 0) == 1) { return IMP_POS_INF; }
+    if (f64_le(surface_area, 0) == 1) { return IMP_POS_INF; }
+    if (f64_ge(average_absorption, F64_ONE) == 1) { return 0; }
+    var denominator = f64_mul(f64_neg(surface_area), f64_ln(f64_sub(F64_ONE, average_absorption)));
+    if (f64_le(denominator, 0) == 1) { return IMP_POS_INF; }
+    return f64_div(f64_mul(IMP_SABINE, volume), denominator);
+}
+
+# Estimate shoebox RT60 (Sabine) from dimensions and a uniform absorption.
+#must_use
+fn estimate_rt60_shoebox(length, width, height, avg_absorption) {
+    var volume = f64_mul(f64_mul(length, width), height);
+    var surface_area = f64_mul(F64_TWO,
+    f64_add(f64_add(f64_mul(length, width), f64_mul(length, height)), f64_mul(width, height)));
+    var total_absorption = f64_mul(surface_area, avg_absorption);
+    return sabine_rt60(volume, total_absorption);
+}
+
+# ================================================================
+# AxisAbsorption -- absorption + combined area for one axis pair (Fitzroy).
+# ================================================================
+#derive(accessors)
+struct AxisAbsorption { alpha; area; }
+
+#must_use
+fn axis_absorption_new(alpha, area) {
+    var a = alloc(sizeof(AxisAbsorption));
+    AxisAbsorption_set_alpha(a, alpha);
+    AxisAbsorption_set_area(a, area);
+    return a;
+}
+
+# Per-axis Fitzroy term: (Sj/S) / (-ln(1 - aj)); 0 for degenerate / fully
+# absorptive pairs.
+#must_use
+fn _impulse_fitzroy_term(alpha, area, surface_area) {
+    if (f64_le(alpha, 0) == 1) { return 0; }
+    if (f64_le(area, 0) == 1) { return 0; }
+    if (f64_ge(alpha, F64_ONE) == 1) { return 0; }
+    var neg_ln = f64_neg(f64_ln(f64_sub(F64_ONE, alpha)));
+    if (f64_lt(neg_ln, GOONJ_EPSILON) == 1) { return 0; }
+    return f64_div(f64_div(area, surface_area), neg_ln);
+}
+
+# Fitzroy reverberation time for non-uniform absorption. `axes` is a
+# pointer to three AxisAbsorption pointers. Non-positive volume / surface
+# or a zero sum → +inf.
+#must_use
+fn fitzroy_rt60(volume, surface_area, axes) {
+    if (f64_le(volume, 0) == 1) { return IMP_POS_INF; }
+    if (f64_le(surface_area, 0) == 1) { return IMP_POS_INF; }
+    var sum = 0;
+    var i = 0;
+    while (i < 3) {
+        var ax = load64(axes + i * 8);
+        sum = f64_add(sum,
+        _impulse_fitzroy_term(AxisAbsorption_alpha(ax), AxisAbsorption_area(ax), surface_area));
+        i = i + 1;
+    }
+    if (f64_le(sum, 0) == 1) { return IMP_POS_INF; }
+    return f64_mul(f64_div(f64_mul(IMP_SABINE, volume), surface_area), sum);
+}
+
+# Kuttruff correction to an Eyring RT60 for absorption variance:
+# T_corrected = T · (1 + variance / (2·mean_alpha²)). Near-zero mean → no
+# change.
+#must_use
+fn kuttruff_correction(eyring_time, mean_alpha, alpha_variance) {
+    if (f64_lt(f64_abs(mean_alpha), GOONJ_EPSILON) == 1) { return eyring_time; }
+    var denom = f64_mul(f64_mul(F64_TWO, mean_alpha), mean_alpha);
+    return f64_mul(eyring_time, f64_add(F64_ONE, f64_div(alpha_variance, denom)));
+}
+
+# ================================================================
+# ImpulseResponse
+# ================================================================
+#derive(accessors)
+struct ImpulseResponse { samples; sample_rate; rt60; }
+
+#must_use
+fn impulse_response_new(samples, sample_rate, rt60) {
+    var ir = alloc(sizeof(ImpulseResponse));
+    ImpulseResponse_set_samples(ir, samples);
+    ImpulseResponse_set_sample_rate(ir, sample_rate);
+    ImpulseResponse_set_rt60(ir, rt60);
+    return ir;
+}
+
+# Energy decay curve (Schroeder backward integration), in dB, normalized
+# to 0 dB at the start. Empty samples → empty curve.
+#must_use
+fn impulse_response_energy_decay_curve(ir) {
+    var samples = ImpulseResponse_samples(ir);
+    var n = vec_len(samples);
+    var edc = vec_new();
+    var i = 0;
+    while (i < n) {
+        vec_push(edc, 0);
+        i = i + 1;
+    }
+    var cumulative = 0;
+    var k = n - 1;
+    while (k >= 0) {
+        var s = vec_get(samples, k);
+        cumulative = f64_add(cumulative, f64_mul(s, s));
+        vec_set(edc, k, cumulative);
+        k = k - 1;
+    }
+    if (n == 0) { return edc; }
+    var mx = f64_max(vec_get(edc, 0), GOONJ_EPSILON);
+    var j = 0;
+    while (j < n) {
+        vec_set(edc, j, f64_mul(f64_from(10), _impulse_log10(f64_div(vec_get(edc, j), mx))));
+        j = j + 1;
+    }
+    return edc;
+}
+
+# Duration in seconds; zero sample rate → 0.
+#must_use
+fn impulse_response_duration_seconds(ir) {
+    var rate = ImpulseResponse_sample_rate(ir);
+    if (rate == 0) { return 0; }
+    return f64_div(f64_from(vec_len(ImpulseResponse_samples(ir))), f64_from(rate));
+}
+
+# ================================================================
+# IrConfig -- full impulse-response generation parameters.
+# ================================================================
+#derive(accessors)
+struct IrConfig {
+    sample_rate;
+    max_order;
+    num_diffuse_rays;
+    max_bounces;
+    max_time_seconds;
+    seed;
+}
+
+#must_use
+fn ir_config_new(sample_rate, max_order, num_diffuse_rays, max_bounces, max_time_seconds, seed) {
+    var c = alloc(sizeof(IrConfig));
+    IrConfig_set_sample_rate(c, sample_rate);
+    IrConfig_set_max_order(c, max_order);
+    IrConfig_set_num_diffuse_rays(c, num_diffuse_rays);
+    IrConfig_set_max_bounces(c, max_bounces);
+    IrConfig_set_max_time_seconds(c, max_time_seconds);
+    IrConfig_set_seed(c, seed);
+    return c;
+}
+
+# Defaults: 48 kHz, order 3, 5000 diffuse rays, 50 bounces, 2 s, seed 42.
+#must_use
+fn ir_config_default() {
+    return ir_config_new(48000, 3, 5000, 50, F64_TWO, 42);
+}
+
+# ================================================================
+# MultibandIr -- one IR buffer per octave band (manual inline layout).
+# ================================================================
+#must_use
+fn multiband_ir_band(m, i) { return load64(m + MI_BANDS + i * 8); }
+#must_use
+fn multiband_ir_sample_rate(m) { return load64(m + MI_RATE); }
+#must_use
+fn multiband_ir_rt60(m) { return load64(m + MI_RT60); }
+
+# Allocate a MultibandIr with NUM_BANDS empty band vecs.
+#must_use
+fn multiband_ir_new(sample_rate, rt60) {
+    var m = alloc(MI_SIZE);
+    var b = 0;
+    while (b < NUM_BANDS) {
+        store64(m + MI_BANDS + b * 8, vec_new());
+        b = b + 1;
+    }
+    store64(m + MI_RATE, sample_rate);
+    store64(m + MI_RT60, rt60);
+    return m;
+}
+
+# Collapse to a broadband (mono) impulse response by summing all bands,
+# then peak-normalizing.
+#must_use
+fn multiband_ir_to_broadband(m) {
+    var len = vec_len(multiband_ir_band(m, 0));
+    var samples = vec_new();
+    var i = 0;
+    while (i < len) {
+        vec_push(samples, 0);
+        i = i + 1;
+    }
+    var band = 0;
+    while (band < NUM_BANDS) {
+        var buf = multiband_ir_band(m, band);
+        var bl = vec_len(buf);
+        var k = 0;
+        while (k < bl) {
+            if (k < len) {
+                vec_set(samples, k, f64_add(vec_get(samples, k), vec_get(buf, k)));
+            }
+            k = k + 1;
+        }
+        band = band + 1;
+    }
+    var max_abs = 0;
+    var mi = 0;
+    while (mi < len) {
+        max_abs = f64_max(max_abs, f64_abs(vec_get(samples, mi)));
+        mi = mi + 1;
+    }
+    if (f64_gt(max_abs, GOONJ_EPSILON) == 1) {
+        var n = 0;
+        while (n < len) {
+            vec_set(samples, n, f64_div(vec_get(samples, n), max_abs));
+            n = n + 1;
+        }
+    }
+    return impulse_response_new(samples, multiband_ir_sample_rate(m), multiband_ir_rt60(m));
+}
+
+# ================================================================
+# generate_ir
+# ================================================================
+# Combine image-source early reflections and diffuse-rain late reverb into
+# a per-band impulse response. RT60 is estimated (Sabine) from the room's
+# broadband volume and total absorption.
+#must_use
+fn generate_ir(source, listener, room, config) {
+    var c = speed_of_sound(AcousticRoom_temperature_celsius(room));
+    var rate = IrConfig_sample_rate(config);
+    # Cap to 10 minutes at 192 kHz (~115M samples) to prevent OOM.
+    var max_samples = 115200000;
+    var num_samples = f64_to(f64_mul(IrConfig_max_time_seconds(config), f64_from(rate)));
+    if (num_samples > max_samples) { num_samples = max_samples; }
+
+    var mi = multiband_ir_new(rate, 0);
+    var b = 0;
+    while (b < NUM_BANDS) {
+        var buf = multiband_ir_band(mi, b);
+        var s = 0;
+        while (s < num_samples) {
+            vec_push(buf, 0);
+            s = s + 1;
+        }
+        b = b + 1;
+    }
+
+    # Early reflections (image-source method).
+    var early = compute_early_reflections(source, listener, room, IrConfig_max_order(config), c);
+    var ne = vec_len(early);
+    var ei = 0;
+    while (ei < ne) {
+        var refl = vec_get(early, ei);
+        var sidx = f64_to(f64_mul(early_reflection_delay_seconds(refl), f64_from(rate)));
+        if (sidx < num_samples) {
+            var eband = 0;
+            while (eband < NUM_BANDS) {
+                var ebuf = multiband_ir_band(mi, eband);
+                vec_set(ebuf, sidx,
+                f64_add(vec_get(ebuf, sidx), early_reflection_amplitude_band(refl, eband)));
+                eband = eband + 1;
+            }
+        }
+        ei = ei + 1;
+    }
+
+    # Late reverb (diffuse rain). collection_radius 0 => auto.
+    var dconf = diffuse_rain_config_new(
+    IrConfig_num_diffuse_rays(config),
+    IrConfig_max_bounces(config),
+    IrConfig_max_time_seconds(config),
+    0,
+    c,
+    IrConfig_seed(config));
+    var diffuse = generate_diffuse_rain(source, listener, room, dconf);
+    var contribs = DiffuseRainResult_contributions(diffuse);
+    var nc = vec_len(contribs);
+    var ci = 0;
+    while (ci < nc) {
+        var contrib = vec_get(contribs, ci);
+        var didx = f64_to(f64_mul(lrc_time(contrib), f64_from(rate)));
+        if (didx < num_samples) {
+            var dband = 0;
+            while (dband < NUM_BANDS) {
+                var dbuf = multiband_ir_band(mi, dband);
+                vec_set(dbuf, didx, f64_add(vec_get(dbuf, didx), lrc_energy_band(contrib, dband)));
+                dband = dband + 1;
+            }
+        }
+        ci = ci + 1;
+    }
+
+    # RT60 from broadband energy.
+    var geom = AcousticRoom_geometry(room);
+    var rt60 = sabine_rt60(room_geometry_volume_shoebox(geom), room_geometry_total_absorption(geom));
+    store64(mi + MI_RT60, rt60);
+    return mi;
+}

@@ -1,0 +1,276 @@
+# impulse.tcyr -- parity tests for src/impulse.cyr
+# Ported from the #[test] blocks in rust-old/src/impulse.rs. The oracle has
+# no serde round-trip test to drop (serde only decorated the structs).
+# f32::EPSILON guards use GOONJ_EPSILON; float equalities use approx / TOL.
+# generate_ir tests keep ray counts and durations small so they run fast.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/image_source.cyr"
+include "src/diffuse.cyr"
+include "src/impulse.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+fn tenths(n) { return f64_div(f64_from(n), f64_from(10)); }
+
+fn is_inf(x) {
+    if (x == 0x7FF0000000000000) { return 1; }
+    return 0;
+}
+
+# Standard fixtures from the Rust tests: a 10x8x3 concrete shoebox and
+# source/listener at ear height.
+fn concrete_room() {
+    return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+}
+fn imp_src() { return hvec3_new(f64_from(3), tenths(15), f64_from(4)); }
+fn imp_lis() { return hvec3_new(f64_from(7), tenths(15), f64_from(4)); }
+
+# Small IR config: default sample_rate/order/bounces/seed, small rays/time.
+fn ir_config_small(num_rays, max_time) {
+    return ir_config_new(48000, 3, num_rays, 50, max_time, 42);
+}
+
+# 1 if any band has a sample above f32::EPSILON in magnitude.
+fn ir_has_content(ir) {
+    var b = 0;
+    while (b < NUM_BANDS) {
+        var buf = multiband_ir_band(ir, b);
+        var n = vec_len(buf);
+        var i = 0;
+        while (i < n) {
+            if (f64_gt(f64_abs(vec_get(buf, i)), GOONJ_EPSILON) == 1) { return 1; }
+            i = i + 1;
+        }
+        b = b + 1;
+    }
+    return 0;
+}
+
+# Peak absolute value of a sample vec (fold with 0.0 start).
+fn max_abs_vec(v) {
+    var m = 0;
+    var i = 0;
+    var n = vec_len(v);
+    while (i < n) {
+        m = f64_max(m, f64_abs(vec_get(v, i)));
+        i = i + 1;
+    }
+    return m;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("generate_ir produces nonzero samples");
+var g1_room = concrete_room();
+var g1_time = tenths(1);
+var g1_cfg = ir_config_small(100, g1_time);
+var g1_ir = generate_ir(imp_src(), imp_lis(), g1_room, g1_cfg);
+var g1_expected = f64_to(f64_mul(g1_time, f64_from(48000)));
+assert_eq(vec_len(multiband_ir_band(g1_ir, 0)), g1_expected, "band0 length matches time*rate");
+assert_eq(ir_has_content(g1_ir), 1, "generated IR should have nonzero content");
+
+# ================================================================
+test_group("generate_ir broadband has content");
+var g2_ir = generate_ir(imp_src(), imp_lis(), concrete_room(), ir_config_small(100, tenths(1)));
+var g2_bb = multiband_ir_to_broadband(g2_ir);
+assert(f64_gt(f64_from(vec_len(ImpulseResponse_samples(g2_bb))), 0), "broadband not empty");
+var g2_max = max_abs_vec(ImpulseResponse_samples(g2_bb));
+var g2_ok = 0;
+if (f64_lt(f64_abs(f64_sub(g2_max, F64_ONE)), GOONJ_EPSILON) == 1) { g2_ok = 1; }
+if (f64_lt(g2_max, GOONJ_EPSILON) == 1) { g2_ok = 1; }
+assert_eq(g2_ok, 1, "broadband should be normalized");
+
+# ================================================================
+test_group("multiband IR band count");
+var g3_ir = generate_ir(
+hvec3_new(f64_from(5), tenths(15), f64_from(4)),
+hvec3_new(f64_from(5), tenths(15), f64_add(f64_from(4), F64_HALF)),
+concrete_room(),
+ir_config_small(50, tenths(1)));
+var g3_count = 0;
+var g3_b = 0;
+while (g3_b < NUM_BANDS) {
+    if (multiband_ir_band(g3_ir, g3_b) != 0) { g3_count = g3_count + 1; }
+    g3_b = g3_b + 1;
+}
+assert_eq(g3_count, NUM_BANDS, "multiband IR has NUM_BANDS bands");
+
+# ================================================================
+test_group("ir config default");
+var g4_cfg = ir_config_default();
+assert_eq(IrConfig_sample_rate(g4_cfg), 48000, "default sample_rate 48000");
+assert_eq(IrConfig_max_order(g4_cfg), 3, "default max_order 3");
+assert_eq(IrConfig_num_diffuse_rays(g4_cfg), 5000, "default num_diffuse_rays 5000");
+
+# ================================================================
+test_group("sabine basic");
+var sb_rt = sabine_rt60(f64_from(240), f64_from(50));
+assert(approx(sb_rt, f64_div(f64_from(773), f64_from(1000)), TOL_1E2), "Sabine RT60 ~0.773s");
+
+# ================================================================
+test_group("sabine zero absorption");
+assert_eq(is_inf(sabine_rt60(f64_from(100), 0)), 1, "zero absorption -> infinite");
+
+# ================================================================
+test_group("sabine higher absorption shorter rt60");
+var sh_low = sabine_rt60(f64_from(100), f64_from(10));
+var sh_high = sabine_rt60(f64_from(100), f64_from(50));
+assert(f64_lt(sh_high, sh_low), "more absorption -> shorter RT60");
+
+# ================================================================
+test_group("sabine larger room longer rt60");
+var sl_small = sabine_rt60(f64_from(50), f64_from(20));
+var sl_large = sabine_rt60(f64_from(200), f64_from(20));
+assert(f64_gt(sl_large, sl_small), "larger room -> longer RT60");
+
+# ================================================================
+test_group("eyring converges to sabine at low absorption");
+var ec_sabine = sabine_rt60(f64_from(240), f64_mul(f64_from(268), pct(2)));
+var ec_eyring = eyring_rt60(f64_from(240), f64_from(268), pct(2));
+var ec_diff = f64_div(f64_abs(f64_sub(ec_sabine, ec_eyring)), ec_sabine);
+assert(f64_lt(ec_diff, pct(5)), "Eyring within 5% of Sabine at low absorption");
+
+# ================================================================
+test_group("eyring shorter than sabine at high absorption");
+var es_sabine = sabine_rt60(f64_from(100), f64_mul(f64_from(150), F64_HALF));
+var es_eyring = eyring_rt60(f64_from(100), f64_from(150), F64_HALF);
+assert(f64_lt(es_eyring, es_sabine), "Eyring shorter than Sabine at high absorption");
+
+# ================================================================
+test_group("shoebox estimate 10x8x3 concrete");
+var se_rt = estimate_rt60_shoebox(f64_from(10), f64_from(8), f64_from(3), pct(2));
+assert(f64_gt(se_rt, f64_from(5)), "concrete room reverberant > 5s");
+assert(f64_lt(se_rt, f64_from(10)), "concrete room < 10s");
+
+# ================================================================
+test_group("impulse response duration");
+var dur_samples = vec_new();
+var dur_i = 0;
+while (dur_i < 48000) {
+    vec_push(dur_samples, 0);
+    dur_i = dur_i + 1;
+}
+var dur_ir = impulse_response_new(dur_samples, 48000, F64_ONE);
+assert(approx(impulse_response_duration_seconds(dur_ir), F64_ONE, TOL_1E3), "duration ~1.0s");
+
+# ================================================================
+test_group("energy decay curve monotonic");
+var edc_samples = vec_new();
+var edc_i = 0;
+while (edc_i < 1000) {
+    var edc_v = f64_mul(f64_exp(f64_mul(f64_neg(milli(5)), f64_from(edc_i))), F64_HALF);
+    vec_push(edc_samples, edc_v);
+    edc_i = edc_i + 1;
+}
+var edc_ir = impulse_response_new(edc_samples, 48000, F64_ONE);
+var edc = impulse_response_energy_decay_curve(edc_ir);
+var edc_mono = 1;
+var edc_k = 0;
+var edc_n = vec_len(edc);
+while (edc_k < edc_n - 1) {
+    if (f64_lt(vec_get(edc, edc_k), vec_get(edc, edc_k + 1)) == 1) { edc_mono = 0; }
+    edc_k = edc_k + 1;
+}
+assert_eq(edc_mono, 1, "EDC should decrease monotonically");
+
+# ================================================================
+test_group("energy decay curve empty samples");
+var ee_ir = impulse_response_new(vec_new(), 48000, F64_ONE);
+assert_eq(vec_len(impulse_response_energy_decay_curve(ee_ir)), 0, "empty samples -> empty EDC");
+
+# ================================================================
+test_group("duration zero sample rate");
+var dz_samples = vec_new();
+var dz_i = 0;
+while (dz_i < 100) {
+    vec_push(dz_samples, F64_ONE);
+    dz_i = dz_i + 1;
+}
+var dz_ir = impulse_response_new(dz_samples, 0, F64_ONE);
+assert_eq(f64_to(impulse_response_duration_seconds(dz_ir)), 0, "zero sample rate -> 0 duration");
+
+# ================================================================
+test_group("generate_ir zero diffuse rays");
+var zr_cfg = ir_config_small(0, tenths(1));
+var zr_ir = generate_ir(imp_src(), imp_lis(), concrete_room(), zr_cfg);
+assert_eq(ir_has_content(zr_ir), 1, "zero diffuse rays still has early reflections");
+
+# ================================================================
+test_group("multiband IR to broadband normalized");
+var mn_ir = generate_ir(imp_src(), imp_lis(), concrete_room(), ir_config_small(50, tenths(1)));
+var mn_bb = multiband_ir_to_broadband(mn_ir);
+var mn_max = max_abs_vec(ImpulseResponse_samples(mn_bb));
+assert(f64_le(mn_max, f64_add(F64_ONE, GOONJ_EPSILON)), "broadband normalized (max <= 1)");
+
+# ================================================================
+test_group("multiband IR empty to broadband");
+var me_ir = multiband_ir_new(48000, F64_ONE);
+var me_bb = multiband_ir_to_broadband(me_ir);
+assert_eq(vec_len(ImpulseResponse_samples(me_bb)), 0, "empty bands -> empty broadband");
+
+# ================================================================
+test_group("eyring zero surface area");
+assert_eq(is_inf(eyring_rt60(f64_from(100), 0, F64_HALF)), 1, "zero surface -> infinite");
+
+# ================================================================
+test_group("sabine negative absorption");
+var sn_rt = sabine_rt60(f64_from(100), f64_neg(f64_from(10)));
+var sn_ok = 0;
+if (is_inf(sn_rt) == 1) { sn_ok = 1; }
+if (f64_lt(sn_rt, 0) == 1) { sn_ok = 1; }
+assert_eq(sn_ok, 1, "negative absorption -> negative or infinite (no panic)");
+
+# ================================================================
+test_group("fitzroy uniform absorption matches eyring");
+var fu_axes = alloc(3 * 8);
+store64(fu_axes + 0, axis_absorption_new(pct(30), f64_from(60)));
+store64(fu_axes + 8, axis_absorption_new(pct(30), f64_from(160)));
+store64(fu_axes + 16, axis_absorption_new(pct(30), f64_from(48)));
+var fu_fitz = fitzroy_rt60(f64_from(240), f64_from(268), fu_axes);
+var fu_eyr = eyring_rt60(f64_from(240), f64_from(268), pct(30));
+var fu_diff = f64_div(f64_abs(f64_sub(fu_fitz, fu_eyr)), fu_eyr);
+assert(f64_lt(fu_diff, pct(30)), "Fitzroy within 30% of Eyring for uniform absorption");
+
+# ================================================================
+test_group("fitzroy non-uniform differs from sabine");
+var fn_axes = alloc(3 * 8);
+store64(fn_axes + 0, axis_absorption_new(pct(5), f64_from(60)));
+store64(fn_axes + 8, axis_absorption_new(pct(60), f64_from(160)));
+store64(fn_axes + 16, axis_absorption_new(pct(5), f64_from(48)));
+var fn_fitz = fitzroy_rt60(f64_from(240), f64_from(268), fn_axes);
+var fn_weighted = f64_add(f64_add(f64_mul(pct(5), f64_from(60)), f64_mul(pct(60), f64_from(160))),
+f64_mul(pct(5), f64_from(48)));
+var fn_avg = f64_div(fn_weighted, f64_from(268));
+var fn_sab = sabine_rt60(f64_from(240), f64_mul(f64_from(268), fn_avg));
+var fn_rel = f64_div(f64_abs(f64_sub(fn_fitz, fn_sab)), fn_sab);
+assert(f64_gt(fn_rel, pct(5)), "Fitzroy differs from Sabine for non-uniform rooms");
+
+# ================================================================
+test_group("kuttruff no variance no change");
+var kn = kuttruff_correction(F64_ONE, pct(30), 0);
+assert(f64_lt(f64_abs(f64_sub(kn, F64_ONE)), GOONJ_EPSILON), "no variance -> no change");
+
+# ================================================================
+test_group("kuttruff variance increases rt60");
+var kv = kuttruff_correction(F64_ONE, pct(30), pct(4));
+assert(f64_gt(kv, F64_ONE), "variance should increase RT60");
+
+# ================================================================
+test_group("eyring absorption one returns zero");
+var e1 = eyring_rt60(f64_from(100), f64_from(150), F64_ONE);
+assert(f64_lt(f64_abs(e1), GOONJ_EPSILON), "total absorption -> RT60 = 0");
+
+var rc = assert_summary();
+syscall(60, rc);

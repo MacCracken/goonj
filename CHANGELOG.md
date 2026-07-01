@@ -79,9 +79,18 @@ milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md
   workflow (2 worktree-isolated agents), integrated + independently re-verified
   in main; fmt + lint clean, zero cleanup. `beam` (L4) is now unblocked.
 
+- **impulse + beam** — `impulse` (RT60 estimators — Sabine/Eyring/shoebox/
+  Fitzroy/Kuttruff; `ImpulseResponse` with Schroeder energy-decay curve;
+  `MultibandIr`; `generate_ir` combining image-source early reflections with
+  diffuse-rain late reverb; 30 assertions) and `beam` (volumetric beam tracing;
+  43 assertions). Fourth parallel workflow (2 worktree-isolated agents),
+  integrated + independently re-verified in main; fmt + lint clean, zero cleanup.
+  `impulse` is the first module to co-compile `image_source` + `diffuse`
+  (verified collision-free beforehand). Unblocks `analysis`, `coupled`, `wav`.
+
 ### Changed
 - Toolchain pin **6.3.12 → 6.3.14** (`cyrius.cyml`); stdlib re-vendored. No
-  source changes required — all 3391 assertions stay green. **Pin held at
+  source changes required — all 3464 assertions stay green. **Pin held at
   6.3.14** deliberately even though the `cycc` wrapper has since drifted to
   6.3.15 (drift warning is benign; builds work).
 

@@ -91,22 +91,22 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 |-------------|----:|--------|------:|------|
 | diffuse     | 513 | ✅ | 2306 | material, propagation, ray, room — inline xorshift64 (`_diffuse_`-prefixed), fibonacci_sphere, diffuse-rain via ray API |
 | diffraction | 311 | ✅ | 17 | material, propagation, ray, room — UTD/BTM edge diffraction |
-| analysis    | 895 | ⬜ | — | impulse, material, room — waits on impulse (L5) |
-| beam        | 297 | ⬜ | — | diffuse ✅, material, room — now unblocked |
+| analysis    | 895 | ⬜ | — | impulse ✅, material, room — now unblocked |
+| beam        | 297 | ✅ | 43 | diffuse, material, room — volumetric beam tracing |
 
 ### L5–L6 — impulse responses & integration
 
-| Module              | LOC | Status | Deps |
-|---------------------|----:|--------|------|
-| impulse             | 643 | ⬜ | diffuse, image_source, material, propagation, room |
-| coupled             | 177 | ⬜ | impulse, material, portal, propagation, room |
-| wav                 | 257 | ⬜ | error, impulse |
-| binaural            | 317 | ⬜ | error, image_source, impulse, material, propagation, room, wav |
-| integration/dhvani  | 129 | ⬜ | (consumer API) |
-| integration/kiran   | 168 | ⬜ | (consumer API) |
-| integration/soorat  | 165 | ⬜ | (consumer API) |
+| Module              | LOC | Status | Tests | Deps |
+|---------------------|----:|--------|------:|------|
+| impulse             | 643 | ✅ | 30 | diffuse, image_source, material, propagation, room — RT60 (Sabine/Eyring/Fitzroy/Kuttruff), ImpulseResponse (Schroeder EDC), MultibandIr, generate_ir |
+| coupled             | 177 | ⬜ | — | impulse ✅, material, portal, propagation, room — now unblocked |
+| wav                 | 257 | ⬜ | — | error, impulse ✅ — now unblocked |
+| binaural            | 317 | ⬜ | — | error, image_source, impulse ✅, material, propagation, room, wav — waits on wav |
+| integration/dhvani  | 129 | ⬜ | — | (consumer API) |
+| integration/kiran   | 168 | ⬜ | — | (consumer API) |
+| integration/soorat  | 165 | ⬜ | — | (consumer API) |
 
-**Totals:** 27 / 37 done, 10 pending · 14,630 Rust lines · **3391 parity assertions green**.
+**Totals:** 29 / 37 done, 8 pending · 14,630 Rust lines · **3464 parity assertions green**.
 Toolchain: cyrius **6.3.14** (pinned deliberately — held here, not chased to
 newer wrappers). Two parallel workflows landed the L2 batch (13) and wave 2 (6);
 `ray` (hot path, 275 assertions + a benchmark) was ported solo. Remaining: dwm

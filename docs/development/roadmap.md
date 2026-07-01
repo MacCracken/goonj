@@ -72,18 +72,18 @@ API (config, `BoundaryFilter`, dispersion, 36 tests); **B** the `solve_dwm_3d`
 3D grid solver (raw-buffer hot loop) + `tests/dwm.bcyr` benchmark (53 tests
 total). `DWM_`-prefixed to dodge fdtd's flat-namespace symbols.
 
-### M4 — Energy & metrics (L4) — 🟡 2/4
+### M4 — Energy & metrics (L4) — 🟡 3/4
 
-**diffuse ✅** (2306 assertions; inline xorshift64 `_diffuse_`-prefixed to dodge
-dvn's, fibonacci_sphere, diffuse-rain via the ray API) + **diffraction ✅** (17;
-UTD/BTM edge diffraction) landed in a 2-agent parallel workflow. Remaining:
-**beam** (now unblocked — diffuse done) and **analysis** (C50/C80/D50/EDT/STI/…,
-waits on impulse from L5).
+**diffuse ✅** (2306) + **diffraction ✅** (17) [L4 batch]; **beam ✅** (43;
+volumetric beam tracing) [impulse/beam batch]. Remaining: **analysis**
+(C50/C80/D50/EDT/STI/…) — now unblocked (impulse done).
 
-### M5 — Impulse responses & integration (L5–L6)
+### M5 — Impulse responses & integration (L5–L6) — 🟡 1/6
 
-impulse, coupled, wav, binaural, integration/*. Then build `dist/goonj.cyr`,
-green a downstream consumer, tag **2.0.0**.
+**impulse ✅** (30; RT60 estimators + Schroeder EDC + generate_ir via
+image-source early reflections + diffuse-rain late reverb) [impulse/beam batch].
+Remaining: coupled + wav (unblocked), binaural (needs wav), integration ×3.
+Then build `dist/goonj.cyr`, green a downstream consumer, tag **2.0.0**.
 
 ## Known port challenges (capture as ADRs when resolved)
 
