@@ -1,0 +1,153 @@
+# diffraction.cyr -- edge diffraction loss + occlusion.
+#
+# Ports rust-old/src/diffraction.rs. f32 -> f64 throughout (hisab is
+# f64-only). Two loss models: a UTD-inspired half-plane approximation
+# (edge_diffraction_loss) and a Kouyoumjian-Pathak wedge model
+# (utd_wedge_diffraction). Plus line-of-sight occlusion (is_occluded)
+# and the extra diffraction path length (diffraction_path_extra).
+#
+# Rust's `cot_term` closure (captures inv_n / wedge_n / k / l) becomes the
+# free helper `_diff_cot_term` taking those as explicit params. `.powi(2)`
+# is a self-multiply; `.round()` uses the stdlib `f64_round` builtin.
+# `Option<f32>` from ray_wall_intersection is a negative sentinel
+# (RAY_NONE), so the `t > EPSILON` guard already rejects the no-hit case.
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON), stdlib
+# math/ganita (F64_PI, F64_TAU, F64_ONE, F64_TWO, F64_HALF, f64_sin/cos/
+# sqrt/round/ln/…), hisab (hvec3_sub/length/distance), propagation.cyr
+# (speed_of_sound), ray.cyr (acoustic_ray_new, ray_wall_intersection),
+# room.cyr (Wall via ray_wall_intersection). alloc_init() must have run.
+
+# Non-integer f64 bit patterns (decimal in comments for traceability).
+var DIFF_001  = 0x3F847AE147AE147B;   # 0.01   Fresnel-arg / a rolloff threshold
+var DIFF_1E6  = 0x3EB0C6F7A0B5ED8D;   # 1e-6   coefficient clamp floor / sin guard
+var DIFF_1E10 = 0x3DDB7CDFD9D7BDBB;   # 1e-10  UTD total clamp floor
+
+# log10(x) = ln(x) / ln(10)
+#must_use
+fn _diff_log10(x) {
+    return f64_div(f64_ln(x), F64_LN10);
+}
+
+# ================================================================
+# Edge diffraction attenuation (UTD-inspired half-plane approximation).
+# Returns attenuation in dB (negative = signal loss).
+# ================================================================
+#must_use
+fn edge_diffraction_loss(frequency, angle_rad, temperature_celsius) {
+    if (f64_le(frequency, 0) == 1) { return 0; }
+
+    var c = speed_of_sound(temperature_celsius);
+    var wavelength = f64_div(c, frequency);
+    var k = f64_div(F64_TAU, wavelength);
+
+    var shadow_factor = f64_clamp(f64_div(angle_rad, F64_PI), 0, F64_ONE);
+
+    var fresnel_arg = f64_mul(f64_mul(f64_mul(F64_TWO, k), shadow_factor), shadow_factor);
+    var transition = 0;
+    if (f64_lt(fresnel_arg, DIFF_001) == 1) {
+        transition = f64_sub(F64_ONE, f64_mul(shadow_factor, F64_HALF));
+    } else {
+        transition = f64_sqrt(f64_div(F64_ONE, f64_add(F64_ONE, fresnel_arg)));
+    }
+
+    var coefficient = f64_clamp(transition, DIFF_1E6, F64_ONE);
+    return f64_mul(f64_from(20), _diff_log10(coefficient));
+}
+
+# ================================================================
+# Kouyoumjian-Pathak UTD wedge diffraction.
+# ================================================================
+# One cotangent + transition-function term (the ported `cot_term` closure).
+#   sign is +1.0 or -1.0 (as f64); beta is beta_plus or beta_minus.
+#must_use
+fn _diff_cot_term(beta, sign, inv_n, wedge_n, k, l) {
+    var phi_arg = f64_add(F64_PI, f64_mul(sign, beta));
+    var cot_arg = f64_mul(f64_mul(phi_arg, inv_n), F64_HALF);
+    var sin_val = f64_sin(cot_arg);
+    if (f64_lt(f64_abs(sin_val), DIFF_1E6) == 1) { return 0; }
+    var cot = f64_div(f64_cos(cot_arg), sin_val);
+
+    # a±(β) = 2kL cos²((2πnN± − β)/2), N± nearest integer to (π±β)/(2πn).
+    var n_int = f64_round(f64_div(phi_arg, f64_mul(F64_TAU, wedge_n)));
+    var a_arg = f64_sub(f64_mul(f64_mul(F64_TAU, wedge_n), n_int), beta);
+    var cval = f64_cos(f64_mul(a_arg, F64_HALF));
+    var a = f64_mul(f64_mul(f64_mul(F64_TWO, k), l), f64_mul(cval, cval));
+
+    # Approximate Fresnel transition F(x) ≈ √(x/(1+x)); √x near zero.
+    var f_val = 0;
+    if (f64_lt(a, DIFF_001) == 1) {
+        f_val = f64_sqrt(a);
+    } else {
+        f_val = f64_sqrt(f64_div(a, f64_add(F64_ONE, a)));
+    }
+    return f64_mul(cot, f_val);
+}
+
+# Wedge diffraction loss (dB, negative = loss). exterior angle = n × π.
+#must_use
+fn utd_wedge_diffraction(frequency, wedge_n, source_angle, receiver_angle,
+distance_source, distance_receiver, temperature_celsius) {
+    if (f64_le(frequency, 0) == 1) { return 0; }
+    if (f64_le(wedge_n, 0) == 1) { return 0; }
+    if (f64_le(distance_source, 0) == 1) { return 0; }
+    if (f64_le(distance_receiver, 0) == 1) { return 0; }
+
+    var c = speed_of_sound(temperature_celsius);
+    var k = f64_div(f64_mul(F64_TAU, frequency), c);
+
+    # UTD distance factor: L = (rs × rr) / (rs + rr).
+    var sum_dist = f64_add(distance_source, distance_receiver);
+    var l = f64_div(f64_mul(distance_source, distance_receiver), sum_dist);
+
+    var inv_n = f64_div(F64_ONE, wedge_n);
+    var beta_plus = f64_add(source_angle, receiver_angle);
+    var beta_minus = f64_sub(source_angle, receiver_angle);
+
+    var neg_one = f64_neg(F64_ONE);
+    var t1 = f64_abs(_diff_cot_term(beta_plus, F64_ONE, inv_n, wedge_n, k, l));
+    var t2 = f64_abs(_diff_cot_term(beta_minus, F64_ONE, inv_n, wedge_n, k, l));
+    var t3 = f64_abs(_diff_cot_term(beta_plus, neg_one, inv_n, wedge_n, k, l));
+    var t4 = f64_abs(_diff_cot_term(beta_minus, neg_one, inv_n, wedge_n, k, l));
+    var cot_sum = f64_add(f64_add(t1, t2), f64_add(t3, t4));
+    var d_magnitude = f64_div(cot_sum, f64_mul(wedge_n, f64_sqrt(f64_mul(F64_TAU, k))));
+
+    # Distance spreading factor.
+    var spread = f64_sqrt(f64_div(l, sum_dist));
+    var total = f64_clamp(f64_mul(d_magnitude, spread), DIFF_1E10, F64_ONE);
+    return f64_mul(f64_from(20), _diff_log10(total));
+}
+
+# ================================================================
+# Occlusion + diffraction path length.
+# ================================================================
+# 1 if the source→listener path is blocked by at least one wall, else 0.
+# `walls` is a stdlib vec of Wall pointers.
+#must_use
+fn is_occluded(source, listener, walls) {
+    var direction = hvec3_sub(listener, source);
+    var max_dist = hvec3_length(direction);
+    if (f64_lt(max_dist, GOONJ_EPSILON) == 1) { return 0; }
+
+    var ray = acoustic_ray_new(source, direction, 0);
+    var limit = f64_sub(max_dist, GOONJ_EPSILON);
+    var n = vec_len(walls);
+    var i = 0;
+    while (i < n) {
+        var t = ray_wall_intersection(ray, vec_get(walls, i));
+        if (f64_gt(t, GOONJ_EPSILON) == 1) {
+            if (f64_lt(t, limit) == 1) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Extra path length (m) sound travels diffracting around an edge vs direct.
+#must_use
+fn diffraction_path_extra(source, edge_point, listener) {
+    var d_source_edge = hvec3_distance(source, edge_point);
+    var d_edge_listener = hvec3_distance(edge_point, listener);
+    var d_direct = hvec3_distance(source, listener);
+    return f64_sub(f64_add(d_source_edge, d_edge_listener), d_direct);
+}

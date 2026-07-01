@@ -1,0 +1,238 @@
+# diffuse.tcyr -- parity tests for src/diffuse.cyr
+# Ported from the #[test] blocks in rust-old/src/diffuse.rs. No serde
+# round-trip test existed to drop. Float equalities use approx(a, b, tol);
+# f32::EPSILON checks are approximated with GOONJ_EPSILON / TOL_1E4.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/diffuse.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E4 = 0x3F1A36E2EB1C432D;   # ~1e-4 (stands in for f32::EPSILON checks)
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+fn d10(n) { return f64_div(f64_from(n), f64_from(10)); }
+
+# Rooms + standard source/listener from the Rust test fixtures.
+fn concrete_room() {
+    return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+}
+fn carpet_room() {
+    return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_carpet());
+}
+fn src_default() { return hvec3_new(f64_from(3), d10(15), f64_from(4)); }
+fn lis_default() { return hvec3_new(f64_from(7), d10(15), f64_from(4)); }
+
+# num_rays=n, max_bounces=50, max_time=2s, radius=2m, c=speed_of_sound(20), seed=42.
+fn test_config(num_rays) {
+    return diffuse_rain_config_new(num_rays, 50, F64_TWO, F64_TWO, speed_of_sound(f64_from(20)), 42);
+}
+
+# Sum of all 8 band energies over contributions[start, end).
+fn sum_energy_range(contribs, start, endi) {
+    var s = 0;
+    var i = start;
+    while (i < endi) {
+        var c = vec_get(contribs, i);
+        var b = 0;
+        while (b < 8) {
+            s = f64_add(s, lrc_energy_band(c, b));
+            b = b + 1;
+        }
+        i = i + 1;
+    }
+    return s;
+}
+
+# 1 if two results have equal counts and all arrival times within tol.
+fn same_times(ra, rb, tol) {
+    var ca = DiffuseRainResult_contributions(ra);
+    var cb = DiffuseRainResult_contributions(rb);
+    if (vec_len(ca) != vec_len(cb)) { return 0; }
+    var n = vec_len(ca);
+    var i = 0;
+    while (i < n) {
+        if (approx(lrc_time(vec_get(ca, i)), lrc_time(vec_get(cb, i)), tol) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("fibonacci_sphere unit vectors");
+var fs_dirs = fibonacci_sphere(100);
+assert_eq(vec_len(fs_dirs), 100, "100 directions");
+var fs_i = 0;
+while (fs_i < vec_len(fs_dirs)) {
+    assert(approx(hvec3_length(vec_get(fs_dirs, fs_i)), F64_ONE, TOL_1E2), "direction unit length");
+    fs_i = fs_i + 1;
+}
+
+# ================================================================
+test_group("fibonacci_sphere covers hemisphere");
+var fh_dirs = fibonacci_sphere(1000);
+var fh_octants = alloc(64);
+var fh_z = 0;
+while (fh_z < 8) { store64(fh_octants + fh_z * 8, 0); fh_z = fh_z + 1; }
+var fh_i = 0;
+while (fh_i < vec_len(fh_dirs)) {
+    var fh_d = vec_get(fh_dirs, fh_i);
+    var fh_bx = 0;
+    if (f64_gt(HVec3_x(fh_d), 0) == 1) { fh_bx = 1; }
+    var fh_by = 0;
+    if (f64_gt(HVec3_y(fh_d), 0) == 1) { fh_by = 1; }
+    var fh_bz = 0;
+    if (f64_gt(HVec3_z(fh_d), 0) == 1) { fh_bz = 1; }
+    var fh_idx = (fh_bx << 2) | (fh_by << 1) | fh_bz;
+    store64(fh_octants + fh_idx * 8, 1);
+    fh_i = fh_i + 1;
+}
+var fh_all = 1;
+var fh_k = 0;
+while (fh_k < 8) {
+    if (load64(fh_octants + fh_k * 8) == 0) { fh_all = 0; }
+    fh_k = fh_k + 1;
+}
+assert_eq(fh_all, 1, "fibonacci sphere covers all octants");
+
+# ================================================================
+test_group("diffuse rain produces contributions");
+var pc_res = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), test_config(500));
+var pc_contribs = DiffuseRainResult_contributions(pc_res);
+assert(f64_gt(f64_from(vec_len(pc_contribs)), 0), "produces contributions in concrete room");
+assert_eq(DiffuseRainResult_rays_traced(pc_res), 500, "rays traced 500");
+assert(f64_gt(f64_from(DiffuseRainResult_total_bounces(pc_res)), 0), "total bounces > 0");
+
+# ================================================================
+test_group("contributions sorted by time");
+var st_res = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), test_config(200));
+var st_contribs = DiffuseRainResult_contributions(st_res);
+var st_n = vec_len(st_contribs);
+var st_i = 0;
+while (st_i + 1 < st_n) {
+    assert(f64_le(lrc_time(vec_get(st_contribs, st_i)), lrc_time(vec_get(st_contribs, st_i + 1))), "sorted by time");
+    st_i = st_i + 1;
+}
+
+# ================================================================
+test_group("seed reproducibility");
+var sr_cfg = test_config(100);
+var sr_r1 = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), sr_cfg);
+var sr_r2 = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), sr_cfg);
+assert_eq(vec_len(DiffuseRainResult_contributions(sr_r1)), vec_len(DiffuseRainResult_contributions(sr_r2)),
+"same seed same contribution count");
+assert_eq(same_times(sr_r1, sr_r2, TOL_1E4), 1, "same seed identical results");
+
+# ================================================================
+test_group("different seed different results");
+var ds_cfg1 = test_config(100);
+var ds_cfg2 = test_config(100);
+DiffuseRainConfig_set_seed(ds_cfg2, 999);
+var ds_r1 = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), ds_cfg1);
+var ds_r2 = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), ds_cfg2);
+assert_eq(same_times(ds_r1, ds_r2, TOL_1E4), 0, "different seeds produce different results");
+
+# ================================================================
+test_group("carpet fewer than concrete");
+var cf_rc = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), test_config(500));
+var cf_rk = generate_diffuse_rain(src_default(), lis_default(), carpet_room(), test_config(500));
+var cf_cc = DiffuseRainResult_contributions(cf_rc);
+var cf_kc = DiffuseRainResult_contributions(cf_rk);
+var cf_ec = sum_energy_range(cf_cc, 0, vec_len(cf_cc));
+var cf_ek = sum_energy_range(cf_kc, 0, vec_len(cf_kc));
+assert(f64_gt(cf_ec, cf_ek), "concrete total energy exceeds carpet");
+
+# ================================================================
+test_group("contributions within time limit");
+var wt_cfg = test_config(200);
+DiffuseRainConfig_set_max_time_seconds(wt_cfg, F64_HALF);
+var wt_res = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), wt_cfg);
+var wt_contribs = DiffuseRainResult_contributions(wt_res);
+var wt_i = 0;
+while (wt_i < vec_len(wt_contribs)) {
+    assert(f64_le(lrc_time(vec_get(wt_contribs, wt_i)), f64_add(F64_HALF, GOONJ_EPSILON)), "within time limit 0.5s");
+    wt_i = wt_i + 1;
+}
+
+# ================================================================
+test_group("auto collection radius scales with volume");
+var ar_r1 = auto_collection_radius(f64_from(100), 1000);
+var ar_r2 = auto_collection_radius(f64_from(1000), 1000);
+assert(f64_gt(ar_r2, ar_r1), "larger room larger collection radius");
+
+# ================================================================
+test_group("xorshift64 values in range");
+var xr_rng = _diffuse_xorshift_new(42);
+var xr_i = 0;
+while (xr_i < 1000) {
+    var xr_v = _diffuse_xorshift_next_f64(xr_rng);
+    assert(f64_ge(xr_v, 0), "value >= 0");
+    assert(f64_lt(xr_v, F64_ONE), "value < 1");
+    xr_i = xr_i + 1;
+}
+
+# ================================================================
+test_group("energy decays over time");
+var ed_res = generate_diffuse_rain(hvec3_new(f64_from(5), d10(15), f64_from(4)),
+hvec3_new(f64_from(5), d10(15), d10(45)), concrete_room(), test_config(1000));
+var ed_contribs = DiffuseRainResult_contributions(ed_res);
+var ed_len = vec_len(ed_contribs);
+if (ed_len > 3) {
+    var ed_mid = ed_len / 2;
+    var ed_esum = sum_energy_range(ed_contribs, 0, ed_mid);
+    var ed_lsum = sum_energy_range(ed_contribs, ed_mid, ed_len);
+    var ed_eavg = f64_div(ed_esum, f64_from(ed_mid));
+    var ed_lavg = f64_div(ed_lsum, f64_from(ed_len - ed_mid));
+    assert(f64_ge(ed_eavg, ed_lavg), "early energy >= late energy");
+}
+
+# ================================================================
+test_group("zero rays returns empty");
+var zr_res = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), test_config(0));
+assert_eq(vec_len(DiffuseRainResult_contributions(zr_res)), 0, "zero rays empty");
+assert_eq(DiffuseRainResult_rays_traced(zr_res), 0, "zero rays traced");
+
+# ================================================================
+test_group("zero speed of sound returns empty");
+var zs_cfg = test_config(100);
+DiffuseRainConfig_set_speed_of_sound(zs_cfg, 0);
+var zs_res = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), zs_cfg);
+assert_eq(vec_len(DiffuseRainResult_contributions(zs_res)), 0, "zero speed empty");
+
+# ================================================================
+test_group("zero max time no contributions");
+var zt_cfg = test_config(100);
+DiffuseRainConfig_set_max_time_seconds(zt_cfg, 0);
+var zt_res = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), zt_cfg);
+var zt_contribs = DiffuseRainResult_contributions(zt_res);
+var zt_i = 0;
+while (zt_i < vec_len(zt_contribs)) {
+    assert(f64_le(lrc_time(vec_get(zt_contribs, zt_i)), GOONJ_EPSILON), "zero max time no contributions");
+    zt_i = zt_i + 1;
+}
+
+# ================================================================
+test_group("fibonacci_sphere single ray");
+var fsr_dirs = fibonacci_sphere(1);
+assert_eq(vec_len(fsr_dirs), 1, "single ray one direction");
+assert(approx(hvec3_length(vec_get(fsr_dirs, 0)), F64_ONE, TOL_1E2), "single ray unit length");
+
+# ================================================================
+test_group("xorshift64 zero seed nonzero");
+var xz_rng = _diffuse_xorshift_new(0);
+var xz_v = _diffuse_xorshift_next_u64(xz_rng);
+var xz_nz = 1;
+if (xz_v == 0) { xz_nz = 0; }
+assert_eq(xz_nz, 1, "zero seed produces non-zero output");
+
+var rc = assert_summary();
+syscall(60, rc);

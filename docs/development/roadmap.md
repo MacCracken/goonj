@@ -72,9 +72,13 @@ API (config, `BoundaryFilter`, dispersion, 36 tests); **B** the `solve_dwm_3d`
 3D grid solver (raw-buffer hot loop) + `tests/dwm.bcyr` benchmark (53 tests
 total). `DWM_`-prefixed to dodge fdtd's flat-namespace symbols.
 
-### M4 — Energy & metrics (L4)
+### M4 — Energy & metrics (L4) — 🟡 2/4
 
-diffuse, diffraction, analysis (C50/C80/D50/EDT/STI/…), beam.
+**diffuse ✅** (2306 assertions; inline xorshift64 `_diffuse_`-prefixed to dodge
+dvn's, fibonacci_sphere, diffuse-rain via the ray API) + **diffraction ✅** (17;
+UTD/BTM edge diffraction) landed in a 2-agent parallel workflow. Remaining:
+**beam** (now unblocked — diffuse done) and **analysis** (C50/C80/D50/EDT/STI/…,
+waits on impulse from L5).
 
 ### M5 — Impulse responses & integration (L5–L6)
 

@@ -26,7 +26,7 @@
 
 Per-module parity is tracked in [`port-audit.md`](port-audit.md). Summary:
 
-**25 / 37 modules ported · 1068 parity assertions green across 24 suites.**
+**27 / 37 modules ported · 3391 parity assertions green across 26 suites.**
 
 | Layer | Modules (✅) |
 |-------|-------------|
@@ -34,7 +34,8 @@ Per-module parity is tracked in [`port-audit.md`](port-audit.md). Summary:
 | L1    | material (65) |
 | L2    | hybrid (20), directivity (19), metamaterial (51), room (10), fdn (14), gfpe (23), diffusion (7), fdtd (39), outdoor (28), portal (14), udfa (15), underwater (36), vibroacoustics (25), bridge (29) |
 | L3    | radiosity (7), image_source (30), ray (275, +bench), dwm (53, +bench) — **L3 complete** |
-| pending | logging (→ sakshi); L4 (diffuse, diffraction, analysis, beam), L5 (impulse, coupled), L6 (wav, binaural, integration ×3) — 12 modules |
+| L4    | diffuse (2306), diffraction (17) |
+| pending | logging (→ sakshi); L4 beam (needs diffuse ✅ → unblocked) + analysis (needs impulse); L5 (impulse, coupled), L6 (wav, binaural, integration ×3) — 10 modules |
 
 Per-module detail in [`port-audit.md`](port-audit.md). Benchmarks in
 [`../benchmarks/results.md`](../benchmarks/results.md). Toolchain: cyrius **6.3.14**.
@@ -43,11 +44,12 @@ Per-module detail in [`port-audit.md`](port-audit.md). Benchmarks in
 
 One `tests/<module>.tcyr` suite per ported module, each ported one-for-one
 from that module's Rust `#[test]` blocks (serde round-trips dropped — no
-serde). **23 suites, 1015 assertions, all green.** Run a suite with
-`cyrius test tests/<module>.tcyr`. Two parallel workflows landed 19 of the 24
-modules (L2 batch of 13 + wave-2 batch of 6); the rest were ported solo. Each
-batch was independently re-verified in main (tests + canonical-fmt diff + lint).
-`ray` also has a hot-path benchmark: `cyrius bench tests/ray.bcyr`.
+serde). **26 suites, 3391 assertions, all green.** Run a suite with
+`cyrius test tests/<module>.tcyr`. Three parallel workflows landed 21 of the 27
+modules (L2 batch of 13 + wave-2 batch of 6 + L4 batch of 2); the rest were
+ported solo. Each batch was independently re-verified in main (tests +
+canonical-fmt diff + lint). `ray` and `dwm` have hot-path benchmarks
+(`cyrius bench tests/{ray,dwm}.bcyr`).
 
 ## Dependencies
 
@@ -68,12 +70,14 @@ port yet* (gated on the distlib bundle, roadmap M5).
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). 12 modules remain (L3 complete). Next candidates:
-- **L4 batch** — `diffuse`, `diffraction` (both need `ray` ✅ + `room`/`material`/
-  `propagation`, all done) → parallel-workflow ready. `beam` needs `diffuse`;
-  `analysis` needs `impulse` (L5) — those wait.
+See [`roadmap.md`](roadmap.md). 10 modules remain. Next candidates:
+- **impulse** (L5, 643 ln) — the critical unblock: `analysis` (L4), `coupled`
+  (L5), `wav`/`binaural` (L6) all wait on it. Deps (diffuse ✅, image_source ✅,
+  material/propagation/room ✅) all done. Solo.
+- **beam** (L4) — now unblocked (`diffuse` ✅); pairs with impulse or a later batch.
 - **logging** (L0) — thin `sakshi` shim; solo.
-- Then L5 (`impulse`, `coupled`), L6 (`wav`, `binaural`, integration ×3).
+- After impulse: `analysis` + `coupled` unblock, then L6 (`wav`, `binaural`,
+  integration ×3) — batchable.
 
 **Every language pattern is now proven** (f32→f64, hex literals, integer errors,
 HVec3, manual layout, `Vec`, closures→fnptr+ctx, tuple→struct, bit-ops/xorshift,

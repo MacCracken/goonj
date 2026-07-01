@@ -72,9 +72,18 @@ milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md
   flat-namespace clashes with the co-compiled `fdtd`. (Rust's 37³
   first-axial-mode test omitted for routine-suite runtime.)
 
+- **L4 batch (diffuse + diffraction)** — `diffuse` (stochastic diffuse-rain ray
+  tracing: fibonacci_sphere, inline `_diffuse_`-prefixed xorshift64, per-band
+  late-reverb collection via the `ray` API; **2306** loop-expanded assertions)
+  and `diffraction` (UTD/BTM edge diffraction; 17 assertions). Third parallel
+  workflow (2 worktree-isolated agents), integrated + independently re-verified
+  in main; fmt + lint clean, zero cleanup. `beam` (L4) is now unblocked.
+
 ### Changed
 - Toolchain pin **6.3.12 → 6.3.14** (`cyrius.cyml`); stdlib re-vendored. No
-  source changes required — all 1068 assertions stay green. Pin held at 6.3.14.
+  source changes required — all 3391 assertions stay green. **Pin held at
+  6.3.14** deliberately even though the `cycc` wrapper has since drifted to
+  6.3.15 (drift warning is benign; builds work).
 
 #### Changed (port-wide conventions)
 - **f32 → f64** throughout — hisab's `HVec3` is f64-only.

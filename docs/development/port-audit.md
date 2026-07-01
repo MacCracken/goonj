@@ -87,12 +87,12 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 
 ### L4 — energy & metrics
 
-| Module      | LOC | Status | Deps |
-|-------------|----:|--------|------|
-| diffuse     | 513 | ⬜ | material, propagation, ray, room |
-| diffraction | 311 | ⬜ | material, propagation, ray, room |
-| analysis    | 895 | ⬜ | impulse, material, room |
-| beam        | 297 | ⬜ | diffuse, material, room |
+| Module      | LOC | Status | Tests | Deps |
+|-------------|----:|--------|------:|------|
+| diffuse     | 513 | ✅ | 2306 | material, propagation, ray, room — inline xorshift64 (`_diffuse_`-prefixed), fibonacci_sphere, diffuse-rain via ray API |
+| diffraction | 311 | ✅ | 17 | material, propagation, ray, room — UTD/BTM edge diffraction |
+| analysis    | 895 | ⬜ | — | impulse, material, room — waits on impulse (L5) |
+| beam        | 297 | ⬜ | — | diffuse ✅, material, room — now unblocked |
 
 ### L5–L6 — impulse responses & integration
 
@@ -106,7 +106,7 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 | integration/kiran   | 168 | ⬜ | (consumer API) |
 | integration/soorat  | 165 | ⬜ | (consumer API) |
 
-**Totals:** 25 / 37 done, 12 pending · 14,630 Rust lines · **1068 parity assertions green**.
+**Totals:** 27 / 37 done, 10 pending · 14,630 Rust lines · **3391 parity assertions green**.
 Toolchain: cyrius **6.3.14** (pinned deliberately — held here, not chased to
 newer wrappers). Two parallel workflows landed the L2 batch (13) and wave 2 (6);
 `ray` (hot path, 275 assertions + a benchmark) was ported solo. Remaining: dwm
