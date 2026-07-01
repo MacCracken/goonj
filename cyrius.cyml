@@ -11,6 +11,54 @@ cyrius = "6.3.14"
 entry = "src/main.cyr"
 output = "goonj"
 
+# `[lib]` declares the distlib bundle layout that `cyrius distlib` writes
+# into `dist/goonj.cyr` — all 37 acoustics modules concatenated in
+# dependency order (deps before dependents). Every module is
+# self-contained (no `include` lines); the bundle resolves hisab (HVec3,
+# geo) + stdlib + sakshi (for `logging`) from the CONSUMER's manifest.
+# Cross-module symbol collisions were audited to zero before enabling
+# this (37 modules share one flat namespace once concatenated).
+[lib]
+modules = [
+    "src/error.cyr",
+    "src/material.cyr",
+    "src/propagation.cyr",
+    "src/resonance.cyr",
+    "src/ambisonics.cyr",
+    "src/scattering.cyr",
+    "src/dark_velvet_noise.cyr",
+    "src/logging.cyr",
+    "src/hybrid.cyr",
+    "src/directivity.cyr",
+    "src/room.cyr",
+    "src/metamaterial.cyr",
+    "src/fdn.cyr",
+    "src/gfpe.cyr",
+    "src/diffusion.cyr",
+    "src/fdtd.cyr",
+    "src/outdoor.cyr",
+    "src/portal.cyr",
+    "src/udfa.cyr",
+    "src/underwater.cyr",
+    "src/vibroacoustics.cyr",
+    "src/bridge.cyr",
+    "src/ray.cyr",
+    "src/radiosity.cyr",
+    "src/image_source.cyr",
+    "src/dwm.cyr",
+    "src/diffuse.cyr",
+    "src/diffraction.cyr",
+    "src/impulse.cyr",
+    "src/analysis.cyr",
+    "src/beam.cyr",
+    "src/coupled.cyr",
+    "src/wav.cyr",
+    "src/binaural.cyr",
+    "src/dhvani.cyr",
+    "src/kiran.cyr",
+    "src/soorat.cyr",
+]
+
 # stdlib: the base port set plus `math` (clamp/min/max/lerp/sign,
 # exp/ln polyfills, F64_* constants) and `ganita` (transcendentals:
 # pow/exp/ln/sin/cos/sqrt/acos/atan2/…). Same pairing hisab uses.

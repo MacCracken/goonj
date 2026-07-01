@@ -1,10 +1,12 @@
 # dwm.bcyr -- benchmark for the DWM solver hot path (solve_dwm_3d).
 # Run: cyrius bench tests/dwm.bcyr
 
+include "lib/sakshi.cyr"
 include "src/error.cyr"
 include "src/material.cyr"
 include "src/hybrid.cyr"
 include "src/fdtd.cyr"
+include "src/logging.cyr"
 include "src/dwm.cyr"
 
 fn bench(name, fp, n) {

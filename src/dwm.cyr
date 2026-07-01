@@ -331,7 +331,14 @@ fn solve_dwm_3d(config, source, receivers) {
     var dx_expected = f64_mul(f64_mul(DwmConfig_speed_of_sound(config), dt), DWM_SQRT_3);
     var dx_dev = f64_div(f64_abs(f64_sub(DwmConfig_dx(config), dx_expected)),
     f64_max(dx_expected, GOONJ_EPSILON));
-    if (f64_gt(dx_dev, DWM_DX_FAIL_TOL) == 1) { return _dwm_empty_result(); }
+    if (f64_gt(dx_dev, DWM_DX_FAIL_TOL) == 1) {
+        # Ports the Rust tracing::warn! — surfaced via goonj_log (verbose diag).
+        goonj_log_warn("dwm: dx deviates from c*dt*sqrt(3) by >10%; refusing to run");
+        return _dwm_empty_result();
+    }
+    if (f64_gt(dx_dev, DWM_DX_WARN_TOL) == 1) {
+        goonj_log_warn("dwm: dx deviates from c*dt*sqrt(3) by >1%; sound speed will be off");
+    }
 
     var num_steps = f64_to(f64_div(DwmConfig_duration_seconds(config), dt));
     if (num_steps > DWM_MAX_TIME_STEPS) { num_steps = DWM_MAX_TIME_STEPS; }

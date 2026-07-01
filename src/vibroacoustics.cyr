@@ -23,7 +23,7 @@ enum RrLayout {
 }
 
 # Physics constants that aren't clean integers (f64 bit patterns).
-var RHO_AIR  = 0x3FF35C28F5C28F5C;   # 1.21   air density kg/m³
+var VIBRO_RHO_AIR  = 0x3FF35C28F5C28F5C;   # 1.21   air density kg/m³
 var INV_PICO = 0x3D719799812DEA11;   # 1e-12  reference power (1 pW)
 var V_0_01   = 0x3F847AE147AE147B;   # 0.01
 
@@ -135,7 +135,7 @@ fn radiated_sound_power(surfaces, critical_frequency, temperature_celsius) {
     if (n == 0) { return _rr_make(0, F64_NEG_INF); }
 
     var c = speed_of_sound(temperature_celsius);
-    var rho = RHO_AIR;
+    var rho = VIBRO_RHO_AIR;
 
     var total_area = 0;
     var i = 0;

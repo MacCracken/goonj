@@ -110,10 +110,17 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 assertions across 36 suites, all green** (cycc 6.3.16, pin 6.3.14). `mod.rs`
 was Rust module-organization only (feature-gated `pub mod`) — nothing to port.
 
-Remaining for the **2.0.0 release** (not module ports): `dist/goonj.cyr` distlib
-bundle (with a full cross-module collision audit — the flat namespace matters
-when everything concatenates), green a downstream consumer, thread `goonj_log_*`
-diagnostics into the ex-`tracing` error/hot paths, tag 2.0.0.
+Release close-out status:
+- ✅ **Cross-module collision audit** — only 2 clashes across all 37 modules
+  (`gfpe.MAX_GRID_CELLS`→`GFPE_MAX_GRID_CELLS`, `vibroacoustics.RHO_AIR`→
+  `VIBRO_RHO_AIR`, both distinct values); zero remaining.
+- ✅ **`dist/goonj.cyr` distlib bundle** (`[lib]` in `cyrius.cyml`; ~8.6k lines).
+  Validated by `tests/bundle.tcyr` (cross-layer smoke, 11 assertions).
+- ✅ **Diagnostics** — the 2 Rust `tracing::warn!` sites (dwm dx-tolerance) wired
+  to `goonj_log_warn` + sakshi verbose mode.
+- ⏳ **Consumer-green** — deferred; downstream consumers (dhvani/shruti/kiran)
+  aren't ported yet (working up the stack).
+- ⏳ **Tag 2.0.0** — user handles git.
 Toolchain: cyrius **6.3.14** (pinned deliberately — held here, not chased to
 newer wrappers). Two parallel workflows landed the L2 batch (13) and wave 2 (6);
 `ray` (hot path, 275 assertions + a benchmark) was ported solo. Remaining: dwm

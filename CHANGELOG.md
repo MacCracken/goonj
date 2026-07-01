@@ -2,13 +2,27 @@
 
 ## [Unreleased]
 
-### 2.0.0 — Cyrius port (in progress)
+### 2.0.0 — Cyrius port
 
-Major break: goonj is being rewritten from Rust to **Cyrius** (sovereign
-systems language, compiled by `cycc`). The 1.4.3 Rust source is frozen at
-`rust-old/` as the parity oracle. Parity progress is tracked in
-[`docs/development/port-audit.md`](docs/development/port-audit.md); the
-milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md).
+Major break: goonj is rewritten from Rust to **Cyrius** (sovereign systems
+language, compiled by `cycc`). The 1.4.3 Rust source is frozen at `rust-old/`
+as the parity oracle. **All 37 modules are ported** — 3585 parity assertions
+across 36 suites, all green — and ship as the single `dist/goonj.cyr` distlib
+bundle. Parity detail: [`docs/development/port-audit.md`](docs/development/port-audit.md).
+
+#### Added — release infrastructure
+- **`dist/goonj.cyr` distlib bundle** — all 37 modules concatenated in
+  dependency order via `cyrius distlib` (`[lib]` in `cyrius.cyml`), ready for
+  consumers to pull the single file (hisab + stdlib + sakshi resolved consumer-
+  side). Validated end-to-end by `tests/bundle.tcyr` (cross-layer smoke).
+- **Cross-module collision audit** — resolved the only two flat-namespace
+  clashes surfaced by concatenating all 37 modules: `gfpe` `MAX_GRID_CELLS`
+  (10M) → `GFPE_MAX_GRID_CELLS` (distinct from `fdtd`'s 4M), and
+  `vibroacoustics` `RHO_AIR` (1.21) → `VIBRO_RHO_AIR` (distinct from `bridge`'s
+  1.225). Zero remaining global collisions.
+- **Diagnostics wired** — the two Rust `tracing::warn!` sites (both in `dwm`'s
+  dx-tolerance guard) now emit via `goonj_log_warn`, surfaced by the sakshi
+  verbose mode (`logging_init_verbose`).
 
 #### Added
 - **Cyrius scaffold** — `cyrius port` layout: `src/main.cyr` smoke binary,

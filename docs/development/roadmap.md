@@ -14,8 +14,9 @@
       (0 warnings). Still to do: whole-project `cyrius vet`.
 - [x] Benchmarks captured for the ray + dwm hot paths (`docs/benchmarks/`);
       more hot paths optional.
-- [ ] `dist/goonj.cyr` distlib bundle builds; ≥1 consumer compiles green
-- [ ] CHANGELOG complete for 2.0.0; ADRs for the non-obvious port choices
+- [~] `dist/goonj.cyr` distlib bundle builds ✅ (validated by `tests/bundle.tcyr`);
+      ≥1 consumer compiles green — deferred (consumers not ported yet)
+- [x] CHANGELOG complete for 2.0.0; ADR-0001 covers the port conventions
 
 ## Porting order (dependency layers)
 
@@ -89,11 +90,12 @@ ISO 3382-1 + IEC 60268-16) [analysis/coupled/wav batch].
 
 ### M6 — 2.0.0 release close-out (all modules ported ✅)
 
-1. `dist/goonj.cyr` distlib bundle — **cross-module collision audit** first
-   (37 modules in one flat namespace), then `[lib]` in `cyrius.cyml`.
-2. Green a downstream consumer (dhvani / shruti / kiran) against the bundle.
-3. Thread `goonj_log_*` diagnostics into the ex-`tracing` error/hot paths.
-4. `cyrius vet`, benchmarks history, final CHANGELOG, tag **2.0.0**.
+1. ✅ `dist/goonj.cyr` distlib bundle — collision audit (2 clashes de-collided,
+   zero remaining), `[lib]` in `cyrius.cyml`, validated by `tests/bundle.tcyr`.
+2. ⏳ Green a downstream consumer — **deferred** (consumers not ported yet).
+3. ✅ Diagnostics threaded — the 2 `tracing::warn!` sites (dwm) → `goonj_log_warn`.
+4. ✅ `cyrius vet` clean; benchmarks captured (ray + dwm). ⏳ final CHANGELOG +
+   tag **2.0.0** (user handles git).
 
 ## Known port challenges (capture as ADRs when resolved)
 

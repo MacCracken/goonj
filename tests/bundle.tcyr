@@ -1,0 +1,55 @@
+# bundle.tcyr -- validates the dist/goonj.cyr distlib bundle end-to-end:
+# include the single bundle (+ hisab + sakshi, which a real consumer supplies)
+# and exercise functions from across the layer stack. Proves the 37-module
+# bundle compiles as one unit and is consumer-usable.
+
+include "lib/hisab.cyr"
+include "lib/sakshi.cyr"
+include "dist/goonj.cyr"
+
+var TOL_1E1 = 0x3FB999999999999A;   # 0.1
+var V_343_42 = 0x407576B851EB851F;  # 343.42
+var V_34_3   = 0x4041266666666666;  # 34.3
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+alloc_init();
+
+test_group("bundle: cross-module smoke");
+# L0 propagation
+assert(approx(speed_of_sound(f64_from(20)), V_343_42, TOL_1E1), "propagation.speed_of_sound");
+# L0 resonance
+assert(approx(room_mode(f64_from(5), 1, f64_from(343)), V_34_3, TOL_1E1), "resonance.room_mode");
+# L1 material
+assert(f64_gt(average_absorption(acoustic_material_carpet()),
+    average_absorption(acoustic_material_concrete())), "material.average_absorption");
+# L2 dwm (uses fdtd+hybrid+material in the same bundle)
+assert(f64_gt(mesh_frequency(dwm_config_default()), 0), "dwm.mesh_frequency");
+# L2 gfpe (renamed GFPE_MAX_GRID_CELLS=10M) vs fdtd (MAX_GRID_CELLS=4M) — the
+# de-collided constants coexist in one bundle with their distinct values.
+assert(f64_gt(f64_from(GFPE_MAX_GRID_CELLS), f64_from(MAX_GRID_CELLS)), "gfpe/fdtd grid caps distinct");
+# L5 impulse (RT60)
+assert(f64_gt(sabine_rt60(f64_from(100), f64_from(20)), 0), "impulse.sabine_rt60");
+# L3 ray + room, traced through the bundle
+var geom = room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+var src = hvec3_new(f64_from(5), f64_div(f64_from(3), F64_TWO), f64_from(4));
+var path = trace_ray(multiband_ray_new(src, hvec3_unit_z()), RoomGeometry_walls(geom), 10);
+assert(f64_gt(f64_from(vec_len(ray_path_bounces(path))), 0), "ray.trace_ray");
+# L4 analysis over a synthetic IR
+var samples = vec_new();
+vec_push(samples, F64_ONE);
+vec_push(samples, F64_HALF);
+var ir = impulse_response_new(samples, 44100, F64_ONE);
+assert(f64_gt(definition_d50(ir), 0), "analysis.definition_d50");
+# L6 wav export produces bytes
+var wb = write_wav_mono(samples, 44100);
+assert(f64_gt(f64_from(WavBytes_len(wb)), f64_from(44)), "wav.write_wav_mono header+data");
+# L0 logging (sakshi-backed) — verbose mode
+assert_eq(logging_init_verbose(), 0, "logging.init_verbose");
+assert_eq(logging_get_level(), LOG_TRACE, "logging verbose -> TRACE");
+
+var rc = assert_summary();
+syscall(60, rc);

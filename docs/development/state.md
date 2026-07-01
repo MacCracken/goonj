@@ -75,15 +75,17 @@ port yet* (gated on the distlib bundle, roadmap M5).
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). **All 37 modules are ported.** The remaining work
-is the **2.0.0 release close-out** (not module ports):
-1. `dist/goonj.cyr` distlib bundle — first do a full **cross-module collision
-   audit** (37 modules concatenated in one flat namespace; the per-suite chains
-   only ever co-compiled subsets), then a `[lib]` bundle in `cyrius.cyml`.
-2. Green a downstream consumer (dhvani / shruti / kiran) against the bundle.
-3. Thread `goonj_log_*` diagnostics into the ex-`tracing` error/hot paths
-   (dwm dx-tolerance refusal, propagation guards, solver hot paths).
-4. Cleanliness sweep (`cyrius vet`), benchmarks history, final CHANGELOG, tag **2.0.0**.
+See [`roadmap.md`](roadmap.md). **All 37 modules ported + release close-out
+mostly done:**
+- ✅ Cross-module collision audit (2 clashes de-collided; zero remaining).
+- ✅ `dist/goonj.cyr` distlib bundle (`[lib]` in `cyrius.cyml`; `tests/bundle.tcyr`
+  cross-layer smoke, 11 green).
+- ✅ Diagnostics: the 2 `tracing::warn!` sites (dwm) → `goonj_log_warn` + sakshi
+  verbose mode.
+- ✅ `cyrius vet` clean; benchmarks captured (ray + dwm).
+- ⏳ **Consumer-green** — deferred until a downstream consumer (dhvani/shruti/
+  kiran) is itself ported (working up the stack).
+- ⏳ **Tag 2.0.0** — user handles git.
 
 **Every language pattern is now proven** (f32→f64, hex literals, integer errors,
 HVec3, manual layout, `Vec`, closures→fnptr+ctx, tuple→struct, bit-ops/xorshift,

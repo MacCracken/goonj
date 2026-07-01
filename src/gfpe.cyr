@@ -24,7 +24,7 @@ var GFPE_1E3      = 0x3F50624DD2F1A9FC;   # 0.001    minimum grazing angle
 var GFPE_POS_INF  = 0x7FF0000000000000;   # +inf     blocked / out-of-range EA
 
 # Maximum allowed grid cells (height x range), to bound memory.
-var MAX_GRID_CELLS = 10000000;
+var GFPE_MAX_GRID_CELLS = 10000000;
 
 # log10(x) = ln(x) / ln(10)
 fn _gfpe_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
@@ -328,7 +328,7 @@ fn solve_gfpe(terrain, config) {
 
     # saturating_mul guard in f64 to avoid i64 overflow on huge grids.
     var cells = f64_mul(f64_from(nz), f64_from(num_ranges));
-    if (f64_gt(cells, f64_from(MAX_GRID_CELLS)) == 1) { return _gfpe_empty_result(); }
+    if (f64_gt(cells, f64_from(GFPE_MAX_GRID_CELLS)) == 1) { return _gfpe_empty_result(); }
 
     var dz = f64_div(max_height, f64_from(nz));
     var dr = range_step;

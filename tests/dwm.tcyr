@@ -2,10 +2,12 @@
 # Ported from the non-solver #[test] blocks in rust-old/src/dwm.rs
 # (serde tests dropped; solver tests land with solve_dwm_3d).
 
+include "lib/sakshi.cyr"
 include "src/error.cyr"
 include "src/material.cyr"
 include "src/hybrid.cyr"
 include "src/fdtd.cyr"
+include "src/logging.cyr"
 include "src/dwm.cyr"
 
 var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
