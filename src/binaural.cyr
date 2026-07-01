@@ -1,0 +1,217 @@
+# binaural.cyr -- binaural (stereo) impulse-response generation with HRTF
+# spatialization.
+#
+# Combines room acoustics (image-source early reflections) with user-supplied
+# Head-Related Transfer Functions (HRTFs) to produce stereo impulse responses
+# for headphone spatialization. Each early reflection is direction-matched to
+# the nearest measured HRTF pair, whose broadband amplitude convolves the
+# left/right HRIRs into the output buffers.
+#
+# Ports rust-old/src/binaural.rs. f32 -> f64 throughout (hisab is f64-only).
+# Rust's serde derives on HrtfPair/HrtfDataset/BinauralIr are dropped (no serde
+# in Cyrius; the oracle has no serde round-trip test to port). Vec<f32> sample
+# buffers -> stdlib vec (f64 stored directly). The (f32, f32) tuple returned by
+# direction_to_angles -> a small BinauralAngles struct. The wav-feature to_wav
+# method -> binaural_ir_to_wav returning a WavBytes handle (see wav.cyr).
+#
+# Requires (from the build/test unit): error.cyr (GOONJ_EPSILON), material.cyr
+# (NUM_BANDS), propagation.cyr (speed_of_sound), room.cyr
+# (AcousticRoom_temperature_celsius), image_source.cyr
+# (compute_early_reflections, early_reflection_*), impulse.cyr (IrConfig_*),
+# wav.cyr (write_wav_stereo), stdlib math/ganita (F64_TAU, f64_*) + vec + hisab
+# (hvec3_*, HVec3_*). alloc_init() must have run.
+
+# ================================================================
+# HrtfPair -- left/right ear impulse responses for one direction.
+# ================================================================
+#derive(accessors)
+struct HrtfPair { azimuth; elevation; left; right; }
+
+# Allocate an HRTF pair: azimuth/elevation (radians) + left/right HRIR vecs.
+#must_use
+fn hrtf_pair_new(azimuth, elevation, left, right) {
+    var p = alloc(sizeof(HrtfPair));
+    HrtfPair_set_azimuth(p, azimuth);
+    HrtfPair_set_elevation(p, elevation);
+    HrtfPair_set_left(p, left);
+    HrtfPair_set_right(p, right);
+    return p;
+}
+
+# ================================================================
+# HrtfDataset -- HRTF pairs indexed by direction.
+# ================================================================
+#derive(accessors)
+struct HrtfDataset { pairs; sample_rate; }
+
+# Create a dataset from a collection of pre-loaded HRTF pairs (a vec of
+# HrtfPair pointers) plus the HRIR sample rate.
+#must_use
+fn hrtf_dataset_from_pairs(pairs, sample_rate) {
+    var d = alloc(sizeof(HrtfDataset));
+    HrtfDataset_set_pairs(d, pairs);
+    HrtfDataset_set_sample_rate(d, sample_rate);
+    return d;
+}
+
+# Squared angular distance between two directions (nearest-neighbor lookup).
+# The azimuth delta wraps around TAU so opposite ends of the circle are close.
+#must_use
+fn binaural_angular_distance(az1, el1, az2, el2) {
+    var daz = f64_abs(f64_sub(az1, az2));
+    daz = f64_min(daz, f64_sub(F64_TAU, daz));
+    var del = f64_abs(f64_sub(el1, el2));
+    return f64_add(f64_mul(daz, daz), f64_mul(del, del));
+}
+
+# Find the nearest HRTF pair (pointer) for a direction, or 0 if the dataset is
+# empty. Ties keep the first pair (Rust's min_by returns the first minimum).
+#must_use
+fn hrtf_dataset_nearest(dataset, azimuth, elevation) {
+    var pairs = HrtfDataset_pairs(dataset);
+    var n = vec_len(pairs);
+    if (n == 0) { return 0; }
+    var best = vec_get(pairs, 0);
+    var best_dist = binaural_angular_distance(
+    HrtfPair_azimuth(best), HrtfPair_elevation(best), azimuth, elevation);
+    var i = 1;
+    while (i < n) {
+        var cand = vec_get(pairs, i);
+        var d = binaural_angular_distance(
+        HrtfPair_azimuth(cand), HrtfPair_elevation(cand), azimuth, elevation);
+        if (f64_lt(d, best_dist) == 1) {
+            best = cand;
+            best_dist = d;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+# ================================================================
+# BinauralIr -- a binaural (stereo) impulse response.
+# ================================================================
+#derive(accessors)
+struct BinauralIr { left; right; sample_rate; }
+
+# Allocate a binaural IR from left/right sample vecs and a sample rate.
+#must_use
+fn binaural_ir_new(left, right, sample_rate) {
+    var b = alloc(sizeof(BinauralIr));
+    BinauralIr_set_left(b, left);
+    BinauralIr_set_right(b, right);
+    BinauralIr_set_sample_rate(b, sample_rate);
+    return b;
+}
+
+# Write the binaural IR as a stereo 16-bit PCM WAV (see wav.cyr). Returns a
+# WavBytes handle on success or ERR_COMPUTATION on channel-length mismatch or
+# 32-bit-header overflow.
+#must_use
+fn binaural_ir_to_wav(bir) {
+    return write_wav_stereo(
+    BinauralIr_left(bir), BinauralIr_right(bir), BinauralIr_sample_rate(bir));
+}
+
+# ================================================================
+# BinauralAngles -- (azimuth, elevation) tuple return.
+# ================================================================
+#derive(accessors)
+struct BinauralAngles { azimuth; elevation; }
+
+#must_use
+fn binaural_angles_new(azimuth, elevation) {
+    var a = alloc(sizeof(BinauralAngles));
+    BinauralAngles_set_azimuth(a, azimuth);
+    BinauralAngles_set_elevation(a, elevation);
+    return a;
+}
+
+# Convert a direction vector to (azimuth, elevation). Azimuth is the angle in
+# the XZ plane from +Z (0 = front, positive = right); elevation is the angle
+# from the horizontal plane (positive = up).
+#must_use
+fn binaural_direction_to_angles(dir) {
+    var dx = HVec3_x(dir);
+    var dy = HVec3_y(dir);
+    var dz = HVec3_z(dir);
+    var azimuth = f64_atan2(dx, dz);
+    var horizontal = f64_sqrt(f64_add(f64_mul(dx, dx), f64_mul(dz, dz)));
+    var elevation = f64_atan2(dy, horizontal);
+    return binaural_angles_new(azimuth, elevation);
+}
+
+# ================================================================
+# generate_binaural_ir
+# ================================================================
+# Generate a binaural (stereo) impulse response for a room. Computes early
+# reflections (image-source method), spatializes each reflection with the
+# nearest HRTF pair from the dataset, and sums into left/right channels. An
+# empty HRTF dataset yields a silent IR.
+#must_use
+fn generate_binaural_ir(source, listener, room, hrtf, config) {
+    var c = speed_of_sound(AcousticRoom_temperature_celsius(room));
+    var rate = IrConfig_sample_rate(config);
+    var num_samples = f64_to(f64_mul(IrConfig_max_time_seconds(config), f64_from(rate)));
+
+    var pairs = HrtfDataset_pairs(hrtf);
+    var hrir_len = 0;
+    if (vec_len(pairs) != 0) { hrir_len = vec_len(HrtfPair_left(vec_get(pairs, 0))); }
+
+    var buf_len = num_samples + hrir_len;
+    var out_left = vec_new();
+    var out_right = vec_new();
+    var z = 0;
+    while (z < buf_len) {
+        vec_push(out_left, 0);
+        vec_push(out_right, 0);
+        z = z + 1;
+    }
+
+    var reflections = compute_early_reflections(source, listener, room, IrConfig_max_order(config), c);
+    var nr = vec_len(reflections);
+    var ri = 0;
+    while (ri < nr) {
+        var refl = vec_get(reflections, ri);
+        var sample_idx = f64_to(f64_mul(early_reflection_delay_seconds(refl), f64_from(rate)));
+        if (sample_idx < num_samples) {
+            # Average amplitude across bands for broadband HRTF application.
+            var amp_sum = 0;
+            var band = 0;
+            while (band < NUM_BANDS) {
+                amp_sum = f64_add(amp_sum, early_reflection_amplitude_band(refl, band));
+                band = band + 1;
+            }
+            var amp = f64_div(amp_sum, f64_from(NUM_BANDS));
+            if (f64_ge(amp, GOONJ_EPSILON) == 1) {
+                var angles = binaural_direction_to_angles(early_reflection_direction(refl));
+                var pair = hrtf_dataset_nearest(
+                hrtf, BinauralAngles_azimuth(angles), BinauralAngles_elevation(angles));
+                if (pair != 0) {
+                    # Convolve: add the scaled HRIR at the reflection's arrival.
+                    var hl_vec = HrtfPair_left(pair);
+                    var hr_vec = HrtfPair_right(pair);
+                    var conv_len = vec_len(hl_vec);
+                    if (vec_len(hr_vec) < conv_len) { conv_len = vec_len(hr_vec); }
+                    var i = 0;
+                    while (i < conv_len) {
+                        var idx = sample_idx + i;
+                        if (idx < buf_len) {
+                            var hl = vec_get(hl_vec, i);
+                            var hr = vec_get(hr_vec, i);
+                            vec_set(out_left, idx, f64_add(vec_get(out_left, idx), f64_mul(amp, hl)));
+                            vec_set(out_right, idx, f64_add(vec_get(out_right, idx), f64_mul(amp, hr)));
+                        }
+                        i = i + 1;
+                    }
+                }
+            }
+        }
+        ri = ri + 1;
+    }
+
+    # Trim to requested length.
+    vec_truncate(out_left, num_samples);
+    vec_truncate(out_right, num_samples);
+    return binaural_ir_new(out_left, out_right, rate);
+}

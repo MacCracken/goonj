@@ -101,13 +101,19 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 | impulse             | 643 | ✅ | 30 | diffuse, image_source, material, propagation, room — RT60 (Sabine/Eyring/Fitzroy/Kuttruff), ImpulseResponse (Schroeder EDC), MultibandIr, generate_ir |
 | coupled             | 177 | ✅ | 7 | impulse, material, portal, propagation, room — multi-room energy exchange, double-slope decay |
 | wav                 | 257 | ✅ | 16 | error, impulse — 16-bit PCM RIFF/WAVE via in-memory byte buffer (`store8`/LE encoding); no file-I/O syscalls |
-| binaural            | 317 | ⬜ | — | error, image_source, impulse, material, propagation, room, wav ✅ — now unblocked |
-| integration/dhvani  | 129 | ⬜ | — | (consumer API) |
-| integration/kiran   | 168 | ⬜ | — | (consumer API) |
-| integration/soorat  | 165 | ⬜ | — | (consumer API) |
+| binaural            | 317 | ✅ | 12 | error, image_source, impulse, material, propagation, room, wav — HRTF spatialization, nearest-pair lookup, stereo IR + WAV export |
+| dhvani (integ.)     | 129 | ✅ | 5 | impulse, material, room — convolution-reverb IR handoff (`dhvani_*`) |
+| kiran (integ.)      | 168 | ✅ | 6 | diffraction, material, room — real-time occlusion queries (`kiran_*`) |
+| soorat (integ.)     | 165 | ✅ | 16 | ray, resonance — visualization data (`soorat_*`) |
 
-**Totals:** 33 / 37 done, 4 pending · 14,630 Rust lines · **3546 parity assertions green**.
-Remaining: binaural (now unblocked — wav done) + integration/{dhvani,kiran,soorat}.
+**Totals: 37 / 37 done — PORT COMPLETE.** 14,630 Rust lines · **3585 parity
+assertions across 36 suites, all green** (cycc 6.3.16, pin 6.3.14). `mod.rs`
+was Rust module-organization only (feature-gated `pub mod`) — nothing to port.
+
+Remaining for the **2.0.0 release** (not module ports): `dist/goonj.cyr` distlib
+bundle (with a full cross-module collision audit — the flat namespace matters
+when everything concatenates), green a downstream consumer, thread `goonj_log_*`
+diagnostics into the ex-`tracing` error/hot paths, tag 2.0.0.
 Toolchain: cyrius **6.3.14** (pinned deliberately — held here, not chased to
 newer wrappers). Two parallel workflows landed the L2 batch (13) and wave 2 (6);
 `ray` (hot path, 275 assertions + a benchmark) was ported solo. Remaining: dwm

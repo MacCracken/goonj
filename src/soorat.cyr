@@ -1,0 +1,118 @@
+# soorat.cyr -- integration API for the soorat consumer: visualization data
+# structures for acoustic analysis (ray paths, pressure maps, room-mode
+# patterns for rendering).
+#
+# Ports rust-old/src/integration/soorat.rs. f32 -> f64. Rust's `serde`
+# derive is dropped (no serde in Cyrius). The three visualization structs
+# use manual inline layout (fixed `[usize; N]` / `[u32; 3]` arrays become
+# store64/load64 slots). `Vec<f32>`/`Vec<RayPath>` become stdlib `vec`
+# handles (a pointer stored in one 8-byte slot). `Vec3` -> hisab `HVec3`
+# (also a pointer in one slot).
+#
+# Requires (build/test unit): resonance.cyr (room_mode), hisab, stdlib
+# math/ganita (F64_PI, f64_cos/sqrt) and vec (vec_new/push/len/get).
+# alloc_init() must have run.
+
+# ================================================================
+# Structs (manual inline layout)
+# ================================================================
+# RayVisualization: source (HVec3) | paths (vec of RayPath).
+enum SrvLayout { SRV_SOURCE = 0, SRV_PATHS = 8, SRV_SIZE = 16 }
+
+# PressureMap: values (vec) | dimensions[3] | origin (HVec3) | spacing | freq.
+enum SpmLayout { SPM_VALUES = 0, SPM_DIM = 8, SPM_ORIGIN = 32, SPM_SPACING = 40, SPM_FREQ = 48, SPM_SIZE = 56 }
+
+# ModeVisualization: frequency_hz | mode_indices[3] | pattern (vec) |
+# pattern_dimensions[2].
+enum SmvLayout { SMV_FREQ = 0, SMV_IDX = 8, SMV_PATTERN = 32, SMV_PDIM = 40, SMV_SIZE = 56 }
+
+# ================================================================
+# RayVisualization
+# ================================================================
+# A collection of ray paths for visualization: a source position and the
+# traced ray paths (each a RayPath from ray.cyr) with their bounce points.
+#must_use
+fn soorat_ray_visualization_new(source, paths) {
+    var v = alloc(SRV_SIZE);
+    store64(v + SRV_SOURCE, source);
+    store64(v + SRV_PATHS, paths);
+    return v;
+}
+
+fn soorat_ray_visualization_source(v) { return load64(v + SRV_SOURCE); }
+fn soorat_ray_visualization_paths(v) { return load64(v + SRV_PATHS); }
+
+# ================================================================
+# PressureMap
+# ================================================================
+# A 3D pressure map on a regular grid. `values` is flattened as
+# values[z * ny * nx + y * nx + x]; `dimensions` is (nx, ny, nz);
+# `origin` is the world-space min corner; `spacing` is grid step (m).
+#must_use
+fn soorat_pressure_map_new(values, nx, ny, nz, origin, spacing, frequency_hz) {
+    var m = alloc(SPM_SIZE);
+    store64(m + SPM_VALUES, values);
+    store64(m + SPM_DIM + 0 * 8, nx);
+    store64(m + SPM_DIM + 1 * 8, ny);
+    store64(m + SPM_DIM + 2 * 8, nz);
+    store64(m + SPM_ORIGIN, origin);
+    store64(m + SPM_SPACING, spacing);
+    store64(m + SPM_FREQ, frequency_hz);
+    return m;
+}
+
+fn soorat_pressure_map_values(m) { return load64(m + SPM_VALUES); }
+fn soorat_pressure_map_dimension(m, i) { return load64(m + SPM_DIM + i * 8); }
+fn soorat_pressure_map_origin(m) { return load64(m + SPM_ORIGIN); }
+fn soorat_pressure_map_spacing(m) { return load64(m + SPM_SPACING); }
+fn soorat_pressure_map_frequency_hz(m) { return load64(m + SPM_FREQ); }
+
+# ================================================================
+# ModeVisualization
+# ================================================================
+# Generate a room-mode pattern for a shoebox on the XZ plane at a given
+# height. Computes the standing-wave pattern cos(nx·π·x/Lx)·cos(nz·π·z/Lz)
+# over a grid_resolution × grid_resolution grid. `mode_indices` is
+# [nx, 0, nz]; `frequency_hz` is the combined axial-mode frequency.
+#must_use
+fn soorat_mode_visualization_for_shoebox(nx, nz, length, width, speed_of_sound, grid_resolution) {
+    var freq_x = 0;
+    if (f64_gt(length, 0) == 1) { freq_x = room_mode(length, nx, speed_of_sound); }
+    var freq_z = 0;
+    if (f64_gt(width, 0) == 1) { freq_z = room_mode(width, nz, speed_of_sound); }
+    var frequency_hz = f64_sqrt(f64_add(f64_mul(freq_x, freq_x), f64_mul(freq_z, freq_z)));
+
+    var denom_i = grid_resolution - 1;
+    if (denom_i < 1) { denom_i = 1; }
+    var denom = f64_from(denom_i);
+
+    var pattern = vec_new();
+    var iz = 0;
+    while (iz < grid_resolution) {
+        var ix = 0;
+        while (ix < grid_resolution) {
+            var x = f64_mul(f64_div(f64_from(ix), denom), length);
+            var z = f64_mul(f64_div(f64_from(iz), denom), width);
+            var px = f64_cos(f64_div(f64_mul(f64_mul(f64_from(nx), F64_PI), x), length));
+            var pz = f64_cos(f64_div(f64_mul(f64_mul(f64_from(nz), F64_PI), z), width));
+            vec_push(pattern, f64_mul(px, pz));
+            ix = ix + 1;
+        }
+        iz = iz + 1;
+    }
+
+    var m = alloc(SMV_SIZE);
+    store64(m + SMV_FREQ, frequency_hz);
+    store64(m + SMV_IDX + 0 * 8, nx);
+    store64(m + SMV_IDX + 1 * 8, 0);
+    store64(m + SMV_IDX + 2 * 8, nz);
+    store64(m + SMV_PATTERN, pattern);
+    store64(m + SMV_PDIM + 0 * 8, grid_resolution);
+    store64(m + SMV_PDIM + 1 * 8, grid_resolution);
+    return m;
+}
+
+fn soorat_mode_visualization_frequency_hz(m) { return load64(m + SMV_FREQ); }
+fn soorat_mode_visualization_mode_index(m, i) { return load64(m + SMV_IDX + i * 8); }
+fn soorat_mode_visualization_pattern(m) { return load64(m + SMV_PATTERN); }
+fn soorat_mode_visualization_pattern_dimension(m, i) { return load64(m + SMV_PDIM + i * 8); }

@@ -1,0 +1,108 @@
+# kiran.cyr -- integration API for the kiran consumer (real-time occlusion
+# queries for game audio).
+#
+# Ports rust-old/src/integration/kiran.rs. Wraps diffraction/occlusion +
+# room geometry into a small query surface. f32 -> f64 throughout (hisab is
+# f64-only). Public entry points are prefixed `kiran_` for the flat
+# namespace.
+#
+# The Rust `OcclusionResult` (bool + f32 + [f32; NUM_BANDS]) is a manual
+# inline layout: an occluded flag (integer 0/1), the average attenuation dB
+# (f64), and the 8 per-band attenuations (8 f64). `OcclusionEngine` wraps an
+# AcceleratedRoom. Rust's serde derive on OcclusionResult is dropped (no
+# serde in Cyrius); the serde round-trip test is therefore not ported.
+#
+# Requires (from the build/test unit): stdlib math/ganita (F64_PI, F64_ONE,
+# f64_add/div/lt), hisab (hvec3_*), material.cyr (NUM_BANDS, frequency_band),
+# room.cyr (acoustic room / geometry accessors, accelerated_room_new),
+# diffraction.cyr (is_occluded, edge_diffraction_loss). alloc_init() must
+# have run.
+
+# OcclusionResult inline layout: occluded flag | avg atten dB | 8 band dB.
+enum KiranResLayout {
+    KOR_OCCLUDED = 0,    # integer 0/1
+    KOR_ATTEN    = 8,    # f64 average attenuation (dB)
+    KOR_FREQ     = 16,   # offsets 16..80 (8 f64 per-band attenuation, dB)
+    KOR_SIZE     = 80,
+}
+
+# Pre-built occlusion query engine wrapping a BVH-accelerated room.
+#derive(accessors)
+struct KiranOcclusionEngine { accel; }
+
+# ================================================================
+# OcclusionResult accessors
+# ================================================================
+# Whether direct line-of-sight is blocked (1 = occluded, 0 = clear).
+#must_use
+fn kiran_occlusion_result_is_occluded(result) {
+    return load64(result + KOR_OCCLUDED);
+}
+
+# Overall attenuation in dB (0.0 = no attenuation, negative = attenuated).
+#must_use
+fn kiran_occlusion_result_attenuation_db(result) {
+    return load64(result + KOR_ATTEN);
+}
+
+# Per-frequency-band attenuation in dB at band index 0..7.
+#must_use
+fn kiran_occlusion_result_band(result, band) {
+    return load64(result + KOR_FREQ + band * 8);
+}
+
+# ================================================================
+# OcclusionEngine
+# ================================================================
+# Build an occlusion engine from a room (wraps it in an AcceleratedRoom).
+#must_use
+fn kiran_occlusion_engine_new(room) {
+    var engine = alloc(sizeof(KiranOcclusionEngine));
+    KiranOcclusionEngine_set_accel(engine, accelerated_room_new(room));
+    return engine;
+}
+
+# Access the underlying room.
+#must_use
+fn kiran_occlusion_engine_room(engine) {
+    return AcceleratedRoom_room(KiranOcclusionEngine_accel(engine));
+}
+
+# Query occlusion between a source and listener. Returns an OcclusionResult:
+# occlusion status plus per-band attenuation. If the path is occluded,
+# estimates edge-diffraction loss at each frequency band using a
+# representative edge angle of pi/4 (matching the Rust simplified model).
+#must_use
+fn kiran_occlusion_query(engine, source, listener) {
+    var accel = KiranOcclusionEngine_accel(engine);
+    var room = AcceleratedRoom_room(accel);
+    var walls = RoomGeometry_walls(AcousticRoom_geometry(room));
+    var occluded = is_occluded(source, listener, walls);
+
+    var result = alloc(KOR_SIZE);
+    store64(result + KOR_OCCLUDED, occluded);
+
+    if (occluded == 0) {
+        store64(result + KOR_ATTEN, 0);
+        var b0 = 0;
+        while (b0 < NUM_BANDS) {
+            store64(result + KOR_FREQ + b0 * 8, 0);
+            b0 = b0 + 1;
+        }
+        return result;
+    }
+
+    # Estimate diffraction loss per band with a representative edge angle.
+    var edge_angle = f64_div(F64_PI, f64_from(4));
+    var temperature = AcousticRoom_temperature_celsius(room);
+    var sum = 0;
+    var b = 0;
+    while (b < NUM_BANDS) {
+        var loss = edge_diffraction_loss(frequency_band(b), edge_angle, temperature);
+        store64(result + KOR_FREQ + b * 8, loss);
+        sum = f64_add(sum, loss);
+        b = b + 1;
+    }
+    store64(result + KOR_ATTEN, f64_div(sum, f64_from(NUM_BANDS)));
+    return result;
+}

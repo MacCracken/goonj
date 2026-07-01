@@ -1,0 +1,73 @@
+# dhvani.tcyr -- parity tests for src/dhvani.cyr
+# Ported from the #[test] blocks in rust-old/src/integration/dhvani.rs. The
+# serde round-trip test (dhvani_ir_serializes) is dropped -- there is no
+# serde in Cyrius. IR-generating tests keep ray counts and durations small
+# so they run fast. Infinite RT60 uses the +inf bit-pattern check.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/image_source.cyr"
+include "src/diffuse.cyr"
+include "src/impulse.cyr"
+include "src/dhvani.cyr"
+
+fn tenths(n) { return f64_div(f64_from(n), f64_from(10)); }
+
+fn is_inf(x) {
+    if (x == 0x7FF0000000000000) { return 1; }
+    return 0;
+}
+
+# 1 if every rt60 band is strictly positive (matches Rust's `rt > 0.0`).
+fn all_rt60_positive(d) {
+    var band = 0;
+    while (band < NUM_BANDS) {
+        if (f64_gt(dhvani_ir_rt60_band(d, band), 0) == 0) { return 0; }
+        band = band + 1;
+    }
+    return 1;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("dhvani_ir_has_valid_data");
+var v_room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+var v_cfg = ir_config_new(48000, 3, 100, 50, tenths(2), 42);
+var v_ir = generate_dhvani_ir(
+hvec3_new(f64_from(3), tenths(15), f64_from(4)),
+hvec3_new(f64_from(7), tenths(15), f64_from(4)),
+v_room,
+v_cfg);
+assert(f64_gt(f64_from(vec_len(ImpulseResponse_samples(dhvani_ir_ir(v_ir)))), 0), "ir samples not empty");
+assert(f64_gt(dhvani_ir_room_volume(v_ir), 0), "room_volume positive");
+assert_eq(dhvani_ir_has_multiband(v_ir), 1, "multiband is present");
+assert_eq(all_rt60_positive(v_ir), 1, "every RT60 band should be positive");
+
+# ================================================================
+test_group("dhvani_ir_zero_absorption_band_infinite_rt60");
+var z_abs = alloc(8 * 8);
+store64(z_abs + 0, 0);
+store64(z_abs + 8, 0);
+store64(z_abs + 16, tenths(1));
+store64(z_abs + 24, tenths(2));
+store64(z_abs + 32, tenths(3));
+store64(z_abs + 40, tenths(4));
+store64(z_abs + 48, tenths(5));
+store64(z_abs + 56, tenths(6));
+var z_mat = acoustic_material_new("zero_low", z_abs, tenths(1));
+var z_room = acoustic_room_shoebox(f64_from(5), f64_from(4), f64_from(3), z_mat);
+var z_cfg = ir_config_new(48000, 3, 10, 50, pct(5), 42);
+var z_ir = generate_dhvani_ir(
+hvec3_new(tenths(25), tenths(15), f64_from(2)),
+hvec3_new(tenths(25), tenths(15), tenths(25)),
+z_room,
+z_cfg);
+assert_eq(is_inf(dhvani_ir_rt60_band(z_ir, 0)), 1, "zero absorption band should give infinite RT60");
+
+var rc = assert_summary();
+syscall(60, rc);

@@ -1,0 +1,79 @@
+# soorat.tcyr -- parity tests for src/soorat.cyr
+# Ported from the #[test] blocks in rust-old/src/integration/soorat.rs.
+# The three serde round-trip tests (ray_visualization_serializes,
+# pressure_map_serializes, mode_visualization_serializes) are dropped —
+# no serde in Cyrius. Light constructor coverage is added for
+# RayVisualization / PressureMap in their place.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/resonance.cyr"
+include "src/soorat.cyr"
+
+var TOL_1E1 = 0x3FB999999999999A;   # 0.1
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("ray_visualization (constructor)");
+# Source at the origin, no traced paths yet.
+var viz = soorat_ray_visualization_new(hvec3_zero(), vec_new());
+assert_eq(vec_len(soorat_ray_visualization_paths(viz)), 0, "empty paths");
+assert_eq(f64_to(HVec3_x(soorat_ray_visualization_source(viz))), 0, "source x = 0");
+
+# ================================================================
+test_group("pressure_map (constructor)");
+var vals = vec_new();
+var k = 0;
+while (k < 8) {
+    vec_push(vals, 0);
+    k = k + 1;
+}
+var pm = soorat_pressure_map_new(vals, 2, 2, 2, hvec3_zero(), F64_ONE, f64_from(1000));
+assert_eq(vec_len(soorat_pressure_map_values(pm)), 8, "8 grid values");
+assert_eq(soorat_pressure_map_dimension(pm, 0), 2, "nx = 2");
+assert_eq(soorat_pressure_map_dimension(pm, 1), 2, "ny = 2");
+assert_eq(soorat_pressure_map_dimension(pm, 2), 2, "nz = 2");
+assert(approx(soorat_pressure_map_spacing(pm), F64_ONE, TOL_1E2), "spacing = 1.0");
+assert(approx(soorat_pressure_map_frequency_hz(pm), f64_from(1000), TOL_1E1), "freq = 1000 Hz");
+
+# ================================================================
+test_group("mode_visualization_shoebox");
+var mode = soorat_mode_visualization_for_shoebox(1, 0, f64_from(10), f64_from(8), f64_from(343), 10);
+# 10 × 10 grid.
+assert_eq(vec_len(soorat_mode_visualization_pattern(mode)), 100, "pattern length = 100");
+assert(f64_gt(soorat_mode_visualization_frequency_hz(mode), 0), "frequency_hz > 0");
+# mode_indices == [1, 0, 0].
+assert_eq(soorat_mode_visualization_mode_index(mode, 0), 1, "mode index 0 = 1");
+assert_eq(soorat_mode_visualization_mode_index(mode, 1), 0, "mode index 1 = 0");
+assert_eq(soorat_mode_visualization_mode_index(mode, 2), 0, "mode index 2 = 0");
+
+# ================================================================
+test_group("mode_pattern_corners_and_center");
+# For mode (1,0): pattern = cos(pi*x/L).
+#   x=0   -> cos(0)    =  1.0
+#   x=L/2 -> cos(pi/2) =  0.0
+#   x=L   -> cos(pi)   = -1.0
+var mode2 = soorat_mode_visualization_for_shoebox(1, 0, f64_from(10), f64_from(8), f64_from(343), 11);
+var pat = soorat_mode_visualization_pattern(mode2);
+# First row, first point (x=0, z=0) should be ~1.0.
+assert(approx(vec_get(pat, 0), F64_ONE, TOL_1E2), "corner ~ 1.0");
+# First row, middle point (x=L/2, z=0) should be ~0.0 (column index 5 of 11).
+assert(approx(vec_get(pat, 5), 0, TOL_1E2), "center ~ 0.0");
+
+# ================================================================
+test_group("mode_visualization_zero_dimensions");
+var mode3 = soorat_mode_visualization_for_shoebox(1, 1, 0, 0, f64_from(343), 5);
+assert_eq(f64_to(soorat_mode_visualization_frequency_hz(mode3)), 0, "zero dims -> freq 0");
+
+var rc = assert_summary();
+syscall(60, rc);

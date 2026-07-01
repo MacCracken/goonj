@@ -1,0 +1,146 @@
+# binaural.tcyr -- parity tests for src/binaural.cyr
+# Ported from the #[test] blocks in rust-old/src/binaural.rs. The oracle has no
+# serde round-trip test to drop (serde only decorated the structs; no test
+# exercised it). f32::EPSILON guards use GOONJ_EPSILON; 0.01 thresholds use
+# pct(1). The generate_binaural_ir tests use max_time 0.1 s with zero diffuse
+# rays so they run fast (early reflections only).
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/image_source.cyr"
+include "src/diffuse.cyr"
+include "src/impulse.cyr"
+include "src/wav.cyr"
+include "src/binaural.cyr"
+
+# n/10 as an f64 fraction (0.1, 1.5, ...).
+fn tenths(n) { return f64_div(f64_from(n), f64_from(10)); }
+
+# π/2 (FRAC_PI_2).
+fn frac_pi_2() { return f64_mul(F64_PI, F64_HALF); }
+
+# Build a 3-tap HRIR vec from three a/b fractions.
+fn bt_hrir3(n1, d1, n2, d2, n3, d3) {
+    var v = vec_new();
+    vec_push(v, f64_div(f64_from(n1), f64_from(d1)));
+    vec_push(v, f64_div(f64_from(n2), f64_from(d2)));
+    vec_push(v, f64_div(f64_from(n3), f64_from(d3)));
+    return v;
+}
+
+# Minimal HRTF dataset: front, right (+π/2), left (-π/2), matching the Rust
+# fixture (quieter/louder on the opposite ear for the side directions).
+fn simple_hrtf() {
+    var pairs = vec_new();
+    vec_push(pairs, hrtf_pair_new(
+    f64_from(0), f64_from(0), bt_hrir3(1, 1, 1, 2, 1, 5), bt_hrir3(1, 1, 1, 2, 1, 5)));
+    vec_push(pairs, hrtf_pair_new(
+    frac_pi_2(), f64_from(0), bt_hrir3(3, 10, 1, 10, 1, 20), bt_hrir3(1, 1, 4, 5, 2, 5)));
+    vec_push(pairs, hrtf_pair_new(
+    f64_neg(frac_pi_2()), f64_from(0), bt_hrir3(1, 1, 4, 5, 2, 5), bt_hrir3(3, 10, 1, 10, 1, 20)));
+    return hrtf_dataset_from_pairs(pairs, 48000);
+}
+
+# 10x8x3 concrete shoebox + source/listener at ear height (1.5 m).
+fn bt_room() {
+    return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+}
+fn bt_src() { return hvec3_new(f64_from(3), tenths(15), f64_from(4)); }
+fn bt_lis() { return hvec3_new(f64_from(7), tenths(15), f64_from(4)); }
+
+# IrConfig with max_time 0.1 s, zero diffuse rays, rest at defaults.
+fn bt_config() { return ir_config_new(48000, 3, 0, 50, tenths(1), 42); }
+
+# Sum of squares over a sample vec (channel energy).
+fn bt_energy(v) {
+    var e = 0;
+    var n = vec_len(v);
+    var i = 0;
+    while (i < n) {
+        var s = vec_get(v, i);
+        e = f64_add(e, f64_mul(s, s));
+        i = i + 1;
+    }
+    return e;
+}
+
+# Sum of absolute values over a sample vec.
+fn bt_abs_sum(v) {
+    var t = 0;
+    var n = vec_len(v);
+    var i = 0;
+    while (i < n) {
+        t = f64_add(t, f64_abs(vec_get(v, i)));
+        i = i + 1;
+    }
+    return t;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("binaural ir has two channels");
+var c1_ir = generate_binaural_ir(bt_src(), bt_lis(), bt_room(), simple_hrtf(), bt_config());
+var c1_ll = vec_len(BinauralIr_left(c1_ir));
+var c1_rl = vec_len(BinauralIr_right(c1_ir));
+assert_eq(c1_ll, c1_rl, "left.len == right.len");
+assert(c1_ll > 0, "left channel is not empty");
+
+# ================================================================
+test_group("binaural ir has content");
+var c2_ir = generate_binaural_ir(bt_src(), bt_lis(), bt_room(), simple_hrtf(), bt_config());
+var c2_le = bt_energy(BinauralIr_left(c2_ir));
+var c2_re = bt_energy(BinauralIr_right(c2_ir));
+assert(f64_gt(c2_le, 0) == 1, "left channel should have content");
+assert(f64_gt(c2_re, 0) == 1, "right channel should have content");
+
+# ================================================================
+test_group("hrtf nearest finds closest");
+var c3_hrtf = simple_hrtf();
+var c3_front = hrtf_dataset_nearest(c3_hrtf, tenths(1), f64_from(0));
+assert(f64_lt(f64_abs(HrtfPair_azimuth(c3_front)), pct(1)) == 1,
+"should find front HRTF for near-front direction");
+
+# ================================================================
+test_group("direction to angles front");
+var c4_a = binaural_direction_to_angles(hvec3_unit_z());
+assert(f64_lt(f64_abs(BinauralAngles_azimuth(c4_a)), pct(1)) == 1, "front azimuth ~0");
+assert(f64_lt(f64_abs(BinauralAngles_elevation(c4_a)), pct(1)) == 1, "front elevation ~0");
+
+# ================================================================
+test_group("direction to angles right");
+var c5_a = binaural_direction_to_angles(hvec3_unit_x());
+assert(f64_lt(f64_abs(f64_sub(BinauralAngles_azimuth(c5_a), frac_pi_2())), pct(1)) == 1,
+"right azimuth ~π/2");
+
+# ================================================================
+test_group("direction to angles up");
+var c6_a = binaural_direction_to_angles(hvec3_unit_y());
+assert(f64_lt(f64_abs(f64_sub(BinauralAngles_elevation(c6_a), frac_pi_2())), pct(1)) == 1,
+"up elevation ~π/2");
+
+# ================================================================
+test_group("angular distance same direction");
+var c7_d = binaural_angular_distance(f64_from(0), f64_from(0), f64_from(0), f64_from(0));
+assert(f64_lt(f64_abs(c7_d), GOONJ_EPSILON) == 1, "same direction distance ~0");
+
+# ================================================================
+test_group("angular distance wrap around");
+var c8_az1 = f64_sub(F64_PI, pct(1));
+var c8_az2 = f64_add(f64_neg(F64_PI), pct(1));
+var c8_d = binaural_angular_distance(c8_az1, f64_from(0), c8_az2, f64_from(0));
+assert(f64_lt(c8_d, pct(1)) == 1, "wrapped azimuth should be close");
+
+# ================================================================
+test_group("empty hrtf produces silent ir");
+var c9_hrtf = hrtf_dataset_from_pairs(vec_new(), 48000);
+var c9_ir = generate_binaural_ir(bt_src(), bt_lis(), bt_room(), c9_hrtf, bt_config());
+var c9_total = f64_add(bt_abs_sum(BinauralIr_left(c9_ir)), bt_abs_sum(BinauralIr_right(c9_ir)));
+assert(f64_lt(c9_total, GOONJ_EPSILON) == 1, "empty HRTF should produce silent output");
+
+var rc = assert_summary();
+syscall(60, rc);

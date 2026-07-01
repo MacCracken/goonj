@@ -1,0 +1,98 @@
+# dhvani.cyr -- IR handoff for convolution reverb (dhvani consumer API).
+#
+# A thin convenience wrapper that exposes goonj's impulse-response data in
+# the shape dhvani's convolution-reverb engine wants: a broadband
+# ImpulseResponse, the per-band MultibandIr, the room volume, and per-band
+# RT60 estimates.
+#
+# Ports rust-old/src/integration/dhvani.rs. f32 -> f64 throughout (hisab is
+# f64-only). Rust's `serde` derive on DhvaniIr is dropped (no serde in
+# Cyrius); the serde round-trip test is therefore omitted. The
+# `Option<MultibandIr>` field becomes a raw pointer slot (non-zero => Some);
+# the `[f32; NUM_BANDS]` rt60 array uses manual inline layout. f32::INFINITY
+# on the zero-absorption band becomes the +inf bit pattern (DHVANI_POS_INF).
+#
+# Requires (from the build/test unit): material.cyr (NUM_BANDS,
+# am_absorption_band), room.cyr (AcousticRoom_geometry, RoomGeometry_walls,
+# Wall_material, wall_area, room_geometry_volume_shoebox), impulse.cyr
+# (generate_ir, multiband_ir_to_broadband, sabine_rt60, ImpulseResponse_*),
+# stdlib math/ganita + vec + hisab. alloc_init() must have run.
+
+# +inf bit pattern for the zero-absorption RT60 path (f32::INFINITY).
+var DHVANI_POS_INF = 0x7FF0000000000000;   # +inf
+
+# DhvaniIr inline layout: ir ptr | multiband ptr | room_volume | rt60[8].
+enum DhvaniLayout {
+    DH_IR        = 0,
+    DH_MULTIBAND = 8,
+    DH_VOLUME    = 16,
+    DH_RT60      = 24,   # offsets 24..88 (8 f64)
+    DH_SIZE      = 88,
+}
+
+# ================================================================
+# DhvaniIr accessors
+# ================================================================
+# The broadband impulse response (ImpulseResponse pointer).
+#must_use
+fn dhvani_ir_ir(d) { return load64(d + DH_IR); }
+
+# The per-band impulse responses (MultibandIr pointer; 0 => None).
+#must_use
+fn dhvani_ir_multiband(d) { return load64(d + DH_MULTIBAND); }
+
+# 1 if the multiband IR is present (Option::is_some), else 0.
+#must_use
+fn dhvani_ir_has_multiband(d) {
+    if (load64(d + DH_MULTIBAND) == 0) { return 0; }
+    return 1;
+}
+
+# Room volume in m^3.
+#must_use
+fn dhvani_ir_room_volume(d) { return load64(d + DH_VOLUME); }
+
+# Per-band RT60 estimate (seconds) at band index 0..NUM_BANDS-1.
+#must_use
+fn dhvani_ir_rt60_band(d, band) { return load64(d + DH_RT60 + band * 8); }
+
+# ================================================================
+# generate_dhvani_ir
+# ================================================================
+# Generate an IR ready for dhvani consumption. Runs generate_ir for the
+# per-band buffers, collapses to a broadband response, records the room
+# volume, and estimates per-band RT60 via Sabine with per-band absorption.
+# Bands with non-positive total absorption get +inf (anechoic).
+#must_use
+fn generate_dhvani_ir(source, listener, room, config) {
+    var multiband = generate_ir(source, listener, room, config);
+    var broadband = multiband_ir_to_broadband(multiband);
+    var geom = AcousticRoom_geometry(room);
+    var volume = room_geometry_volume_shoebox(geom);
+
+    var d = alloc(DH_SIZE);
+    store64(d + DH_IR, broadband);
+    store64(d + DH_MULTIBAND, multiband);
+    store64(d + DH_VOLUME, volume);
+
+    # Per-band RT60 using Sabine with per-band absorption.
+    var walls = RoomGeometry_walls(geom);
+    var nw = vec_len(walls);
+    var band = 0;
+    while (band < NUM_BANDS) {
+        var total_abs = 0;
+        var i = 0;
+        while (i < nw) {
+            var w = vec_get(walls, i);
+            total_abs = f64_add(total_abs, f64_mul(wall_area(w), am_absorption_band(Wall_material(w), band)));
+            i = i + 1;
+        }
+        var rt = DHVANI_POS_INF;
+        if (f64_gt(total_abs, 0) == 1) {
+            rt = sabine_rt60(volume, total_abs);
+        }
+        store64(d + DH_RT60 + band * 8, rt);
+        band = band + 1;
+    }
+    return d;
+}

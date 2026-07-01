@@ -101,11 +101,20 @@ milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md
   Verbose mode for error-locating diagnosis; runtime level gating verified. 11
   assertions.
 
+- **binaural + integration (dhvani, kiran, soorat)** — the final module batch.
+  `binaural` (HRTF spatialization: nearest-pair direction lookup, per-reflection
+  spatialized stereo IR, stereo WAV export; 12), and the three consumer
+  integration APIs `dhvani` (convolution-reverb IR handoff; 5), `kiran`
+  (occlusion queries; 6), `soorat` (visualization data; 16). Sixth parallel
+  workflow (4 worktree-isolated agents), integrated + independently re-verified;
+  fmt + lint clean, zero cleanup. **This completes the Rust → Cyrius port: all
+  37 modules, 3585 parity assertions across 36 suites, all green.**
+
 ### Changed
 - Toolchain pin **6.3.12 → 6.3.14** (`cyrius.cyml`); stdlib re-vendored. No
-  source changes required — all 3546 assertions stay green. **Pin held at
+  source changes required — all 3585 assertions stay green. **Pin held at
   6.3.14** deliberately even though the `cycc` wrapper has since drifted to
-  6.3.15 (drift warning is benign; builds work).
+  6.3.16 (drift warning is benign; builds work).
 
 #### Changed (port-wide conventions)
 - **f32 → f64** throughout — hisab's `HVec3` is f64-only.

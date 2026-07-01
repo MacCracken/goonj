@@ -1,0 +1,88 @@
+# kiran.tcyr -- parity tests for src/kiran.cyr
+# Ported from the #[test] blocks in rust-old/src/integration/kiran.rs.
+# The serde round-trip test (occlusion_result_serializes) is dropped (no
+# serde in Cyrius). f32 tolerances loosened to f64.
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/diffraction.cyr"
+include "src/kiran.cyr"
+
+# 1.5 (source/listener height) as an f64.
+fn onehalf() { return f64_div(f64_from(3), f64_from(2)); }
+
+# 4-vertex wall.
+fn mk_wall(v0, v1, v2, v3, material, normal) {
+    var verts = vec_new();
+    vec_push(verts, v0);
+    vec_push(verts, v1);
+    vec_push(verts, v2);
+    vec_push(verts, v3);
+    return wall_new(verts, material, normal);
+}
+
+# A 20x20x3 concrete room with an internal wall at x=10 blocking the path.
+fn blocked_room() {
+    var room = acoustic_room_shoebox(f64_from(20), f64_from(20), f64_from(3),
+    acoustic_material_concrete());
+    var walls = RoomGeometry_walls(AcousticRoom_geometry(room));
+    var nx = hvec3_new(f64_neg(F64_ONE), 0, 0);
+    var wall = mk_wall(
+    hvec3_new(f64_from(10), f64_neg(f64_from(5)), f64_from(5)),
+    hvec3_new(f64_from(10), f64_from(5), f64_from(5)),
+    hvec3_new(f64_from(10), f64_from(5), f64_neg(f64_from(5))),
+    hvec3_new(f64_from(10), f64_neg(f64_from(5)), f64_neg(f64_from(5))),
+    acoustic_material_concrete(), nx);
+    vec_push(walls, wall);
+    return room;
+}
+
+alloc_init();
+
+# --- unoccluded_path_zero_attenuation ---
+test_group("unoccluded_path_zero_attenuation");
+
+var room1 = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
+acoustic_material_concrete());
+var engine1 = kiran_occlusion_engine_new(room1);
+var src1 = hvec3_new(f64_from(3), onehalf(), f64_from(4));
+var lis1 = hvec3_new(f64_from(7), onehalf(), f64_from(4));
+var res1 = kiran_occlusion_query(engine1, src1, lis1);
+assert_eq(kiran_occlusion_result_is_occluded(res1), 0, "clear path not occluded");
+assert_eq(f64_to(kiran_occlusion_result_attenuation_db(res1)), 0, "clear path zero attenuation");
+
+# --- occluded_path_has_attenuation ---
+test_group("occluded_path_has_attenuation");
+
+var engine2 = kiran_occlusion_engine_new(blocked_room());
+var res2 = kiran_occlusion_query(engine2, hvec3_new(f64_from(5), 0, 0),
+hvec3_new(f64_from(15), 0, 0));
+assert_eq(kiran_occlusion_result_is_occluded(res2), 1, "blocked path is occluded");
+assert(f64_lt(kiran_occlusion_result_attenuation_db(res2), 0),
+"occlusion produces negative attenuation");
+
+# --- frequency_dependent_attenuation ---
+test_group("frequency_dependent_attenuation");
+
+var engine3 = kiran_occlusion_engine_new(blocked_room());
+var res3 = kiran_occlusion_query(engine3, hvec3_new(f64_from(5), 0, 0),
+hvec3_new(f64_from(15), 0, 0));
+var band5 = kiran_occlusion_result_band(res3, 5);
+var band0 = kiran_occlusion_result_band(res3, 0);
+assert(f64_lt(band5, band0), "high freq more attenuated than low freq");
+
+# --- occlusion_engine_room_accessor ---
+test_group("occlusion_engine_room_accessor");
+
+var room5 = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
+acoustic_material_concrete());
+var engine5 = kiran_occlusion_engine_new(room5);
+var walls5 = RoomGeometry_walls(AcousticRoom_geometry(kiran_occlusion_engine_room(engine5)));
+assert_eq(vec_len(walls5), 6, "shoebox room has 6 walls");
+
+var rc = assert_summary();
+syscall(60, rc);

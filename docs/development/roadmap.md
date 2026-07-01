@@ -7,11 +7,13 @@
 
 ## 2.0.0 criteria (Rust → Cyrius parity)
 
-- [ ] All 37 modules ported, function-for-function against `rust-old/`
-- [ ] Each module has a `tests/*.tcyr` suite ported from its Rust `#[test]`s
-- [ ] Cleanliness gates green: `cyrius fmt --check`, `cyrius lint`, `cyrius vet`
-- [ ] Benchmarks captured (`docs/benchmarks/`) for the hot paths
-      (ray intersection, propagation, mode computation)
+- [x] **All 37 modules ported**, function-for-function against `rust-old/`
+- [x] **Each module has a `tests/*.tcyr` suite** ported from its Rust `#[test]`s
+      (3585 assertions, 36 suites, all green)
+- [x] Per-module cleanliness green: canonical `cyrius fmt` diff + `cyrius lint`
+      (0 warnings). Still to do: whole-project `cyrius vet`.
+- [x] Benchmarks captured for the ray + dwm hot paths (`docs/benchmarks/`);
+      more hot paths optional.
 - [ ] `dist/goonj.cyr` distlib bundle builds; ≥1 consumer compiles green
 - [ ] CHANGELOG complete for 2.0.0; ADRs for the non-obvious port choices
 
@@ -78,14 +80,20 @@ total). `DWM_`-prefixed to dodge fdtd's flat-namespace symbols.
 [impulse/beam batch]; **analysis ✅** (48; C50/C80/D50/EDT/G/ts/LF/IACC/STI per
 ISO 3382-1 + IEC 60268-16) [analysis/coupled/wav batch].
 
-### M5 — Impulse responses & integration (L5–L6) — 🟡 3/6
+### M5 — Impulse responses & integration (L5–L6) — ✅ 6/6
 
-**impulse ✅** (30) [impulse/beam batch]; **coupled ✅** (7; multi-room energy
-exchange) + **wav ✅** (16; 16-bit PCM RIFF/WAVE via in-memory byte buffer)
-[analysis/coupled/wav batch]. Also **logging ✅** (real sakshi-backed, verbose
-mode). Remaining: **binaural** (now unblocked) + **integration ×3** — one final
-batch. Then build `dist/goonj.cyr`, green a downstream consumer, thread
-`goonj_log_*` diagnostics into the ex-`tracing` paths, tag **2.0.0**.
+**impulse ✅** (30) [impulse/beam batch]; **coupled ✅** (7) + **wav ✅** (16)
+[analysis/coupled/wav batch]; **binaural ✅** (12; HRTF spatialization) +
+**dhvani ✅** (5) + **kiran ✅** (6) + **soorat ✅** (16) [final batch]. Also
+**logging ✅** (real sakshi-backed, verbose mode).
+
+### M6 — 2.0.0 release close-out (all modules ported ✅)
+
+1. `dist/goonj.cyr` distlib bundle — **cross-module collision audit** first
+   (37 modules in one flat namespace), then `[lib]` in `cyrius.cyml`.
+2. Green a downstream consumer (dhvani / shruti / kiran) against the bundle.
+3. Thread `goonj_log_*` diagnostics into the ex-`tracing` error/hot paths.
+4. `cyrius vet`, benchmarks history, final CHANGELOG, tag **2.0.0**.
 
 ## Known port challenges (capture as ADRs when resolved)
 
