@@ -64,14 +64,13 @@ parallel workflow** (worktree-isolated), then integrated + re-verified in main
 (291 assertions). **fdtd** later landed in wave 2, completing L2 (14/14).
 The workflow proved the recipe scales: no new patterns, all gates green.
 
-### M3 — Acceleration & sources (L3) — 🟡 3/4
+### M3 — Acceleration & sources (L3) — ✅ 4/4
 
-radiosity ✅ + image_source ✅ (wave 2); **ray ✅** ported solo (275 assertions
-+ `tests/ray.bcyr` benchmark). **dwm 🟡** — being ported solo in two sub-bites
-(too large for one): **A ✅** non-solver API (config, `BoundaryFilter`,
-dispersion characterization/correction, 36 tests, `DWM_`-prefixed to dodge
-fdtd's flat-namespace symbols); **B pending** — the `solve_dwm_3d` 3D grid
-solver + a benchmark.
+radiosity ✅ + image_source ✅ (wave 2); **ray ✅** (275 assertions + benchmark);
+**dwm ✅** — ported solo in two sub-bites (too large for one): **A** non-solver
+API (config, `BoundaryFilter`, dispersion, 36 tests); **B** the `solve_dwm_3d`
+3D grid solver (raw-buffer hot loop) + `tests/dwm.bcyr` benchmark (53 tests
+total). `DWM_`-prefixed to dodge fdtd's flat-namespace symbols.
 
 ### M4 — Energy & metrics (L4)
 

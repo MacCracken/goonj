@@ -26,15 +26,15 @@
 
 Per-module parity is tracked in [`port-audit.md`](port-audit.md). Summary:
 
-**24 / 37 modules ported (+ dwm partial) · 1051 parity assertions green across 24 suites.**
+**25 / 37 modules ported · 1068 parity assertions green across 24 suites.**
 
 | Layer | Modules (✅) |
 |-------|-------------|
 | L0    | error, propagation (full, 44), resonance (15), ambisonics (20), scattering (211), dark_velvet_noise (18) |
 | L1    | material (65) |
 | L2    | hybrid (20), directivity (19), metamaterial (51), room (10), fdn (14), gfpe (23), diffusion (7), fdtd (39), outdoor (28), portal (14), udfa (15), underwater (36), vibroacoustics (25), bridge (29) |
-| L3    | radiosity (7), image_source (30), ray (275, + benchmark); dwm 🟡 (non-solver API, 36) |
-| pending | dwm solver (`solve_dwm_3d` + benchmark), logging (→ sakshi); L4 (diffuse, diffraction, analysis, beam), L5 (impulse, coupled), L6 (wav, binaural, integration ×3) |
+| L3    | radiosity (7), image_source (30), ray (275, +bench), dwm (53, +bench) — **L3 complete** |
+| pending | logging (→ sakshi); L4 (diffuse, diffraction, analysis, beam), L5 (impulse, coupled), L6 (wav, binaural, integration ×3) — 12 modules |
 
 Per-module detail in [`port-audit.md`](port-audit.md). Benchmarks in
 [`../benchmarks/results.md`](../benchmarks/results.md). Toolchain: cyrius **6.3.14**.
@@ -68,9 +68,7 @@ port yet* (gated on the distlib bundle, roadmap M5).
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). 13 modules remain. Next candidates:
-- **dwm** (L3, 1407 ln, largest) — all deps done (fdtd ✅); solo. Hot path →
-  benchmark too.
+See [`roadmap.md`](roadmap.md). 12 modules remain (L3 complete). Next candidates:
 - **L4 batch** — `diffuse`, `diffraction` (both need `ray` ✅ + `room`/`material`/
   `propagation`, all done) → parallel-workflow ready. `beam` needs `diffuse`;
   `analysis` needs `impulse` (L5) — those wait.

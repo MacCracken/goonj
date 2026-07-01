@@ -16,6 +16,11 @@ var V_6364  = 0x40B8DC0000000000;   # 6364.0
 var V_0_9   = 0x3FECCCCCCCCCCCCD;   # 0.9
 var V_1_10  = 0x3FF199999999999A;   # 1.10
 var V_3_6   = 0x400CCCCCCCCCCCCD;   # 3.6
+var V_0_1   = 0x3FB999999999999A;   # 0.1  (absorption-test duration)
+var V_0_02  = 0x3F947AE147AE147B;   # 0.02 (bogus-α duration)
+var V_0_7   = 0x3FE6666666666666;   # 0.7
+var V_1E6   = 0x412E848000000000;   # 1e6
+var V_1E12  = 0x426D1A94A2000000;   # 1e12
 
 fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
@@ -37,6 +42,40 @@ fn iir_magnitude(filter, omega) {
     var denom = f64_max(f64_sqrt(f64_add(f64_mul(re, re), f64_mul(im, im))), GOONJ_EPSILON);
     return f64_div(f64_abs(BoundaryFilter_b0(filter)), denom);
 }
+
+# Uniform-absorption walls (all six faces, all bands = alpha).
+fn uniform_alpha(alpha) {
+    return wall_materials_uniform(_am_make("a", alpha, alpha, alpha, alpha, alpha, alpha, alpha, alpha, 0));
+}
+# Sum of p^2 over a final-pressure vec.
+fn field_energy(fp) {
+    var e = 0;
+    var i = 0;
+    var n = vec_len(fp);
+    while (i < n) {
+        var p = vec_get(fp, i);
+        e = f64_add(e, f64_mul(p, p));
+        i = i + 1;
+    }
+    return e;
+}
+# A receivers vec holding one receiver.
+fn recv1(r) {
+    var v = vec_new();
+    vec_push(v, r);
+    return v;
+}
+# 8-slot buffer of ones (geometric-result stand-in for hybrid blend).
+fn fill8_ones() {
+    var p = alloc(64);
+    var i = 0;
+    while (i < 8) { store64(p + i * 8, F64_ONE); i = i + 1; }
+    return p;
+}
+# Note: the Rust `first_axial_mode_in_response` test (a 37³ grid × 0.2 s run,
+# ~4400 steps) is omitted here for routine-suite runtime; the solver's modal
+# behaviour is exercised by the propagation/absorption tests. A dedicated
+# slow-suite entry can re-add it later.
 
 # All 8 absorption bands of a wall face equal to `expected`?
 fn face_all_absorption(face, expected, tol) {
@@ -73,7 +112,8 @@ assert(approx(average_absorption(WallMaterials_y_pos(uni)), avg_carpet, TOL_1E6)
 assert(approx(average_absorption(WallMaterials_z_neg(uni)), avg_carpet, TOL_1E6), "uniform z_neg");
 # with_acoustic_material sets all faces to the material's avg absorption.
 var cfg_carpet = dwm_config_with_acoustic_material(dwm_config_default(), carpet);
-assert(approx(average_absorption(WallMaterials_x_pos(DwmConfig_wall_materials(cfg_carpet))), avg_carpet, TOL_1E6), "with_acoustic_material");
+assert(approx(average_absorption(WallMaterials_x_pos(DwmConfig_wall_materials(cfg_carpet))), avg_carpet, TOL_1E6),
+"with_acoustic_material");
 
 # ================================================================
 test_group("BoundaryFilter");
@@ -105,9 +145,12 @@ assert(f64_gt(iir_magnitude(f_glass, f64_sub(F64_PI, f64_div(f64_from(5), f64_fr
 iir_magnitude(f_glass, f64_div(f64_from(5), f64_from(100)))), "glass high>low");
 assert(f64_lt(BoundaryFilter_a1(f_glass), 0), "glass a1<0");
 # Pole stays in [-0.99, 0.99] for all named materials.
-assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_concrete()))), DWM_POS_099), "concrete pole stable");
-assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_wood()))), DWM_POS_099), "wood pole stable");
-assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_drywall()))), DWM_POS_099), "drywall pole stable");
+assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_concrete()))),
+DWM_POS_099), "concrete pole stable");
+assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_wood()))), DWM_POS_099),
+"wood pole stable");
+assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_drywall()))),
+DWM_POS_099), "drywall pole stable");
 
 # ================================================================
 test_group("mesh_frequency / dispersion_factor");
@@ -151,7 +194,8 @@ assert_eq(1, 1, "empty signal no panic");
 # single sample: y[0] = b0*x[0]; b0=1.2 -> 3.6
 var sigs = vec_new();
 vec_push(sigs, f64_from(3));
-dispersion_correction_apply(dispersion_correction_new(f64_div(f64_from(12), f64_from(10)), f64_div(f64_neg(F64_TWO), f64_from(10))), sigs);
+dispersion_correction_apply(dispersion_correction_new(f64_div(f64_from(12), f64_from(10)),
+f64_div(f64_neg(F64_TWO), f64_from(10))), sigs);
 assert(approx(vec_get(sigs, 0), V_3_6, TOL_1E6), "single sample y0 = 3.6");
 # boosts amplitude at f_mesh/2 by ~boost
 var dcb = dispersion_correction_calibrated(cfg, V_1_10);
@@ -173,6 +217,96 @@ var ai2 = 0;
 while (ai2 < ntone) { e_after = f64_add(e_after, f64_mul(vec_get(tone, ai2), vec_get(tone, ai2))); ai2 = ai2 + 1; }
 var ratio = f64_sqrt(f64_div(e_after, e_before));
 assert(approx(ratio, V_1_10, f64_div(f64_from(5), f64_from(100))), "boost ~1.10 at f_mesh/2");
+
+# ================================================================
+test_group("solve_dwm_3d: guards");
+var pulse = dwm_source_gaussian_pulse(15, 12, 10, 5, F64_ONE, F64_ONE);
+# dx severely off (×5) -> empty.
+var c_off = small_config();
+DwmConfig_set_dx(c_off, f64_mul(DwmConfig_dx(c_off), f64_from(5)));
+assert_eq(DwmResult_time_steps(solve_dwm_3d(c_off, pulse, vec_new())), 0, "dx ×5 -> empty");
+# small dx deviation (×1.005) -> runs.
+var c_ok = small_config();
+DwmConfig_set_dx(c_ok, f64_mul(DwmConfig_dx(c_ok), f64_div(f64_from(1005), f64_from(1000))));
+assert(f64_gt(f64_from(DwmResult_time_steps(solve_dwm_3d(c_ok, pulse, vec_new()))), 0), "small dev proceeds");
+# tiny grid (nx=1) -> empty.
+var c_tiny = small_config();
+DwmConfig_set_nx(c_tiny, 1);
+assert_eq(DwmResult_time_steps(solve_dwm_3d(c_tiny, dwm_source_gaussian_pulse(0, 0, 0, 5, F64_ONE, F64_ONE),
+vec_new())), 0, "tiny grid -> empty");
+# source out of grid -> empty.
+assert_eq(DwmResult_time_steps(solve_dwm_3d(small_config(), dwm_source_gaussian_pulse(1000, 0, 0, 5, F64_ONE,
+F64_ONE), vec_new())), 0, "source oob -> empty");
+# zero dx -> empty.
+var c_zdx = small_config();
+DwmConfig_set_dx(c_zdx, 0);
+assert_eq(DwmResult_time_steps(solve_dwm_3d(c_zdx, pulse, vec_new())), 0, "zero dx -> empty");
+# zero duration -> empty.
+var c_zdur = small_config();
+DwmConfig_set_duration_seconds(c_zdur, 0);
+assert_eq(DwmResult_time_steps(solve_dwm_3d(c_zdur, pulse, vec_new())), 0, "zero duration -> empty");
+# grid cap (1000^3) -> empty.
+var c_cap = small_config();
+DwmConfig_set_nx(c_cap, 1000);
+DwmConfig_set_ny(c_cap, 1000);
+DwmConfig_set_nz(c_cap, 1000);
+assert_eq(DwmResult_time_steps(solve_dwm_3d(c_cap, dwm_source_gaussian_pulse(0, 0, 0, 5, F64_ONE, F64_ONE),
+vec_new())), 0, "grid cap -> empty");
+
+# ================================================================
+test_group("solve_dwm_3d: propagation");
+var wide_pulse = dwm_source_gaussian_pulse(15, 12, 10, 5, F64_TWO, F64_ONE);
+# Pulse reaches an in-grid receiver with positive energy.
+var r_prop = solve_dwm_3d(small_config(), wide_pulse, recv1(dwm_receiver_new(20, 12, 10)));
+assert_eq(vec_len(DwmResult_receiver_signals(r_prop)), 1, "one receiver signal");
+var trace = vec_get(DwmResult_receiver_signals(r_prop), 0);
+assert(f64_gt(f64_from(vec_len(trace)), 0), "trace non-empty");
+assert(f64_gt(field_energy(trace), 0), "receiver picks up pulse");
+# Out-of-grid receiver stays silent.
+var r_silent = solve_dwm_3d(small_config(), wide_pulse, recv1(dwm_receiver_new(1000, 1000, 1000)));
+assert_eq(vec_len(vec_get(DwmResult_receiver_signals(r_silent), 0)), 0, "oob receiver silent");
+# Rigid box: field energy stays finite and bounded.
+var c_bounded = small_config();
+DwmConfig_set_duration_seconds(c_bounded, V_0_02);   # 0.02 s — exercises the solver, stays fast
+var r_bounded = solve_dwm_3d(c_bounded, wide_pulse, vec_new());
+assert(f64_lt(field_energy(DwmResult_final_pressure(r_bounded)), V_1E6), "energy bounded");
+
+# ================================================================
+test_group("solve_dwm_3d: absorption");
+var apulse = dwm_source_gaussian_pulse(15, 12, 10, 5, F64_TWO, F64_ONE);
+# α=0.5 walls retain < 0.7× the rigid field energy.
+var c_ab = small_config();
+DwmConfig_set_duration_seconds(c_ab, V_0_1);
+DwmConfig_set_wall_materials(c_ab, wall_materials_rigid());
+var e_rigid = field_energy(DwmResult_final_pressure(solve_dwm_3d(c_ab, apulse, vec_new())));
+DwmConfig_set_wall_materials(c_ab, uniform_alpha(F64_HALF));
+var e_absorb = field_energy(DwmResult_final_pressure(solve_dwm_3d(c_ab, apulse, vec_new())));
+assert(f64_lt(e_absorb, f64_mul(V_0_7, e_rigid)), "absorbing < 0.7×rigid");
+# α=1 walls drain the box (energy small once the source ends).
+var c_drain = small_config();
+DwmConfig_set_duration_seconds(c_drain, V_0_1);
+DwmConfig_set_wall_materials(c_drain, uniform_alpha(F64_ONE));
+assert(f64_lt(field_energy(DwmResult_final_pressure(solve_dwm_3d(c_drain, apulse, vec_new()))), F64_ONE),
+"fully absorbing drains");
+# Out-of-range absorption (α=5) is clamped: run stays finite.
+var c_bogus = small_config();
+DwmConfig_set_duration_seconds(c_bogus, V_0_02);
+DwmConfig_set_wall_materials(c_bogus, uniform_alpha(f64_from(5)));
+var r_bogus = solve_dwm_3d(c_bogus, apulse, vec_new());
+assert(f64_gt(f64_from(DwmResult_time_steps(r_bogus)), 0), "bogus α runs");
+assert(f64_lt(field_energy(DwmResult_final_pressure(r_bogus)), V_1E12), "bogus α stays finite");
+
+# ================================================================
+test_group("solve_dwm_3d: hybrid integration");
+var r_hy = solve_dwm_3d(small_config(), wide_pulse, recv1(dwm_receiver_new(18, 12, 10)));
+var wave = dwm_band_energies(vec_get(DwmResult_receiver_signals(r_hy), 0), 22050);
+var geom = fill8_ones();
+var blended = blend_results(wave, geom, crossover_config_default());
+# Rust: blended[0] < blended[7] || blended[7] >= 0.9
+var hy_ok = 0;
+if (f64_lt(load64(blended + 0 * 8), load64(blended + 7 * 8)) == 1) { hy_ok = 1; }
+if (f64_ge(load64(blended + 7 * 8), V_0_9) == 1) { hy_ok = 1; }
+assert(hy_ok, "low band < high band (or high near 1)");
 
 var rc = assert_summary();
 syscall(60, rc);

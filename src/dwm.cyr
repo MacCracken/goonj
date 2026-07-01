@@ -8,10 +8,11 @@
 # constants, `dwm_band_energies` (delegates to fdtd's `band_energies`), and
 # `_dwm_`-prefixed private helpers.
 #
-# This file is sub-bite A: everything EXCEPT the solve_dwm_3d solver, which
-# lands next (see docs/development/roadmap.md M3). Requires (build/test
-# unit): error.cyr, material.cyr (NUM_BANDS, am_*, _am_make), hybrid.cyr,
-# fdtd.cyr (band_energies), stdlib math/ganita/vec. alloc_init() first.
+# Requires (build/test unit): error.cyr, material.cyr (NUM_BANDS, am_*,
+# _am_make), hybrid.cyr, fdtd.cyr (band_energies), stdlib math/ganita/vec.
+# alloc_init() first. The solve_dwm_3d grid solver uses raw load64/store64
+# buffers for the hot triple-loop (pressure is copied to a vec only for the
+# result); receiver signals accumulate as vecs.
 
 var DWM_SQRT_3         = 0x3FFBB67AE6502B91;   # 1.7320508  (√3)
 var DWM_K              = 6;                     # waveguide ports per node
@@ -286,4 +287,206 @@ fn dispersion_correction_apply(dc, signal) {
     }
     vec_set(signal, 0, f64_mul(b0, vec_get(signal, 0)));
     return 0;
+}
+
+# ================================================================
+# solve_dwm_3d — 3D acoustic wave equation on a box via the DWM.
+# ================================================================
+# Alloc a zeroed f64 buffer of `count` elements.
+#must_use
+fn _dwm_zeros(count) {
+    var buf = alloc(count * 8);
+    var i = 0;
+    while (i < count) {
+        store64(buf + i * 8, 0);
+        i = i + 1;
+    }
+    return buf;
+}
+
+# Returns a DwmResult. Empty result on degenerate input (tiny grid, source
+# out of range, dx deviating from c·Δt·√3 by >10%, etc.). `receivers` is a
+# vec of DwmReceiver; each in-range receiver gets a pressure trace.
+#must_use
+fn solve_dwm_3d(config, source, receivers) {
+    if (DwmConfig_sample_rate(config) == 0) { return _dwm_empty_result(); }
+    if (f64_le(DwmConfig_dx(config), 0) == 1) { return _dwm_empty_result(); }
+    if (f64_le(DwmConfig_speed_of_sound(config), 0) == 1) { return _dwm_empty_result(); }
+    var nx = DwmConfig_nx(config);
+    var ny = DwmConfig_ny(config);
+    var nz = DwmConfig_nz(config);
+    if (nx < 3) { return _dwm_empty_result(); }
+    if (ny < 3) { return _dwm_empty_result(); }
+    if (nz < 3) { return _dwm_empty_result(); }
+    if (f64_le(DwmConfig_duration_seconds(config), 0) == 1) { return _dwm_empty_result(); }
+
+    var n = nx * ny * nz;
+    if (n == 0) { return _dwm_empty_result(); }
+    if (n > DWM_MAX_GRID_CELLS) { return _dwm_empty_result(); }
+    if (DwmSource_ix(source) >= nx) { return _dwm_empty_result(); }
+    if (DwmSource_iy(source) >= ny) { return _dwm_empty_result(); }
+    if (DwmSource_iz(source) >= nz) { return _dwm_empty_result(); }
+
+    var dt = f64_div(F64_ONE, f64_from(DwmConfig_sample_rate(config)));
+    var dx_expected = f64_mul(f64_mul(DwmConfig_speed_of_sound(config), dt), DWM_SQRT_3);
+    var dx_dev = f64_div(f64_abs(f64_sub(DwmConfig_dx(config), dx_expected)),
+    f64_max(dx_expected, GOONJ_EPSILON));
+    if (f64_gt(dx_dev, DWM_DX_FAIL_TOL) == 1) { return _dwm_empty_result(); }
+
+    var num_steps = f64_to(f64_div(DwmConfig_duration_seconds(config), dt));
+    if (num_steps > DWM_MAX_TIME_STEPS) { num_steps = DWM_MAX_TIME_STEPS; }
+    if (num_steps == 0) { return _dwm_empty_result(); }
+
+    var walls = DwmConfig_wall_materials(config);
+    var f_xneg = boundary_filter_from_material(WallMaterials_x_neg(walls));
+    var f_xpos = boundary_filter_from_material(WallMaterials_x_pos(walls));
+    var f_yneg = boundary_filter_from_material(WallMaterials_y_neg(walls));
+    var f_ypos = boundary_filter_from_material(WallMaterials_y_pos(walls));
+    var f_zneg = boundary_filter_from_material(WallMaterials_z_neg(walls));
+    var f_zpos = boundary_filter_from_material(WallMaterials_z_pos(walls));
+
+    # Per-face IIR filter state (one f64 per boundary cell).
+    var s_xneg = _dwm_zeros(ny * nz);
+    var s_xpos = _dwm_zeros(ny * nz);
+    var s_yneg = _dwm_zeros(nx * nz);
+    var s_ypos = _dwm_zeros(nx * nz);
+    var s_zneg = _dwm_zeros(nx * ny);
+    var s_zpos = _dwm_zeros(nx * ny);
+
+    # Outgoing-wave buffers (K per node), pressure scratch.
+    var out_curr = _dwm_zeros(n * DWM_K);
+    var out_next = _dwm_zeros(n * DWM_K);
+    var pressure = _dwm_zeros(n);
+
+    # One accumulator vec per receiver (out-of-range ones stay empty).
+    var receiver_signals = vec_new();
+    var ri = 0;
+    while (ri < vec_len(receivers)) {
+        vec_push(receiver_signals, vec_new());
+        ri = ri + 1;
+    }
+
+    var source_signal = DwmSource_signal(source);
+    var source_node = _dwm_idx(DwmSource_ix(source), DwmSource_iy(source), DwmSource_iz(source), nx, ny);
+
+    for (var step = 0; step < num_steps; step = step + 1) {
+        for (var z = 0; z < nz; z = z + 1) {
+            for (var y = 0; y < ny; y = y + 1) {
+                for (var x = 0; x < nx; x = x + 1) {
+                    var node = _dwm_idx(x, y, z, nx, ny);
+                    var base = node * DWM_K;
+
+                    # Incoming waves; at a boundary the outgoing wave reflects
+                    # back through that face's 1-pole IIR (per-cell state).
+                    var in_xpos = 0;
+                    if (x + 1 < nx) {
+                        in_xpos = load64(out_curr + (_dwm_idx(x + 1, y, z, nx, ny) * DWM_K + 1) * 8);
+                    } else {
+                        var si = z * ny + y;
+                        in_xpos = boundary_filter_process(f_xpos, load64(out_curr + base * 8), load64(s_xpos + si * 8));
+                        store64(s_xpos + si * 8, in_xpos);
+                    }
+                    var in_xneg = 0;
+                    if (x > 0) {
+                        in_xneg = load64(out_curr + (_dwm_idx(x - 1, y, z, nx, ny) * DWM_K) * 8);
+                    } else {
+                        var si = z * ny + y;
+                        in_xneg = boundary_filter_process(f_xneg, load64(out_curr + (base + 1) * 8),
+                        load64(s_xneg + si * 8));
+                        store64(s_xneg + si * 8, in_xneg);
+                    }
+                    var in_ypos = 0;
+                    if (y + 1 < ny) {
+                        in_ypos = load64(out_curr + (_dwm_idx(x, y + 1, z, nx, ny) * DWM_K + 3) * 8);
+                    } else {
+                        var si = z * nx + x;
+                        in_ypos = boundary_filter_process(f_ypos, load64(out_curr + (base + 2) * 8),
+                        load64(s_ypos + si * 8));
+                        store64(s_ypos + si * 8, in_ypos);
+                    }
+                    var in_yneg = 0;
+                    if (y > 0) {
+                        in_yneg = load64(out_curr + (_dwm_idx(x, y - 1, z, nx, ny) * DWM_K + 2) * 8);
+                    } else {
+                        var si = z * nx + x;
+                        in_yneg = boundary_filter_process(f_yneg, load64(out_curr + (base + 3) * 8),
+                        load64(s_yneg + si * 8));
+                        store64(s_yneg + si * 8, in_yneg);
+                    }
+                    var in_zpos = 0;
+                    if (z + 1 < nz) {
+                        in_zpos = load64(out_curr + (_dwm_idx(x, y, z + 1, nx, ny) * DWM_K + 5) * 8);
+                    } else {
+                        var si = y * nx + x;
+                        in_zpos = boundary_filter_process(f_zpos, load64(out_curr + (base + 4) * 8),
+                        load64(s_zpos + si * 8));
+                        store64(s_zpos + si * 8, in_zpos);
+                    }
+                    var in_zneg = 0;
+                    if (z > 0) {
+                        in_zneg = load64(out_curr + (_dwm_idx(x, y, z - 1, nx, ny) * DWM_K + 4) * 8);
+                    } else {
+                        var si = y * nx + x;
+                        in_zneg = boundary_filter_process(f_zneg, load64(out_curr + (base + 5) * 8),
+                        load64(s_zneg + si * 8));
+                        store64(s_zneg + si * 8, in_zneg);
+                    }
+
+                    # Junction pressure p = (2/K)·Σ incoming.
+                    var sum = f64_add(f64_add(f64_add(in_xpos, in_xneg), f64_add(in_ypos, in_yneg)),
+                    f64_add(in_zpos, in_zneg));
+                    var p = f64_mul(DWM_SCATTER, sum);
+
+                    # Transparent (additive) source injection.
+                    if (node == source_node) {
+                        if (step < vec_len(source_signal)) {
+                            p = f64_add(p, vec_get(source_signal, step));
+                        }
+                    }
+                    store64(pressure + node * 8, p);
+
+                    # Outgoing: out_i = p − in_i.
+                    store64(out_next + base * 8, f64_sub(p, in_xpos));
+                    store64(out_next + (base + 1) * 8, f64_sub(p, in_xneg));
+                    store64(out_next + (base + 2) * 8, f64_sub(p, in_ypos));
+                    store64(out_next + (base + 3) * 8, f64_sub(p, in_yneg));
+                    store64(out_next + (base + 4) * 8, f64_sub(p, in_zpos));
+                    store64(out_next + (base + 5) * 8, f64_sub(p, in_zneg));
+                }
+            }
+        }
+
+        # Sample receivers.
+        for (var rj = 0; rj < vec_len(receivers); rj = rj + 1) {
+            var rx = vec_get(receivers, rj);
+            if (DwmReceiver_ix(rx) < nx) {
+                if (DwmReceiver_iy(rx) < ny) {
+                    if (DwmReceiver_iz(rx) < nz) {
+                        var pidx = _dwm_idx(DwmReceiver_ix(rx), DwmReceiver_iy(rx), DwmReceiver_iz(rx), nx, ny);
+                        vec_push(vec_get(receiver_signals, rj), load64(pressure + pidx * 8));
+                    }
+                }
+            }
+        }
+
+        # Rotate buffers.
+        var tmp = out_curr;
+        out_curr = out_next;
+        out_next = tmp;
+    }
+
+    # Copy final pressure field into a vec.
+    var final_pressure = vec_new();
+    var fi = 0;
+    while (fi < n) {
+        vec_push(final_pressure, load64(pressure + fi * 8));
+        fi = fi + 1;
+    }
+
+    var result = alloc(sizeof(DwmResult));
+    DwmResult_set_receiver_signals(result, receiver_signals);
+    DwmResult_set_final_pressure(result, final_pressure);
+    DwmResult_set_time_steps(result, num_steps);
+    DwmResult_set_dt(result, dt);
+    return result;
 }

@@ -20,5 +20,20 @@ overhead isn't amortized at low wall counts. This matches the Rust design note
 count grows; the shoebox is the worst case for it. Both paths produce identical
 bounce sequences (verified by `bvh_trace_matches_linear_trace`).
 
-_Future: add a many-wall (>50) scene to demonstrate the BVH crossover, and a
-`.bcyr` history CSV once more hot-path modules (dwm, image_source) are benched._
+_Future: add a many-wall (>50) scene to demonstrate the BVH crossover._
+
+## dwm (`tests/dwm.bcyr`)
+
+Full `solve_dwm_3d` on a rigid box, 0.01 s (~220 steps at 22,050 Hz).
+
+| Benchmark | avg | min | iters |
+|-----------|----:|----:|------:|
+| `solve_dwm_3d_16cubed` (4,096 cells) | 59.6 ms | 58.1 ms | 30 |
+| `solve_dwm_3d_24cubed` (13,824 cells) | 199.7 ms | 196.7 ms | 15 |
+
+**Finding:** cost scales near-linearly in cell count — 3.375× the cells (16³→24³)
+costs 3.35× the time — consistent with the O(cells · steps) grid sweep. Each node
+does 6 waveguide-port updates per step; the hot loop uses raw `load64`/`store64`
+buffers with double-buffered outgoing waves.
+
+_Future: a `.bcyr` history CSV once more hot-path modules are benched._

@@ -60,17 +60,21 @@ milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md
   the stdlib deps. Tuple returns → `RayHit`/`NearestWall` structs;
   `Option<f32>` → negative sentinel.
 
-- **dwm** (partial) — `src/dwm.cyr`. 3D rectilinear Digital Waveguide Mesh.
-  Sub-bite A: `WallMaterials`, `DwmConfig`, `BoundaryFilter` (1-pole IIR
-  reflection filter fitted to 63 Hz/8 kHz absorption), `DwmSource`/`DwmReceiver`/
-  `DwmResult`, `required_dx`, `mesh_frequency`, `dispersion_factor`, and
-  `DispersionCorrection` (2-tap FIR). 36 parity assertions in `tests/dwm.tcyr`.
-  `DWM_`-prefixed constants + `dwm_band_energies` avoid flat-namespace clashes
-  with the co-compiled `fdtd`. Pending: the `solve_dwm_3d` solver + benchmark.
+- **dwm** — `src/dwm.cyr`. 3D rectilinear Digital Waveguide Mesh (Smith / Van
+  Duyne). `WallMaterials`, `DwmConfig`, `BoundaryFilter` (1-pole IIR reflection
+  filter fitted to 63 Hz/8 kHz absorption), `DwmSource`/`DwmReceiver`/`DwmResult`,
+  `required_dx`, `mesh_frequency`, `dispersion_factor`, `DispersionCorrection`,
+  and the **`solve_dwm_3d`** 3D grid solver (junction-pressure scattering,
+  per-face IIR boundary reflection, double-buffered outgoing waves; raw
+  `load64`/`store64` hot loop). 53 parity assertions in `tests/dwm.tcyr` + a
+  solver benchmark `tests/dwm.bcyr` (near-linear cell scaling). Ported solo in
+  two sub-bites. `DWM_`-prefixed constants + `dwm_band_energies` avoid
+  flat-namespace clashes with the co-compiled `fdtd`. (Rust's 37³
+  first-axial-mode test omitted for routine-suite runtime.)
 
 ### Changed
 - Toolchain pin **6.3.12 → 6.3.14** (`cyrius.cyml`); stdlib re-vendored. No
-  source changes required — all 1051 assertions stay green. Pin held at 6.3.14.
+  source changes required — all 1068 assertions stay green. Pin held at 6.3.14.
 
 #### Changed (port-wide conventions)
 - **f32 → f64** throughout — hisab's `HVec3` is f64-only.

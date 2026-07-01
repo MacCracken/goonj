@@ -1,0 +1,40 @@
+# dwm.bcyr -- benchmark for the DWM solver hot path (solve_dwm_3d).
+# Run: cyrius bench tests/dwm.bcyr
+
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/hybrid.cyr"
+include "src/fdtd.cyr"
+include "src/dwm.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+var _cfg_small = 0;
+var _cfg_med = 0;
+var _src = 0;
+
+# Full solve on a rigid box (the triple-loop grid sweep is the hot path).
+fn b_solve_small() { return solve_dwm_3d(_cfg_small, _src, vec_new()); }
+fn b_solve_med() { return solve_dwm_3d(_cfg_med, _src, vec_new()); }
+
+fn main() {
+    alloc_init();
+    var dx = required_dx(22050, f64_from(343));
+    var dur = f64_div(F64_ONE, f64_from(100));   # 0.01 s (~220 steps at 22050 Hz)
+    # 16^3 ≈ 4k cells and 24^3 ≈ 14k cells — shows near-linear scaling in cells.
+    _cfg_small = dwm_config_new(22050, dx, f64_from(343), 16, 16, 16, dur, wall_materials_rigid());
+    _cfg_med = dwm_config_new(22050, dx, f64_from(343), 24, 24, 24, dur, wall_materials_rigid());
+    _src = dwm_source_gaussian_pulse(8, 8, 8, 5, F64_TWO, F64_ONE);
+
+    bench("solve_dwm_3d_16cubed_0.01s", &b_solve_small, 30);
+    bench("solve_dwm_3d_24cubed_0.01s", &b_solve_med, 15);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);
