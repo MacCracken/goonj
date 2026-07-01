@@ -1,0 +1,300 @@
+# ray.tcyr -- parity tests for src/ray.cyr
+# Ported from the #[test] blocks in rust-old/src/ray.rs (serde dropped).
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+
+var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
+var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
+var TOL_1E4 = 0x3F1A36E2EB1C432D;   # ~1e-4 (stands in for f32::EPSILON checks)
+
+fn approx(a, b, tol) {
+    if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
+    return 0;
+}
+fn d10(n)  { return f64_div(f64_from(n), f64_from(10)); }
+fn d100(n) { return f64_div(f64_from(n), f64_from(100)); }
+
+# Build a 4-vertex wall.
+fn mk_wall(v0, v1, v2, v3, material, normal) {
+    var verts = vec_new();
+    vec_push(verts, v0);
+    vec_push(verts, v1);
+    vec_push(verts, v2);
+    vec_push(verts, v3);
+    return wall_new(verts, material, normal);
+}
+# Single-wall vec.
+fn walls_of1(w) {
+    var v = vec_new();
+    vec_push(v, w);
+    return v;
+}
+# RayHit constructor.
+fn mk_hit(point, normal, distance, wall_index) {
+    var h = alloc(sizeof(RayHit));
+    RayHit_set_point(h, point);
+    RayHit_set_normal(h, normal);
+    RayHit_set_distance(h, distance);
+    RayHit_set_wall_index(h, wall_index);
+    return h;
+}
+# 8-value absorption buffer.
+fn buf8(a, b, c, d, e, f, g, h) {
+    var p = alloc(64);
+    store64(p + 0, a);
+    store64(p + 8, b);
+    store64(p + 16, c);
+    store64(p + 24, d);
+    store64(p + 32, e);
+    store64(p + 40, f);
+    store64(p + 48, g);
+    store64(p + 56, h);
+    return p;
+}
+fn fill8(v) {
+    var p = alloc(64);
+    var i = 0;
+    while (i < 8) { store64(p + i * 8, v); i = i + 1; }
+    return p;
+}
+# Inline AABB contains (min <= v <= max componentwise).
+fn aabb_contains(aabb, v) {
+    var mn = GeoAabb_min(aabb);
+    var mx = GeoAabb_max(aabb);
+    if (f64_lt(HVec3_x(v), HVec3_x(mn)) == 1) { return 0; }
+    if (f64_gt(HVec3_x(v), HVec3_x(mx)) == 1) { return 0; }
+    if (f64_lt(HVec3_y(v), HVec3_y(mn)) == 1) { return 0; }
+    if (f64_gt(HVec3_y(v), HVec3_y(mx)) == 1) { return 0; }
+    if (f64_lt(HVec3_z(v), HVec3_z(mn)) == 1) { return 0; }
+    if (f64_gt(HVec3_z(v), HVec3_z(mx)) == 1) { return 0; }
+    return 1;
+}
+
+alloc_init();
+
+# ================================================================
+test_group("AcousticRay basics");
+var r1 = acoustic_ray_new(hvec3_zero(), hvec3_new(f64_from(3), 0, 0), f64_from(1000));
+assert(approx(HVec3_x(AcousticRay_direction(r1)), F64_ONE, TOL_1E3), "normalizes direction");
+assert_eq(acoustic_ray_is_alive(acoustic_ray_new(hvec3_zero(), hvec3_unit_x(), f64_from(1000))), 1, "starts alive");
+var rdead = acoustic_ray_new(hvec3_zero(), hvec3_unit_x(), f64_from(1000));
+AcousticRay_set_energy(rdead, d100(1));
+AcousticRay_set_energy(rdead, f64_div(f64_from(1), f64_from(10000)));
+assert_eq(acoustic_ray_is_alive(rdead), 0, "dies at low energy");
+var rf = acoustic_ray_new(hvec3_zero(), hvec3_unit_x(), f64_from(440));
+assert(approx(AcousticRay_frequency_hz(rf), f64_from(440), TOL_1E4), "preserves frequency");
+# zero direction -> +Z fallback
+assert(approx(HVec3_z(AcousticRay_direction(acoustic_ray_new(hvec3_zero(), hvec3_zero(), f64_from(1000)))), F64_ONE, TOL_1E4), "acoustic zero dir -> Z");
+
+# ================================================================
+test_group("ray_wall_intersection");
+var mat_c = acoustic_material_concrete();
+var nz = hvec3_new(0, 0, f64_neg(F64_ONE));
+# Ray +Z from (2.5,1.5,0), wall at z=5 -> hit t=5.
+var wall_front = mk_wall(hvec3_new(0, 0, f64_from(5)), hvec3_new(0, f64_from(3), f64_from(5)),
+hvec3_new(f64_from(5), f64_from(3), f64_from(5)), hvec3_new(f64_from(5), 0, f64_from(5)), mat_c, nz);
+var ray_hit = acoustic_ray_new(hvec3_new(d10(25), d10(15), 0), hvec3_unit_z(), f64_from(1000));
+var t_hit = ray_wall_intersection(ray_hit, wall_front);
+assert(f64_ge(t_hit, 0), "ray hits wall (some)");
+assert(approx(t_hit, f64_from(5), TOL_1E2), "distance ~5.0");
+# Ray pointing away -> miss.
+var ray_away = acoustic_ray_new(hvec3_new(d10(25), d10(15), 0), nz, f64_from(1000));
+assert(f64_lt(ray_wall_intersection(ray_away, wall_front), 0), "ray misses wall (none)");
+# Degenerate wall (<3 verts) -> none.
+var vdegen = vec_new();
+vec_push(vdegen, hvec3_zero());
+vec_push(vdegen, hvec3_unit_x());
+var wall_degen = wall_new(vdegen, mat_c, hvec3_unit_z());
+assert(f64_lt(ray_wall_intersection(acoustic_ray_new(hvec3_zero(), hvec3_unit_z(), f64_from(1000)), wall_degen), 0), "degenerate wall none");
+# Ray parallel to wall -> miss.
+var ray_par = acoustic_ray_new(hvec3_new(0, 0, f64_from(5)), hvec3_unit_x(), f64_from(1000));
+assert(f64_lt(ray_wall_intersection(ray_par, wall_front), 0), "parallel ray misses");
+
+# ================================================================
+test_group("point_in_convex_polygon");
+var sq = vec_new();
+vec_push(sq, hvec3_zero());
+vec_push(sq, hvec3_new(f64_from(5), 0, 0));
+vec_push(sq, hvec3_new(f64_from(5), f64_from(5), 0));
+vec_push(sq, hvec3_new(0, f64_from(5), 0));
+assert_eq(point_in_convex_polygon(hvec3_new(d10(25), d10(25), 0), sq, hvec3_unit_z()), 1, "inside");
+assert_eq(point_in_convex_polygon(hvec3_new(f64_from(10), f64_from(10), 0), sq, hvec3_unit_z()), 0, "outside");
+# fewer than 3 vertices -> false
+assert_eq(point_in_convex_polygon(hvec3_zero(), vdegen, hvec3_unit_z()), 0, "<3 verts false");
+assert_eq(point_in_convex_polygon(hvec3_zero(), vec_new(), hvec3_unit_z()), 0, "empty verts false");
+
+# ================================================================
+test_group("reflect_ray");
+var rr = acoustic_ray_new(hvec3_zero(), hvec3_unit_z(), f64_from(1000));
+var hit0 = mk_hit(hvec3_new(0, 0, f64_from(5)), nz, f64_from(5), 0);
+var refl = reflect_ray(rr, hit0, d10(3), 0);
+assert(approx(AcousticRay_energy(refl), d10(7), TOL_1E2), "energy *0.7");
+assert(f64_gt(AcousticRay_distance_traveled(refl), 0), "distance advanced");
+# specular reverses normal component
+var refl_spec = reflect_ray(rr, hit0, 0, 0);
+assert(approx(HVec3_z(AcousticRay_direction(refl_spec)), f64_neg(F64_ONE), TOL_1E2), "specular z = -1");
+# scattering stays normalized, still backward
+var refl_scat = reflect_ray(rr, hit0, 0, F64_HALF);
+assert(approx(hvec3_length(AcousticRay_direction(refl_scat)), F64_ONE, TOL_1E2), "scattered normalized");
+assert(f64_lt(HVec3_z(AcousticRay_direction(refl_spec)), 0), "specular z<0");
+assert(f64_lt(HVec3_z(AcousticRay_direction(refl_scat)), 0), "scattered z<0");
+# preserves frequency
+var rr2 = acoustic_ray_new(hvec3_zero(), hvec3_unit_z(), f64_from(2000));
+assert(approx(AcousticRay_frequency_hz(reflect_ray(rr2, hit0, d10(1), 0)), f64_from(2000), TOL_1E4), "reflect preserves freq");
+# zero-length blend -> falls back to specular (normal == Z)
+var hit_z = mk_hit(hvec3_new(0, 0, f64_from(5)), hvec3_unit_z(), f64_from(5), 0);
+assert(f64_gt(hvec3_length(AcousticRay_direction(reflect_ray(rr, hit_z, 0, F64_HALF))), F64_HALF), "zero-length blend valid");
+
+# ================================================================
+test_group("MultibandRay");
+var mb = multiband_ray_new(hvec3_zero(), hvec3_unit_x());
+assert_eq(multiband_ray_is_alive(mb), 1, "starts alive");
+assert(approx(multiband_ray_max_energy(mb), F64_ONE, TOL_1E4), "max energy 1.0");
+assert(approx(HVec3_x(mbr_direction(multiband_ray_new(hvec3_zero(), hvec3_new(f64_from(3), 0, 0)))), F64_ONE, TOL_1E3), "normalizes dir");
+# dies when all bands low
+var mb_low = multiband_ray_new(hvec3_zero(), hvec3_unit_x());
+var bi = 0;
+while (bi < 8) { mbr_set_energy_band(mb_low, bi, f64_div(f64_from(1), f64_from(10000))); bi = bi + 1; }
+assert_eq(multiband_ray_is_alive(mb_low), 0, "dies when all low");
+mbr_set_energy_band(mb_low, 3, F64_HALF);
+assert_eq(multiband_ray_is_alive(mb_low), 1, "alive if any high");
+# frequency bands
+assert_eq(f64_to(frequency_band(0)), 63, "band0 = 63");
+assert_eq(f64_to(frequency_band(7)), 8000, "band7 = 8000");
+# zero direction -> +Z
+assert(approx(HVec3_z(mbr_direction(multiband_ray_new(hvec3_zero(), hvec3_zero()))), F64_ONE, TOL_1E4), "mbr zero dir -> Z");
+
+# ================================================================
+test_group("reflect_ray_multiband");
+var mbr0 = multiband_ray_new(hvec3_zero(), hvec3_unit_z());
+var absb = buf8(d100(90), d100(80), d100(60), d100(40), d100(20), d100(10), d100(5), d100(2));
+var mrefl = reflect_ray_multiband(mbr0, hit0, absb, 0);
+assert(approx(mbr_energy_band(mrefl, 0), d10(1), TOL_1E3), "band0 0.1");
+assert(approx(mbr_energy_band(mrefl, 2), d10(4), TOL_1E3), "band2 0.4");
+assert(approx(mbr_energy_band(mrefl, 5), d10(9), TOL_1E3), "band5 0.9");
+assert(approx(mbr_energy_band(mrefl, 7), d100(98), TOL_1E3), "band7 0.98");
+# tracks distance
+assert(approx(mbr_distance(reflect_ray_multiband(mbr0, hit0, fill8(d10(1)), 0)), f64_from(5), TOL_1E2), "tracks distance");
+# reverses direction
+assert(approx(HVec3_z(mbr_direction(reflect_ray_multiband(mbr0, hit0, fill8(0), 0))), f64_neg(F64_ONE), TOL_1E2), "reverses dir");
+# zero absorption preserves energy
+var mpreserve = reflect_ray_multiband(mbr0, hit0, fill8(0), 0);
+var pe = 0;
+while (pe < 8) { assert(approx(mbr_energy_band(mpreserve, pe), F64_ONE, TOL_1E4), "zero abs preserves"); pe = pe + 1; }
+# full absorption kills energy
+var mkill = reflect_ray_multiband(mbr0, hit0, fill8(F64_ONE), 0);
+var ke = 0;
+while (ke < 8) { assert(approx(mbr_energy_band(mkill, ke), 0, TOL_1E4), "full abs kills"); ke = ke + 1; }
+# scattering zero-length blend valid
+assert(f64_gt(hvec3_length(mbr_direction(reflect_ray_multiband(mbr0, hit_z, fill8(0), F64_HALF))), F64_HALF), "mb zero-length blend valid");
+
+# ================================================================
+test_group("trace_ray (shoebox)");
+var geom_c = room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+var walls_c = RoomGeometry_walls(geom_c);
+var src = hvec3_new(f64_from(5), d10(15), f64_from(4));
+var path_c = trace_ray(multiband_ray_new(src, hvec3_unit_z()), walls_c, 50);
+assert(f64_gt(f64_from(vec_len(ray_path_bounces(path_c))), f64_from(5)), "many bounces in concrete");
+# energy decreases per band after 20 bounces
+var path20 = trace_ray(multiband_ray_new(src, hvec3_unit_z()), walls_c, 20);
+var fe = 0;
+while (fe < 8) { assert(f64_lt(ray_path_final_energy(path20, fe), F64_ONE), "band energy < 1"); fe = fe + 1; }
+# total distance ~ sum of segment distances
+var path10 = trace_ray(multiband_ray_new(src, hvec3_unit_z()), walls_c, 10);
+var bounces10 = ray_path_bounces(path10);
+var sumd = 0;
+var si = 0;
+while (si < vec_len(bounces10)) { sumd = f64_add(sumd, ray_bounce_distance(vec_get(bounces10, si))); si = si + 1; }
+assert(approx(ray_path_total_distance(path10), sumd, d10(1)), "total distance = sum segments");
+# carpet absorbs faster than concrete
+var geom_carpet = room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_carpet());
+var pc = trace_ray(multiband_ray_new(src, hvec3_unit_z()), walls_c, 50);
+var pk = trace_ray(multiband_ray_new(src, hvec3_unit_z()), RoomGeometry_walls(geom_carpet), 50);
+var cmax = 0;
+var kmax = 0;
+var mi = 0;
+while (mi < 8) { cmax = f64_max(cmax, ray_path_final_energy(pc, mi)); kmax = f64_max(kmax, ray_path_final_energy(pk, mi)); mi = mi + 1; }
+assert(f64_lt(kmax, cmax), "carpet absorbs more than concrete");
+# per-band: carpet low-freq energy > high-freq
+var pcarpet10 = trace_ray(multiband_ray_new(src, hvec3_unit_z()), RoomGeometry_walls(geom_carpet), 10);
+assert(f64_gt(ray_path_final_energy(pcarpet10, 0), ray_path_final_energy(pcarpet10, 5)), "carpet low>high freq");
+# stops at max bounces
+assert(f64_le(f64_from(vec_len(ray_path_bounces(trace_ray(multiband_ray_new(src, hvec3_unit_z()), walls_c, 3)))), f64_from(3)), "stops at max 3");
+# max_bounces = 0 -> no bounces
+assert_eq(vec_len(ray_path_bounces(trace_ray(multiband_ray_new(src, hvec3_unit_z()), walls_c, 0))), 0, "max 0 no bounces");
+# empty scene -> no bounces, zero distance
+var path_empty = trace_ray(multiband_ray_new(hvec3_zero(), hvec3_unit_x()), vec_new(), 50);
+assert_eq(vec_len(ray_path_bounces(path_empty)), 0, "empty scene no bounces");
+assert(approx(ray_path_total_distance(path_empty), 0, TOL_1E4), "empty scene zero distance");
+# wall indices valid
+var pidx = trace_ray(multiband_ray_new(src, hvec3_unit_z()), walls_c, 10);
+var bidx = ray_path_bounces(pidx);
+var vi = 0;
+while (vi < vec_len(bidx)) { assert(f64_lt(f64_from(ray_bounce_wall_index(vec_get(bidx, vi))), f64_from(vec_len(walls_c))), "wall index valid"); vi = vi + 1; }
+# monotonic energy decay across bounces
+var pmono = trace_ray(multiband_ray_new(src, hvec3_unit_z()), walls_c, 20);
+var bmono = ray_path_bounces(pmono);
+var prevbuf = fill8(F64_ONE);
+var mb2 = 0;
+while (mb2 < vec_len(bmono)) {
+    var bnc = vec_get(bmono, mb2);
+    var band = 0;
+    while (band < 8) {
+        assert(f64_le(ray_bounce_energy_after(bnc, band), f64_add(load64(prevbuf + band * 8), TOL_1E4)), "monotonic decay");
+        store64(prevbuf + band * 8, ray_bounce_energy_after(bnc, band));
+        band = band + 1;
+    }
+    mb2 = mb2 + 1;
+}
+# single-wall room -> exactly one bounce
+var wall1 = mk_wall(hvec3_new(f64_neg(f64_from(5)), f64_neg(f64_from(5)), f64_from(5)),
+hvec3_new(f64_neg(f64_from(5)), f64_from(5), f64_from(5)),
+hvec3_new(f64_from(5), f64_from(5), f64_from(5)),
+hvec3_new(f64_from(5), f64_neg(f64_from(5)), f64_from(5)), acoustic_material_concrete(), nz);
+assert_eq(vec_len(ray_path_bounces(trace_ray(multiband_ray_new(hvec3_zero(), hvec3_unit_z()), walls_of1(wall1), 50))), 1, "single wall one bounce");
+
+# ================================================================
+test_group("trace_ray_bvh");
+var accel = accelerated_room_new(acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete()));
+var lin = trace_ray(multiband_ray_new(src, hvec3_unit_z()), RoomGeometry_walls(AcousticRoom_geometry(AcceleratedRoom_room(accel))), 20);
+var bvh = trace_ray_bvh(multiband_ray_new(src, hvec3_unit_z()), accel, 20);
+assert_eq(vec_len(ray_path_bounces(lin)), vec_len(ray_path_bounces(bvh)), "bvh matches linear bounce count");
+assert(approx(ray_path_total_distance(lin), ray_path_total_distance(bvh), d10(1)), "bvh matches total distance");
+# wall indices match pairwise
+var lb = ray_path_bounces(lin);
+var bb = ray_path_bounces(bvh);
+var pi = 0;
+while (pi < vec_len(lb)) { assert_eq(ray_bounce_wall_index(vec_get(lb, pi)), ray_bounce_wall_index(vec_get(bb, pi)), "wall idx match"); pi = pi + 1; }
+# bvh energy matches linear (carpet, oblique ray)
+var accel_k = accelerated_room_new(acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_carpet()));
+var walls_k = RoomGeometry_walls(AcousticRoom_geometry(AcceleratedRoom_room(accel_k)));
+var odir = hvec3_new(F64_ONE, F64_HALF, d10(7));
+var lin_k = trace_ray(multiband_ray_new(hvec3_new(f64_from(3), F64_ONE, F64_TWO), odir), walls_k, 30);
+var bvh_k = trace_ray_bvh(multiband_ray_new(hvec3_new(f64_from(3), F64_ONE, F64_TWO), odir), accel_k, 30);
+var eb = 0;
+while (eb < 8) { assert(approx(ray_path_final_energy(lin_k, eb), ray_path_final_energy(bvh_k, eb), TOL_1E3), "bvh energy matches"); eb = eb + 1; }
+# empty room bvh -> no bounces
+var accel_empty = accelerated_room_new(acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete()));
+# (reuse a real room but zero direction guard test below)
+var path_zerodir = trace_ray_bvh(multiband_ray_new(src, hvec3_zero()), accel, 10);
+assert(f64_le(f64_from(vec_len(ray_path_bounces(path_zerodir))), f64_from(10)), "zero-dir bvh no panic");
+
+# ================================================================
+test_group("wall aabb / area (room re-coverage)");
+var wtri = mk_wall(hvec3_new(F64_ONE, F64_TWO, f64_from(3)), hvec3_new(f64_from(4), f64_from(5), f64_from(3)),
+hvec3_new(f64_from(4), F64_TWO, f64_from(3)), hvec3_new(f64_from(4), F64_TWO, f64_from(3)), acoustic_material_concrete(), hvec3_unit_z());
+var ab = wall_aabb(wtri);
+assert_eq(aabb_contains(ab, hvec3_new(F64_ONE, F64_TWO, f64_from(3))), 1, "aabb contains v0");
+assert_eq(aabb_contains(ab, hvec3_new(f64_from(4), f64_from(5), f64_from(3))), 1, "aabb contains v1");
+# empty vertices -> min at origin
+var wempty = wall_new(vec_new(), acoustic_material_concrete(), hvec3_unit_z());
+assert(approx(HVec3_x(GeoAabb_min(wall_aabb(wempty))), 0, TOL_1E4), "empty aabb min.x 0");
+# area with <3 verts -> 0
+assert(approx(wall_area(wall_degen), 0, TOL_1E4), "area <3 verts = 0");
+
+var rc = assert_summary();
+syscall(60, rc);

@@ -64,12 +64,12 @@ parallel workflow** (worktree-isolated), then integrated + re-verified in main
 (291 assertions). **fdtd** later landed in wave 2, completing L2 (14/14).
 The workflow proved the recipe scales: no new patterns, all gates green.
 
-### M3 — Acceleration & sources (L3) — 🟡 2/4
+### M3 — Acceleration & sources (L3) — 🟡 3/4
 
-radiosity ✅ + image_source ✅ landed in wave 2 (a 6-module parallel batch that
-also took ambisonics, scattering, dark_velvet_noise, fdtd). Remaining: **ray**
-(BVH-accelerated; **hot path → solo with a `.bcyr` benchmark**) and **dwm**
-(largest module; deps now all done). Both too large/important to fan out — solo.
+radiosity ✅ + image_source ✅ (wave 2); **ray ✅** ported solo (275 assertions
++ `tests/ray.bcyr` benchmark — BVH vs linear crossover documented in
+docs/benchmarks/results.md). Remaining: **dwm** (largest module, 1407 ln; deps
+all done) — solo, with a benchmark.
 
 ### M4 — Energy & metrics (L4)
 

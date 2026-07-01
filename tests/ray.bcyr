@@ -1,0 +1,59 @@
+# ray.bcyr -- benchmarks for the ray-tracing hot path.
+# Run: cyrius bench tests/ray.bcyr
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Pre-built scene (initialized in main).
+var _accel = 0;
+var _walls = 0;
+var _probe_ray = 0;
+var _probe_wall = 0;
+var _sx = 0;
+var _sy = 0;
+var _sz = 0;
+
+fn _src() { return hvec3_new(_sx, _sy, _sz); }
+
+# Innermost op: ray/planar-wall intersection.
+fn b_ray_wall_intersection() {
+    return ray_wall_intersection(_probe_ray, _probe_wall);
+}
+# Full linear trace (20 bounces) through a 6-wall shoebox.
+fn b_trace_linear() {
+    return trace_ray(multiband_ray_new(_src(), hvec3_unit_z()), _walls, 20);
+}
+# BVH-accelerated trace (20 bounces).
+fn b_trace_bvh() {
+    return trace_ray_bvh(multiband_ray_new(_src(), hvec3_unit_z()), _accel, 20);
+}
+
+fn main() {
+    alloc_init();
+    _accel = accelerated_room_new(acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
+        acoustic_material_concrete()));
+    _walls = RoomGeometry_walls(AcousticRoom_geometry(AcceleratedRoom_room(_accel)));
+    _sx = f64_from(5);
+    _sy = f64_div(f64_from(3), F64_TWO);   # 1.5
+    _sz = f64_from(4);
+    _probe_ray = acoustic_ray_new(_src(), hvec3_unit_z(), f64_from(1000));
+    _probe_wall = vec_get(_walls, 0);
+
+    bench("ray_wall_intersection", &b_ray_wall_intersection, 200000);
+    bench("trace_ray_linear_20", &b_trace_linear, 5000);
+    bench("trace_ray_bvh_20", &b_trace_bvh, 5000);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

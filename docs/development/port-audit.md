@@ -80,7 +80,7 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 
 | Module       |  LOC | Status | Tests | Deps |
 |--------------|-----:|--------|------:|------|
-| ray          | 1146 | ⬜ | — | material, room — **hot path**, benchmark; solo |
+| ray          | 1146 | ✅ | 275 | material, room — hot path; ported solo + `tests/ray.bcyr` benchmark |
 | radiosity    |  283 | ✅ | 7 | material, room |
 | image_source |  634 | ✅ | 30 | material, propagation, room |
 | dwm          | 1407 | ⬜ | — | fdtd ✅, hybrid, material — largest module |
@@ -106,12 +106,12 @@ the parity assertions that pass. `fdtd` waits on `hybrid` (now done) → next wa
 | integration/kiran   | 168 | ⬜ | (consumer API) |
 | integration/soorat  | 165 | ⬜ | (consumer API) |
 
-**Totals:** 23 / 37 done, 14 pending · 14,630 Rust lines · **740 parity assertions green**.
-Toolchain: cyrius **6.3.13**. Two parallel workflows landed the bulk: the L2 batch
-(13 modules) and wave 2 (ambisonics, scattering, dark_velvet_noise, fdtd,
-radiosity, image_source). Remaining: ray (hot path, solo), dwm (needs nothing more
-— fdtd done), logging (→ sakshi); then L4 (diffuse, diffraction, analysis, beam),
-L5 (impulse, coupled), L6 (wav, binaural, integration ×3).
+**Totals:** 24 / 37 done, 13 pending · 14,630 Rust lines · **1015 parity assertions green**.
+Toolchain: cyrius **6.3.14** (pinned deliberately — held here, not chased to
+newer wrappers). Two parallel workflows landed the L2 batch (13) and wave 2 (6);
+`ray` (hot path, 275 assertions + a benchmark) was ported solo. Remaining: dwm
+(all deps done), logging (→ sakshi); then L4 (diffuse, diffraction, analysis,
+beam), L5 (impulse, coupled), L6 (wav, binaural, integration ×3).
 
 ### RNG / randomness (no new pattern needed)
 - **scattering** takes `u1,u2` uniform randoms as **parameters** (caller's RNG).

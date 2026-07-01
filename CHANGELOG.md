@@ -51,9 +51,18 @@ milestone plan is in [`docs/development/roadmap.md`](docs/development/roadmap.md
   cleanup (the canonical-fmt-diff self-check was baked into the agent brief).
   Confirmed RNG needs no stdlib `random` dependency.
 
+- **ray** — `src/ray.cyr`. Single-band (`AcousticRay`) + multiband
+  (`MultibandRay`) rays, planar wall intersection, specular/scattering
+  reflection, and linear + **BVH-accelerated** path tracing (via hisab
+  `geo_ray_new`/`bvh_query_ray` + `room`'s `Wall`/`AcceleratedRoom`). Ported
+  solo (hot path): 275 parity assertions in `tests/ray.tcyr` + a benchmark
+  `tests/ray.bcyr` (results in `docs/benchmarks/results.md`). Added `bench` to
+  the stdlib deps. Tuple returns → `RayHit`/`NearestWall` structs;
+  `Option<f32>` → negative sentinel.
+
 ### Changed
-- Toolchain pin **6.3.12 → 6.3.13** (`cyrius.cyml`); stdlib re-vendored. No
-  source changes required — all 740 assertions stay green.
+- Toolchain pin **6.3.12 → 6.3.14** (`cyrius.cyml`); stdlib re-vendored. No
+  source changes required — all 1015 assertions stay green. Pin held at 6.3.14.
 
 #### Changed (port-wide conventions)
 - **f32 → f64** throughout — hisab's `HVec3` is f64-only.

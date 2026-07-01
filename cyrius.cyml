@@ -5,7 +5,7 @@ description = "goonj — acoustics engine (sound propagation, room simulation, i
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/goonj"
 language = "cyrius"
-cyrius = "6.3.13"
+cyrius = "6.3.14"
 
 [build]
 entry = "src/main.cyr"
@@ -29,6 +29,7 @@ stdlib = [
     "math",
     "ganita",
     "fnptr",
+    "bench",
 ]
 
 # hisab — math/geometry (HVec3 and friends). goonj consumes the single
