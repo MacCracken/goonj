@@ -1,0 +1,47 @@
+# image_source.bcyr -- benchmarks for the image-source early-reflection path.
+# Run: cyrius bench tests/image_source.bcyr
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/image_source.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Fixed scene (built once in main, matching the Rust bench setup).
+var _room = 0;
+var _source = 0;
+var _listener = 0;
+var _spd = 0;
+
+# compute_early_reflections up to order 3 through a concrete shoebox.
+fn b_order_3() {
+    return compute_early_reflections(_source, _listener, _room, 3, _spd);
+}
+# compute_early_reflections up to order 5 (O(n^3) more image sources).
+fn b_order_5() {
+    return compute_early_reflections(_source, _listener, _room, 5, _spd);
+}
+
+fn main() {
+    alloc_init();
+    _room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
+    acoustic_material_concrete());
+    _source = hvec3_new(f64_from(3), f64_div(f64_from(3), F64_TWO), f64_from(4));
+    _listener = hvec3_new(f64_from(7), f64_div(f64_from(3), F64_TWO), f64_from(4));
+    _spd = speed_of_sound(f64_from(20));
+
+    bench("image_source/shoebox_order_3", &b_order_3, 20000);
+    bench("image_source/shoebox_order_5", &b_order_5, 3000);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

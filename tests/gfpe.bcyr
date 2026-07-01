@@ -1,0 +1,34 @@
+# gfpe.bcyr -- benchmark for the GFPE outdoor-propagation solver (solve_gfpe).
+# Run: cyrius bench tests/gfpe.bcyr
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/propagation.cyr"
+include "src/gfpe.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Pre-built terrain + config (initialized in main).
+var _terrain = 0;
+var _config = 0;
+
+# Full GFPE solve over a 100 m x 30 m vertical slice at 500 Hz on grass.
+fn b_solve_gfpe() { return solve_gfpe(_terrain, _config); }
+
+fn main() {
+    alloc_init();
+    _terrain = gfpe_terrain_flat(f64_from(100));
+    _config = gfpe_config_new(f64_from(500), f64_from(5), f64_from(100), f64_from(30),
+    f64_from(5), f64_from(1), ground_impedance_grass(), gfpe_atmosphere_default());
+
+    bench("gfpe/solve_100m_30m_500hz", &b_solve_gfpe, 200);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

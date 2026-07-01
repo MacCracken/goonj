@@ -1,0 +1,33 @@
+# metamaterial.bcyr -- benchmarks for acoustic-metamaterial absorption.
+# Run: cyrius bench tests/metamaterial.bcyr
+
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/metamaterial.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Pre-built negative-stiffness metamaterial (initialized in main).
+var _m = 0;
+
+# 8-band ISO octave absorption sweep on the fixed metamaterial.
+fn b_absorption_bands() { return metamaterial_absorption_bands(_m); }
+
+fn main() {
+    alloc_init();
+    # NegativeStiffness { k_eff: Lorentzian(500, 800, 50, K0_air), rho: rho_air }.
+    var k_eff = lorentzian_resonance_new(f64_from(500), f64_from(800), f64_from(50),
+    AIR_BULK_MODULUS);
+    _m = metamaterial_negative_stiffness(k_eff, AIR_DENSITY);
+
+    bench("metamaterial/absorption_bands_negstiff", &b_absorption_bands, 500000);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

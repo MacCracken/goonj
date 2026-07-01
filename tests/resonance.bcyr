@@ -1,0 +1,59 @@
+# resonance.bcyr -- benchmarks for the room-resonance module.
+# Run: cyrius bench tests/resonance.bcyr
+
+include "src/resonance.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Fixed inputs (initialized in main), matching the Rust black_box args.
+var _rm_len = 0;
+var _rm_mode = 0;
+var _rm_c = 0;
+
+var _sf_rt60 = 0;
+var _sf_vol = 0;
+
+var _am_len = 0;
+var _am_w = 0;
+var _am_h = 0;
+var _am_maxf = 0;
+var _am_c = 0;
+
+# Single axial room-mode frequency: room_mode(5.0, 1, 343.0).
+fn b_room_mode() { return room_mode(_rm_len, _rm_mode, _rm_c); }
+# Schroeder crossover frequency: schroeder_frequency(1.0, 100.0).
+fn b_schroeder() { return schroeder_frequency(_sf_rt60, _sf_vol); }
+# All axial modes of a 10x8x3 shoebox below 200 Hz (allocates + sorts).
+fn b_all_axial_modes() {
+    return all_axial_modes(_am_len, _am_w, _am_h, _am_maxf, _am_c);
+}
+
+fn main() {
+    alloc_init();
+
+    _rm_len = f64_from(5);
+    _rm_mode = 1;
+    _rm_c = f64_from(343);
+
+    _sf_rt60 = f64_from(1);
+    _sf_vol = f64_from(100);
+
+    _am_len = f64_from(10);
+    _am_w = f64_from(8);
+    _am_h = f64_from(3);
+    _am_maxf = f64_from(200);
+    _am_c = f64_from(343);
+
+    bench("resonance/room_mode", &b_room_mode, 1000000);
+    bench("resonance/schroeder_frequency", &b_schroeder, 1000000);
+    bench("resonance/all_axial_modes_200hz", &b_all_axial_modes, 50000);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

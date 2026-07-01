@@ -1,0 +1,73 @@
+# binaural.bcyr -- benchmark for binaural (stereo) IR generation.
+# Run: cyrius bench tests/binaural.bcyr
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/image_source.cyr"
+include "src/diffuse.cyr"
+include "src/impulse.cyr"
+include "src/wav.cyr"
+include "src/binaural.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Pre-built fixtures (initialized in main).
+var _room = 0;
+var _hrtf = 0;
+var _config = 0;
+var _source = 0;
+var _listener = 0;
+
+# Build a 3-element HRIR vec (Rust vec![a, b, c] of f32 samples).
+fn _v3(a, b, c) {
+    var v = vec_new();
+    vec_push(v, a);
+    vec_push(v, b);
+    vec_push(v, c);
+    return v;
+}
+
+# generate_binaural_ir on a shoebox with 2 HRTF pairs (early reflections only).
+fn b_generate_ir() {
+    return generate_binaural_ir(_source, _listener, _room, _hrtf, _config);
+}
+
+fn main() {
+    alloc_init();
+    _room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
+    acoustic_material_concrete());
+
+    # HRTF pairs: front (az 0) and right (az pi/2), each with 3-tap HRIRs.
+    var left1 = _v3(F64_ONE, F64_HALF, f64_div(F64_ONE, f64_from(5)));       # 1.0 0.5 0.2
+    var right1 = _v3(F64_ONE, F64_HALF, f64_div(F64_ONE, f64_from(5)));      # 1.0 0.5 0.2
+    var left2 = _v3(f64_div(f64_from(3), f64_from(10)),                      # 0.3
+    f64_div(F64_ONE, f64_from(10)),                                     # 0.1
+    f64_div(F64_ONE, f64_from(20)));                                    # 0.05
+    var right2 = _v3(F64_ONE, f64_div(f64_from(4), f64_from(5)),             # 1.0 0.8
+    f64_div(f64_from(2), f64_from(5)));                                 # 0.4
+    var pairs = vec_new();
+    vec_push(pairs, hrtf_pair_new(0, 0, left1, right1));
+    vec_push(pairs, hrtf_pair_new(F64_PI_2, 0, left2, right2));
+    _hrtf = hrtf_dataset_from_pairs(pairs, 48000);
+
+    # IrConfig::default() but max_time_seconds = 0.2 and num_diffuse_rays = 0.
+    _config = ir_config_new(48000, 3, 0, 50, f64_div(F64_ONE, f64_from(5)), 42);
+
+    _source = hvec3_new(f64_from(3), f64_div(f64_from(3), F64_TWO), f64_from(4));
+    _listener = hvec3_new(f64_from(7), f64_div(f64_from(3), F64_TWO), f64_from(4));
+
+    bench("binaural/generate_ir_shoebox", &b_generate_ir, 2000);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

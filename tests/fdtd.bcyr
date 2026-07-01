@@ -1,0 +1,39 @@
+# fdtd.bcyr -- benchmark for the 2D FDTD solver hot path (solve_fdtd_2d).
+# Run: cyrius bench tests/fdtd.bcyr
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/hybrid.cyr"
+include "src/fdtd.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Pre-built inputs (initialized in main).
+var _config = 0;
+var _source = 0;
+var _receivers = 0;
+
+# Full 2D FDTD solve on a 40x40 rigid box (~1102 leapfrog steps).
+fn b_solve_40x40() { return solve_fdtd_2d(_config, _source, _receivers); }
+
+fn main() {
+    alloc_init();
+    # sample_rate 22050, dx 0.05, c 343, 40x40, 0.05 s.
+    _config = fdtd_config_new(22050, pct(5), f64_from(343), 40, 40, pct(5));
+    # gaussian_pulse(ix=20, iy=20, peak_step=5, sigma_steps=2.0, amplitude=1.0).
+    _source = fdtd_source_gaussian_pulse(20, 20, 5, F64_TWO, F64_ONE);
+    _receivers = vec_new();
+    vec_push(_receivers, fdtd_receiver_new(30, 20));
+
+    bench("fdtd/solve_40x40_50ms", &b_solve_40x40, 60);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

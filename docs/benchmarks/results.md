@@ -28,8 +28,13 @@ Full `solve_dwm_3d` on a rigid box, 0.01 s (~220 steps at 22,050 Hz).
 
 | Benchmark | avg | min | iters |
 |-----------|----:|----:|------:|
-| `solve_dwm_3d_16cubed` (4,096 cells) | 59.6 ms | 58.1 ms | 30 |
-| `solve_dwm_3d_24cubed` (13,824 cells) | 199.7 ms | 196.7 ms | 15 |
+| `solve_dwm_3d_16cubed` (4,096 cells) | 59.3 ms | 58.2 ms | 30 |
+| `solve_dwm_3d_24cubed` (13,824 cells) | 199.7 ms | 195.8 ms | 15 |
+| `solve_dwm_3d_30x25x20_50ms` (15,000 cells, 1102 steps) | 1.071 s | 1.065 s | 5 |
+
+The last row matches the Rust `dwm/solve_30x25x20_50ms` config exactly — see the
+**[Rust → Cyrius comparison](../benchmarks-rust-vs-cyrius.md)** (~14× on this
+alloc-free hot loop; ~120× on the tiny alloc-heavy `wall_intersection`).
 
 **Finding:** cost scales near-linearly in cell count — 3.375× the cells (16³→24³)
 costs 3.35× the time — consistent with the O(cells · steps) grid sweep. Each node

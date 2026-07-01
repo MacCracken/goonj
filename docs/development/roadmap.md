@@ -12,8 +12,10 @@
       (3585 assertions, 36 suites, all green)
 - [x] Per-module cleanliness green: canonical `cyrius fmt` diff + `cyrius lint`
       (0 warnings). Still to do: whole-project `cyrius vet`.
-- [x] Benchmarks captured for the ray + dwm hot paths (`docs/benchmarks/`);
-      more hot paths optional.
+- [x] Benchmarks captured — the **full suite** (34 benchmarks / 15 modules) ported
+      to `.bcyr`, with a Rust→Cyrius comparison
+      ([`../benchmarks-rust-vs-cyrius.md`](../benchmarks-rust-vs-cyrius.md)):
+      honest ~6–18× on compute-bound arithmetic, alloc-dominated elsewhere.
 - [~] `dist/goonj.cyr` distlib bundle builds ✅ (validated by `tests/bundle.tcyr`);
       ≥1 consumer compiles green — deferred (consumers not ported yet)
 - [x] CHANGELOG complete for 2.0.0; ADR-0001 covers the port conventions
@@ -111,6 +113,22 @@ ISO 3382-1 + IEC 60268-16) [analysis/coupled/wav batch].
 - **`serde` derive** — Rust types derive Serialize/Deserialize. No serde in
   Cyrius; (de)serialization, if any consumer needs it, is hand-rolled per type.
 - **String-payload errors → integer codes** — already chosen for `error`.
+
+## Post-2.0.0 backlog
+
+- **Review optimizing for various number types.** The port is f64-throughout and
+  otherwise unoptimized (naive per-call `alloc`, no arena/pooling, no SIMD). The
+  Rust→Cyrius benchmark comparison ([`../benchmarks-rust-vs-cyrius.md`](../benchmarks-rust-vs-cyrius.md))
+  is deliberately an honest first pass so it points at exactly this. Cyrius is
+  adding **more diverse float/integer types + related SIMD** (driven by model
+  training/inference use); once those land, revisit goonj's hot paths (dwm solver,
+  ray traversal, wall intersection) to pick appropriate widths (f32 where hisab
+  allows, narrower ints for grid indices) and vectorize the inner loops. Expected
+  to close much of the current codegen/precision gap. **Gate: Cyrius number-type +
+  SIMD support shipping.**
+- An arena/pool allocator (or out-param returns) for the alloc-heavy tiny ops
+  (`wall_intersection`, per-ray/per-reflection temporaries) — independent of the
+  above and doable sooner.
 
 ## Out of scope (for 2.0.0)
 

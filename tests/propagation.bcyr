@@ -1,0 +1,84 @@
+# propagation.bcyr -- benchmarks for the sound-propagation module.
+# Run: cyrius bench tests/propagation.bcyr
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/propagation.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Fixed inputs (built once in main, mirroring the Rust benches).
+var _t20 = 0;
+var _src_freq = 0;
+var _src_vel = 0;
+var _lis_vel = 0;
+var _c = 0;
+var _power = 0;
+var _dist = 0;
+var _source = 0;
+var _direction = 0;
+var _wind = 0;
+var _temp = 0;
+var _max_dist = 0;
+var _step = 0;
+var _freq = 0;
+var _angle = 0;
+var _impedance = 0;
+
+# c = 331.3 + 0.606 * T at 20 C.
+fn b_speed_of_sound() { return speed_of_sound(_t20); }
+# f' = f*(c + v_l)/(c + v_s); source approaching at -30 m/s.
+fn b_doppler_shift() { return doppler_shift(_src_freq, _src_vel, _lis_vel, _c); }
+# I = P / (4 pi r^2) at 100 W, 5 m.
+fn b_inverse_square_law() { return inverse_square_law(_power, _dist); }
+# Snell-law ray trace through a stratified atmosphere (~1000 steps).
+fn b_atmospheric() {
+    return trace_ray_atmospheric(_source, _direction, _wind, _temp, _max_dist, _step);
+}
+# Miki (1990) reflection coefficient over grass at 1 kHz, 0.5 rad grazing.
+fn b_ground_reflection() {
+    return ground_reflection_coefficient(_freq, _angle, _impedance);
+}
+
+fn main() {
+    alloc_init();
+
+    _t20 = f64_from(20);
+
+    _src_freq = f64_from(440);
+    _src_vel = f64_neg(f64_from(30));   # -30 m/s
+    _lis_vel = 0;                        # 0.0
+    _c = f64_from(343);
+
+    _power = f64_from(100);
+    _dist = f64_from(5);
+
+    _source = hvec3_new(0, f64_from(100), 0);
+    # direction (1, -0.1, 0)
+    _direction = hvec3_new(F64_ONE, f64_neg(f64_div(F64_ONE, f64_from(10))), 0);
+    # wind: dir +X, 5 m/s ground, 0.1 (m/s)/m gradient
+    _wind = wind_profile_new(hvec3_unit_x(), f64_from(5), f64_div(F64_ONE, f64_from(10)));
+    # temp: 20 C ground, -0.0065 C/m lapse
+    _temp = temperature_profile_new(f64_from(20), f64_neg(f64_div(f64_from(65), f64_from(10000))));
+    _max_dist = f64_from(1000);
+    _step = F64_ONE;
+
+    _freq = f64_from(1000);
+    _angle = f64_div(F64_ONE, F64_TWO);   # 0.5 rad
+    _impedance = ground_impedance_grass();
+
+    bench("propagation/speed_of_sound", &b_speed_of_sound, 1000000);
+    bench("propagation/doppler_shift", &b_doppler_shift, 1000000);
+    bench("propagation/inverse_square_law", &b_inverse_square_law, 1000000);
+    bench("propagation/atmospheric_ray_1000_steps", &b_atmospheric, 2000);
+    bench("propagation/ground_reflection", &b_ground_reflection, 500000);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

@@ -1,0 +1,62 @@
+# analysis.bcyr -- benchmarks for the room-acoustics analysis metrics.
+# Run: cyrius bench tests/analysis.bcyr
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/image_source.cyr"
+include "src/diffuse.cyr"
+include "src/impulse.cyr"
+include "src/analysis.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Pre-built fixtures (initialized in main).
+var _ir = 0;
+var _room = 0;
+
+# Decaying impulse response: 48000 samples of exp(-0.005*i/48.0)*0.5 at 48 kHz.
+fn _build_ir() {
+    var neg_coeff = f64_neg(f64_div(f64_from(5), f64_from(1000)));   # -0.005
+    var samples = vec_new();
+    var i = 0;
+    while (i < 48000) {
+        var t = f64_div(f64_mul(neg_coeff, f64_from(i)), f64_from(48));
+        vec_push(samples, f64_mul(f64_exp(t), F64_HALF));
+        i = i + 1;
+    }
+    return impulse_response_new(samples, 48000, F64_ONE);
+}
+
+# Clarity C80 -- early (0-80 ms) vs late energy in dB.
+fn b_c80() { return clarity_c80(_ir); }
+# Speech Transmission Index over the broadband IR.
+fn b_sti() { return sti_estimate(_ir); }
+# Definition D50 -- early (0-50 ms) to total energy ratio.
+fn b_d50() { return definition_d50(_ir); }
+# Rank walls by RT60 sensitivity when treated toward a 0.5 s target.
+fn b_suggest_absorption() { return suggest_absorption_placement(_room, F64_HALF); }
+
+fn main() {
+    alloc_init();
+    _ir = _build_ir();
+    _room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
+    acoustic_material_concrete());
+
+    bench("analysis/c80", &b_c80, 5000);
+    bench("analysis/sti", &b_sti, 25);
+    bench("analysis/d50", &b_d50, 5000);
+    bench("analysis/suggest_absorption", &b_suggest_absorption, 50000);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

@@ -1,0 +1,31 @@
+# dark_velvet_noise.bcyr -- benchmark for Dark Velvet Noise IR synthesis.
+# Run: cyrius bench tests/dark_velvet_noise.bcyr
+
+include "src/error.cyr"
+include "src/dark_velvet_noise.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Default DVN config (48 kHz, 2000 pulses/s, 2 s IR, exponential RT60 = 1.5 s,
+# 16 kHz -> 800 Hz coloration), built once in main as a global -- matches the
+# Rust bench's `let config = DvnConfig::default();` outside the closure.
+var _config = 0;
+
+# Full 2 s Dark Velvet Noise IR synthesis (96000 samples at 48 kHz).
+fn b_synthesize() { return synthesize_dvn_ir(_config); }
+
+fn main() {
+    alloc_init();
+    _config = dvn_config_default();
+
+    bench("dvn/synthesize_2s_2khz_density", &b_synthesize, 200);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

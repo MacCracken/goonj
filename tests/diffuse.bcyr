@@ -1,0 +1,43 @@
+# diffuse.bcyr -- benchmarks for the diffuse-rain late-reverb path.
+# Run: cyrius bench tests/diffuse.bcyr
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/diffuse.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Pre-built scene + config (initialized in main).
+var _room = 0;
+var _source = 0;
+var _listener = 0;
+var _config = 0;
+
+# Full diffuse-rain: 1000 rays, 50 bounces, 2 s tail through a shoebox.
+fn b_diffuse_1000_rays() {
+    return generate_diffuse_rain(_source, _listener, _room, _config);
+}
+
+fn main() {
+    alloc_init();
+    _room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+    _source = hvec3_new(f64_from(3), f64_div(f64_from(3), F64_TWO), f64_from(4));
+    _listener = hvec3_new(f64_from(7), f64_div(f64_from(3), F64_TWO), f64_from(4));
+    _config = diffuse_rain_config_new(1000, 50, f64_from(2), f64_div(f64_from(3), F64_TWO),
+    speed_of_sound(f64_from(20)), 42);
+
+    bench("diffuse/1000_rays_shoebox", &b_diffuse_1000_rays, 10);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

@@ -1,0 +1,59 @@
+# diffraction.bcyr -- benchmarks for the diffraction module.
+# Run: cyrius bench tests/diffraction.bcyr
+#
+# Replicates rust-old/benches/benchmarks.rs "diffraction/..." benches:
+#   diffraction/edge_loss           -> edge_diffraction_loss(1000.0, 0.5, 20.0)
+#   diffraction/is_occluded_shoebox -> is_occluded(Vec3(3,1.5,4), Vec3(7,1.5,4),
+#                                                   &shoebox(10,8,3,concrete).walls)
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/diffraction.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Fixed inputs (built once in main, matching the Rust b.iter closures).
+var _freq = 0;
+var _angle = 0;
+var _temp = 0;
+var _source = 0;
+var _listener = 0;
+var _walls = 0;
+
+# UTD-inspired half-plane edge diffraction loss (dB).
+fn b_edge_loss() {
+    return edge_diffraction_loss(_freq, _angle, _temp);
+}
+# Line-of-sight occlusion test across the six shoebox walls.
+fn b_is_occluded() {
+    return is_occluded(_source, _listener, _walls);
+}
+
+fn main() {
+    alloc_init();
+
+    _freq = f64_from(1000);
+    _angle = F64_HALF;              # 0.5 rad
+    _temp = f64_from(20);
+
+    _source = hvec3_new(f64_from(3), F64_ONE_HALF, f64_from(4));
+    _listener = hvec3_new(f64_from(7), F64_ONE_HALF, f64_from(4));
+    _walls = RoomGeometry_walls(room_geometry_shoebox(f64_from(10), f64_from(8),
+    f64_from(3), acoustic_material_concrete()));
+
+    bench("diffraction/edge_loss", &b_edge_loss, 1000000);
+    bench("diffraction/is_occluded_shoebox", &b_is_occluded, 200000);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

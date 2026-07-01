@@ -1,0 +1,46 @@
+# wav.bcyr -- benchmark for WAV export (write_wav_mono).
+# Run: cyrius bench tests/wav.bcyr
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/image_source.cyr"
+include "src/diffuse.cyr"
+include "src/impulse.cyr"
+include "src/wav.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Pre-built 2 s @ 48 kHz decaying-exponential sample buffer (built in main).
+var _samples = 0;
+
+# Export the fixed 96000-sample mono buffer at 48 kHz.
+fn b_wav_export() { return write_wav_mono(_samples, 48000); }
+
+fn main() {
+    alloc_init();
+    # samples[i] = exp(-0.005 * i / 48.0) * 0.5   for i in 0..96000.
+    var neg_rate = f64_neg(f64_div(f64_from(5), f64_from(1000)));   # -0.005
+    var forty_eight = f64_from(48);
+    _samples = vec_new();
+    var i = 0;
+    while (i < 96000) {
+        var arg = f64_div(f64_mul(neg_rate, f64_from(i)), forty_eight);
+        vec_push(_samples, f64_mul(f64_exp(arg), F64_HALF));
+        i = i + 1;
+    }
+
+    bench("wav/export_48k_2s", &b_wav_export, 500);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);

@@ -1,0 +1,80 @@
+# impulse.bcyr -- benchmarks for the impulse module (RT60 + IR generation).
+# Run: cyrius bench tests/impulse.bcyr
+
+include "lib/hisab.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/propagation.cyr"
+include "src/room.cyr"
+include "src/ray.cyr"
+include "src/image_source.cyr"
+include "src/diffuse.cyr"
+include "src/impulse.cyr"
+
+fn bench(name, fp, n) {
+    var b = bench_new(name);
+    bench_run(b, fp, n);
+    bench_report(b);
+    return 0;
+}
+
+# Fixed inputs (initialized in main).
+var _room = 0;
+var _source = 0;
+var _listener = 0;
+var _config = 0;
+var _edc_ir = 0;
+var _sab_v = 0;
+var _sab_a = 0;
+var _eyr_v = 0;
+var _eyr_s = 0;
+var _eyr_a = 0;
+
+# Build the exponential-decay IR used by the energy_decay_curve bench:
+# samples[i] = exp(-0.005 * i / 48.0) * 0.5, for i in 0..48000.
+fn _build_edc_ir() {
+    var neg_step = f64_neg(f64_div(f64_from(5), f64_from(1000)));   # -0.005
+    var samples = vec_new();
+    var i = 0;
+    while (i < 48000) {
+        var t = f64_div(f64_mul(neg_step, f64_from(i)), f64_from(48));
+        vec_push(samples, f64_mul(f64_exp(t), F64_HALF));
+        i = i + 1;
+    }
+    return impulse_response_new(samples, 48000, F64_ONE);
+}
+
+# Sabine RT60 (0.161 V / A) on a fixed volume/absorption.
+fn b_sabine() { return sabine_rt60(_sab_v, _sab_a); }
+# Eyring RT60 on a fixed volume/surface/absorption.
+fn b_eyring() { return eyring_rt60(_eyr_v, _eyr_s, _eyr_a); }
+# Schroeder energy-decay curve over a 48000-sample IR.
+fn b_edc() { return impulse_response_energy_decay_curve(_edc_ir); }
+# Full per-band IR: image-source early + diffuse-rain late (1000 rays, 0.5 s).
+fn b_generate_ir() { return generate_ir(_source, _listener, _room, _config); }
+
+fn main() {
+    alloc_init();
+
+    _sab_v = f64_from(240);
+    _sab_a = f64_from(50);
+    _eyr_v = f64_from(240);
+    _eyr_s = f64_from(268);
+    _eyr_a = F64_HALF;
+
+    _room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
+    acoustic_material_concrete());
+    _source = hvec3_new(f64_from(3), f64_div(f64_from(3), F64_TWO), f64_from(4));
+    _listener = hvec3_new(f64_from(7), f64_div(f64_from(3), F64_TWO), f64_from(4));
+    _config = ir_config_new(48000, 3, 1000, 50, F64_HALF, 42);
+    _edc_ir = _build_edc_ir();
+
+    bench("impulse/sabine_rt60", &b_sabine, 1000000);
+    bench("impulse/eyring_rt60", &b_eyring, 1000000);
+    bench("impulse/energy_decay_curve", &b_edc, 300);
+    bench("impulse/generate_ir_shoebox", &b_generate_ir, 10);
+    return 0;
+}
+
+var r = main();
+syscall(60, r);
