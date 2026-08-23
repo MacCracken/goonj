@@ -62,7 +62,7 @@ fn eyring_rt60(volume, surface_area, average_absorption) {
 fn estimate_rt60_shoebox(length, width, height, avg_absorption) {
     var volume = f64_mul(f64_mul(length, width), height);
     var surface_area = f64_mul(F64_TWO,
-    f64_add(f64_add(f64_mul(length, width), f64_mul(length, height)), f64_mul(width, height)));
+      f64_add(f64_add(f64_mul(length, width), f64_mul(length, height)), f64_mul(width, height)));
     var total_absorption = f64_mul(surface_area, avg_absorption);
     return sabine_rt60(volume, total_absorption);
 }
@@ -105,7 +105,7 @@ fn fitzroy_rt60(volume, surface_area, axes) {
     while (i < 3) {
         var ax = load64(axes + i * 8);
         sum = f64_add(sum,
-        _impulse_fitzroy_term(AxisAbsorption_alpha(ax), AxisAbsorption_area(ax), surface_area));
+          _impulse_fitzroy_term(AxisAbsorption_alpha(ax), AxisAbsorption_area(ax), surface_area));
         i = i + 1;
     }
     if (f64_le(sum, 0) == 1) { return IMP_POS_INF; }
@@ -309,7 +309,7 @@ fn generate_ir(source, listener, room, config) {
             while (eband < NUM_BANDS) {
                 var ebuf = multiband_ir_band(mi, eband);
                 vec_set(ebuf, sidx,
-                f64_add(vec_get(ebuf, sidx), early_reflection_amplitude_band(refl, eband)));
+                  f64_add(vec_get(ebuf, sidx), early_reflection_amplitude_band(refl, eband)));
                 eband = eband + 1;
             }
         }
@@ -318,12 +318,12 @@ fn generate_ir(source, listener, room, config) {
 
     # Late reverb (diffuse rain). collection_radius 0 => auto.
     var dconf = diffuse_rain_config_new(
-    IrConfig_num_diffuse_rays(config),
-    IrConfig_max_bounces(config),
-    IrConfig_max_time_seconds(config),
-    0,
-    c,
-    IrConfig_seed(config));
+      IrConfig_num_diffuse_rays(config),
+      IrConfig_max_bounces(config),
+      IrConfig_max_time_seconds(config),
+      0,
+      c,
+      IrConfig_seed(config));
     var diffuse = generate_diffuse_rain(source, listener, room, dconf);
     var contribs = DiffuseRainResult_contributions(diffuse);
     var nc = vec_len(contribs);

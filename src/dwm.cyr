@@ -81,7 +81,7 @@ fn dwm_config_new(sample_rate, dx, speed_of_sound, nx, ny, nz, duration_seconds,
 #must_use
 fn dwm_config_default() {
     return dwm_config_new(22050, DWM_DX_DEFAULT, f64_from(343), 30, 25, 20,
-    DWM_DUR_DEFAULT, wall_materials_rigid());
+      DWM_DUR_DEFAULT, wall_materials_rigid());
 }
 
 # Builder: set all faces to one material; mutate + return the config.
@@ -255,7 +255,7 @@ fn dispersion_correction_calibrated(config, boost) {
     if (DwmConfig_sample_rate(config) == 0) { return dispersion_correction_passthrough(); }
 
     var omega_target = f64_div(f64_mul(F64_TAU, f64_mul(F64_HALF, f_mesh)),
-    f64_from(DwmConfig_sample_rate(config)));
+      f64_from(DwmConfig_sample_rate(config)));
     var cos_t = f64_cos(omega_target);
     var denom = f64_mul(F64_TWO, f64_sub(cos_t, F64_ONE));
     if (f64_lt(f64_abs(denom), GOONJ_EPSILON) == 1) { return dispersion_correction_passthrough(); }
@@ -330,7 +330,7 @@ fn solve_dwm_3d(config, source, receivers) {
     var dt = f64_div(F64_ONE, f64_from(DwmConfig_sample_rate(config)));
     var dx_expected = f64_mul(f64_mul(DwmConfig_speed_of_sound(config), dt), DWM_SQRT_3);
     var dx_dev = f64_div(f64_abs(f64_sub(DwmConfig_dx(config), dx_expected)),
-    f64_max(dx_expected, GOONJ_EPSILON));
+      f64_max(dx_expected, GOONJ_EPSILON));
     if (f64_gt(dx_dev, DWM_DX_FAIL_TOL) == 1) {
         # Ports the Rust tracing::warn! — surfaced via goonj_log (verbose diag).
         goonj_log_warn("dwm: dx deviates from c*dt*sqrt(3) by >10%; refusing to run");
@@ -399,7 +399,7 @@ fn solve_dwm_3d(config, source, receivers) {
                     } else {
                         var si = z * ny + y;
                         in_xneg = boundary_filter_process(f_xneg, load64(out_curr + (base + 1) * 8),
-                        load64(s_xneg + si * 8));
+                          load64(s_xneg + si * 8));
                         store64(s_xneg + si * 8, in_xneg);
                     }
                     var in_ypos = 0;
@@ -408,7 +408,7 @@ fn solve_dwm_3d(config, source, receivers) {
                     } else {
                         var si = z * nx + x;
                         in_ypos = boundary_filter_process(f_ypos, load64(out_curr + (base + 2) * 8),
-                        load64(s_ypos + si * 8));
+                          load64(s_ypos + si * 8));
                         store64(s_ypos + si * 8, in_ypos);
                     }
                     var in_yneg = 0;
@@ -417,7 +417,7 @@ fn solve_dwm_3d(config, source, receivers) {
                     } else {
                         var si = z * nx + x;
                         in_yneg = boundary_filter_process(f_yneg, load64(out_curr + (base + 3) * 8),
-                        load64(s_yneg + si * 8));
+                          load64(s_yneg + si * 8));
                         store64(s_yneg + si * 8, in_yneg);
                     }
                     var in_zpos = 0;
@@ -426,7 +426,7 @@ fn solve_dwm_3d(config, source, receivers) {
                     } else {
                         var si = y * nx + x;
                         in_zpos = boundary_filter_process(f_zpos, load64(out_curr + (base + 4) * 8),
-                        load64(s_zpos + si * 8));
+                          load64(s_zpos + si * 8));
                         store64(s_zpos + si * 8, in_zpos);
                     }
                     var in_zneg = 0;
@@ -435,13 +435,13 @@ fn solve_dwm_3d(config, source, receivers) {
                     } else {
                         var si = y * nx + x;
                         in_zneg = boundary_filter_process(f_zneg, load64(out_curr + (base + 5) * 8),
-                        load64(s_zneg + si * 8));
+                          load64(s_zneg + si * 8));
                         store64(s_zneg + si * 8, in_zneg);
                     }
 
                     # Junction pressure p = (2/K)·Σ incoming.
                     var sum = f64_add(f64_add(f64_add(in_xpos, in_xneg), f64_add(in_ypos, in_yneg)),
-                    f64_add(in_zpos, in_zneg));
+                      f64_add(in_zpos, in_zneg));
                     var p = f64_mul(DWM_SCATTER, sum);
 
                     # Transparent (additive) source injection.

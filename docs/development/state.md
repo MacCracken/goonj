@@ -5,16 +5,48 @@
 
 ## Version
 
-**2.0.0** — Cyrius port **complete** (released 2026-06-30). goonj's Rust line
-shipped through 1.4.3; the Cyrius rewrite is a major break, so it lands as
-**2.0.0**. The 14,630-line Rust source is frozen at `rust-old/` as the parity
-oracle.
+**2.0.1** — maintenance release: toolchain + dependency refresh on top of the
+completed port. No source-behaviour changes (the only `src/` edits were
+canonical-fmt whitespace). **2.0.0** (released 2026-06-30) was the port itself —
+goonj's Rust line shipped through 1.4.3 and the Cyrius rewrite is a major break.
+The 14,630-line Rust source is frozen at `rust-old/` as the parity oracle.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.3.14` (in `cyrius.cyml [package].cyrius`) — held deliberately; do not chase newer wrapper drift
+- **Cyrius pin**: `6.5.35` (in `cyrius.cyml [package].cyrius`) — moved
+  deliberately at 2.0.1 (was `6.3.14`). The pin is still set on purpose: bump it
+  as a decision, don't auto-chase `cycc` wrapper drift.
+- The 6.5.35 formatter indents continuation lines deeper than 6.3.x did, so the
+  whole tree was re-canonicalised at 2.0.1 (whitespace only). **Three of the four
+  obvious ways to check formatting are traps** (all verified against 6.5.35):
+  - `cyrius fmt <file>` **rewrites the file in place** and prints nothing. It is
+    not a dry run — do not reach for it to inspect.
+  - `cyrius fmt <file> --check` is non-destructive but exits 0 with empty output
+    even on a file that is *not* canonical. It cannot gate anything.
+  - `cyrius fmt <file> --dry` likewise prints "already canonically formatted"
+    for a non-canonical file.
+  - `cyrfmt <file>` is the honest one: prints canonical output to stdout, never
+    touches the file, works on any path. **Definitive per-file check:**
+    `diff <(cyrfmt src/x.cyr) src/x.cyr`.
+  Project-wide, `cyrius audit`'s fmt section is the real gate — it correctly
+  listed all 23 drifted `src/` files when `--check` claimed clean.
 - Build: `cyrius build src/main.cyr build/goonj`
 - Test: `cyrius test tests/<suite>.tcyr`
+
+### Quality gates (`cyrius audit`)
+
+| Gate | Status |
+|------|--------|
+| fmt   | ✅ clean (was FAIL / 23 files before the 2.0.1 re-canonicalisation) |
+| lint  | ✅ clean |
+| docs  | ⚠ **55 undocumented public fns** — pre-existing, unchanged by 2.0.1 |
+| tests | ✅ 38 suites green |
+| bench | ✅ 16 suites green |
+
+`cyrius audit` **exits 1**, and did so at 2.0.0 as well — the docs gate is the
+only non-green one. Don't read the exit status as a regression signal; read the
+gate list. (Note the exit code is easy to lose: `cyrius audit > log; echo $?`
+in a compound command reports the `echo`, not the audit.)
 
 ## Source
 
@@ -41,7 +73,7 @@ Per-module parity is tracked in [`port-audit.md`](port-audit.md). Summary:
 | pending | none — all 37 modules ported |
 
 Per-module detail in [`port-audit.md`](port-audit.md). Benchmarks in
-[`../benchmarks/results.md`](../benchmarks/results.md). Toolchain: cyrius **6.3.14**.
+[`../benchmarks/results.md`](../benchmarks/results.md). Toolchain: cyrius **6.5.35**.
 
 ## Tests
 
@@ -66,8 +98,12 @@ Direct (declared in `cyrius.cyml`, locked in `cyrius.lock`):
   **ganita** (transcendentals: pow/exp/ln/sin/cos/sqrt/acos/…), **fnptr**
   (`fncallN` indirect calls for the closure→callback pattern), **bench**
   (`bench_new`/`bench_run`/`bench_report` for `.bcyr` benchmarks).
-- **hisab** 2.6.7 — math/geometry; consumed as the single `dist/hisab.cyr`
-  bundle (HVec3 and friends). Pulls transitive `sakshi`.
+- **hisab** 2.11.2 — math/geometry; consumed as the single `dist/hisab.cyr`
+  bundle (HVec3 and friends). Pulls transitive **sakshi** 2.4.11.
+
+`cyrius.lock` pins 31 entries (2 commit-pinned deps + the vendored `lib/`
+hashes) — up from 29 at 2.0.0, because 6.5.35's stdlib snapshot adds
+`lib/callback.cyr` and `lib/tagged.cyr` as transitive leaves.
 
 ## Consumers
 
@@ -85,6 +121,11 @@ mostly done:**
   verbose mode.
 - ✅ `cyrius vet` clean; benchmarks captured (ray + dwm).
 - ✅ **2.0.0 released** — tagged 2026-06-30.
+- ✅ **2.0.1** — toolchain pin 6.3.14 → **6.5.35**, hisab 2.6.7 → **2.11.2**,
+  transitive sakshi 2.4.2 → **2.4.11**, stdlib re-vendored, tree re-canonicalised
+  to the 6.5.35 formatter (23 `src/` + 28 `tests/` files, whitespace only). All
+  3585 parity assertions stay green; `dist/goonj.cyr` is byte-identical apart
+  from the version stamp and the fmt whitespace.
 - ⏳ **Consumer-green** — deferred until a downstream consumer (dhvani/shruti/
   kiran) is itself ported (working up the stack).
 

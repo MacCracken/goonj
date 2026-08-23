@@ -1,8 +1,8 @@
 # Contributing to Goonj
 
-Goonj is a [Cyrius](https://github.com/MacCracken/cyrius) library (v2.0.0),
-compiled by `cycc`. There is no cargo/Rust toolchain — the Rust source at
-`rust-old/` is a frozen parity oracle only.
+Goonj is a [Cyrius](https://github.com/MacCracken/cyrius) library (v2.0.1),
+compiled by `cycc` (toolchain pinned in `cyrius.cyml`). There is no cargo/Rust
+toolchain — the Rust source at `rust-old/` is a frozen parity oracle only.
 
 ## Workflow
 
@@ -18,9 +18,13 @@ compiled by `cycc`. There is no cargo/Rust toolchain — the Rust source at
 
 ## Code style
 
-- Format: `cyrius fmt <file.cyr> --check` must be clean (`--check` exits 1 with
-  empty output on 6.3.x — verify canonically by diffing `cyrius fmt <file>`
-  against the file)
+- Format: the tree must match `cyrfmt` canonical output. Check one file with
+  `diff <(cyrfmt src/x.cyr) src/x.cyr` — `cyrfmt` prints the canonical form to
+  stdout and never modifies the file. **Do not** use `cyrius fmt <file>` to
+  inspect: on 6.5.x it prints nothing and rewrites the file *in place*. **Do
+  not** trust `cyrius fmt --check` or `--dry` either: both report a
+  non-canonical file as clean, so neither can gate. The project-wide gate is
+  `cyrius audit`, whose fmt section does list drifted files.
 - Lint: `cyrius lint <file.cyr>` — 0 warnings, 0 untracked deferrals; no line >120 chars
 - `#must_use` on pure functions; `#derive(accessors)` for struct field accessors
 - Integer error codes (see `src/error.cyr`) — no exceptions/panics

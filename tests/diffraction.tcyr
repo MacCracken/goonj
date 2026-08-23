@@ -68,11 +68,11 @@ assert_eq(is_occluded(src_a, lis_a, vec_new()), 0, "empty room not occluded");
 # collocated source/listener → not occluded even with a wall
 var nx = hvec3_new(f64_neg(F64_ONE), 0, 0);
 var wall_c = mk_wall(
-hvec3_new(f64_from(5), f64_neg(f64_from(5)), f64_from(5)),
-hvec3_new(f64_from(5), f64_from(5), f64_from(5)),
-hvec3_new(f64_from(5), f64_from(5), f64_neg(f64_from(5))),
-hvec3_new(f64_from(5), f64_neg(f64_from(5)), f64_neg(f64_from(5))),
-acoustic_material_concrete(), nx);
+  hvec3_new(f64_from(5), f64_neg(f64_from(5)), f64_from(5)),
+  hvec3_new(f64_from(5), f64_from(5), f64_from(5)),
+  hvec3_new(f64_from(5), f64_from(5), f64_neg(f64_from(5))),
+  hvec3_new(f64_from(5), f64_neg(f64_from(5)), f64_neg(f64_from(5))),
+  acoustic_material_concrete(), nx);
 assert_eq(is_occluded(hvec3_zero(), hvec3_zero(), walls_of1(wall_c)), 0, "collocated not occluded");
 
 # --- diffraction_path_extra ---
@@ -80,12 +80,12 @@ test_group("diffraction_path_extra");
 
 # detour is longer than the direct path
 var extra_p = diffraction_path_extra(hvec3_zero(),
-hvec3_new(f64_from(5), f64_from(3), 0), hvec3_new(f64_from(10), 0, 0));
+  hvec3_new(f64_from(5), f64_from(3), 0), hvec3_new(f64_from(10), 0, 0));
 assert(f64_gt(extra_p, 0), "diffraction path longer than direct");
 
 # collinear points → ~0 extra path
 var extra_z = diffraction_path_extra(hvec3_zero(),
-hvec3_new(f64_from(5), 0, 0), hvec3_new(f64_from(10), 0, 0));
+  hvec3_new(f64_from(5), 0, 0), hvec3_new(f64_from(10), 0, 0));
 assert(approx(extra_z, 0, TOL_1E3), "collinear → ~0 extra");
 
 # --- utd_wedge_diffraction ---
@@ -93,39 +93,39 @@ test_group("utd_wedge_diffraction");
 
 # half-plane, shadow region → negative dB
 var utd_shadow = utd_wedge_diffraction(f64_from(1000), F64_TWO, F64_HALF, d10(25),
-f64_from(5), f64_from(5), f64_from(20));
+  f64_from(5), f64_from(5), f64_from(20));
 assert(f64_lt(utd_shadow, 0), "shadow region negative dB");
 
 # various geometries → non-positive loss
 var u1 = utd_wedge_diffraction(f64_from(1000), F64_TWO, d10(3), d10(3),
-f64_from(5), f64_from(5), f64_from(20));
+  f64_from(5), f64_from(5), f64_from(20));
 assert(f64_le(u1, 0), "non-positive loss (0.3,0.3)");
 var u2 = utd_wedge_diffraction(f64_from(1000), F64_TWO, F64_HALF, d10(25),
-f64_from(5), f64_from(5), f64_from(20));
+  f64_from(5), f64_from(5), f64_from(20));
 assert(f64_le(u2, 0), "non-positive loss (0.5,2.5)");
 var u3 = utd_wedge_diffraction(f64_from(1000), F64_TWO, F64_ONE, F64_ONE,
-f64_from(5), f64_from(5), f64_from(20));
+  f64_from(5), f64_from(5), f64_from(20));
 assert(f64_le(u3, 0), "non-positive loss (1.0,1.0)");
 var u4 = utd_wedge_diffraction(f64_from(1000), F64_TWO,
-f64_mul(F64_PI, F64_HALF), f64_mul(F64_PI, d10(15)),
-f64_from(5), f64_from(5), f64_from(20));
+  f64_mul(F64_PI, F64_HALF), f64_mul(F64_PI, d10(15)),
+  f64_from(5), f64_from(5), f64_from(20));
 assert(f64_le(u4, 0), "non-positive loss (PI/2, 3PI/2)");
 
 # higher frequency → more loss
 var utd_1k = utd_wedge_diffraction(f64_from(1000), F64_TWO, F64_ONE, F64_TWO,
-f64_from(5), f64_from(5), f64_from(20));
+  f64_from(5), f64_from(5), f64_from(20));
 var utd_4k = utd_wedge_diffraction(f64_from(4000), F64_TWO, F64_ONE, F64_TWO,
-f64_from(5), f64_from(5), f64_from(20));
+  f64_from(5), f64_from(5), f64_from(20));
 assert(f64_lt(utd_4k, utd_1k), "4kHz more loss than 1kHz");
 
 # zero frequency → 0 dB
 var utd_zero = utd_wedge_diffraction(0, F64_TWO, F64_ONE, F64_TWO,
-f64_from(5), f64_from(5), f64_from(20));
+  f64_from(5), f64_from(5), f64_from(20));
 assert_eq(f64_to(utd_zero), 0, "utd zero freq → 0 dB");
 
 # reasonable range: non-positive and > -100 dB
 var utd_range = utd_wedge_diffraction(f64_from(500), d10(15), d10(8), d10(15),
-f64_from(3), f64_from(4), f64_from(20));
+  f64_from(3), f64_from(4), f64_from(20));
 assert(f64_le(utd_range, 0), "utd in-range non-positive");
 assert(f64_gt(utd_range, f64_neg(f64_from(100))), "utd in-range reasonable");
 

@@ -49,7 +49,7 @@ fn main() {
     alloc_init();
     _ir = _build_ir();
     _room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
-    acoustic_material_concrete());
+      acoustic_material_concrete());
 
     bench("analysis/c80", &b_c80, 5000);
     bench("analysis/sti", &b_sti, 25);

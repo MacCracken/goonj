@@ -31,7 +31,7 @@ fn approx(a, b, tol) {
 
 fn small_config() {
     return dwm_config_new(22050, required_dx(22050, f64_from(343)), f64_from(343),
-    30, 25, 20, DWM_DUR_DEFAULT, wall_materials_rigid());
+      30, 25, 20, DWM_DUR_DEFAULT, wall_materials_rigid());
 }
 
 # Magnitude of H(z)=b0/(1-a1 z^-1) at normalized frequency omega.
@@ -94,7 +94,7 @@ alloc_init();
 # ================================================================
 test_group("required_dx");
 assert(approx(required_dx(22050, f64_from(343)),
-f64_div(f64_mul(f64_from(343), DWM_SQRT_3), f64_from(22050)), TOL_1E6), "matches formula");
+    f64_div(f64_mul(f64_from(343), DWM_SQRT_3), f64_from(22050)), TOL_1E6), "matches formula");
 assert_eq(f64_to(required_dx(0, f64_from(343))), 0, "zero sample rate -> 0");
 
 # ================================================================
@@ -115,7 +115,7 @@ assert(approx(average_absorption(WallMaterials_z_neg(uni)), avg_carpet, TOL_1E6)
 # with_acoustic_material sets all faces to the material's avg absorption.
 var cfg_carpet = dwm_config_with_acoustic_material(dwm_config_default(), carpet);
 assert(approx(average_absorption(WallMaterials_x_pos(DwmConfig_wall_materials(cfg_carpet))), avg_carpet, TOL_1E6),
-"with_acoustic_material");
+  "with_acoustic_material");
 
 # ================================================================
 test_group("BoundaryFilter");
@@ -125,7 +125,7 @@ var f_rigid = boundary_filter_from_material(rigid_mat);
 assert(approx(BoundaryFilter_b0(f_rigid), F64_ONE, TOL_1E6), "rigid b0=1");
 assert(approx(BoundaryFilter_a1(f_rigid), 0, TOL_1E6), "rigid a1=0");
 assert(approx(boundary_filter_process(f_rigid, f64_div(f64_from(7), f64_from(10)), f64_from(999)),
-f64_div(f64_from(7), f64_from(10)), TOL_1E6), "rigid passes through");
+    f64_div(f64_from(7), f64_from(10)), TOL_1E6), "rigid passes through");
 # Fully absorbing (α=1) -> b0=0, a1=0, zeros the signal.
 var absorb_mat = _am_make("absorb", F64_ONE, F64_ONE, F64_ONE, F64_ONE, F64_ONE, F64_ONE, F64_ONE, F64_ONE, 0);
 var f_absorb = boundary_filter_from_material(absorb_mat);
@@ -139,20 +139,20 @@ assert(approx(iir_magnitude(f_carpet, 0), r_low, TOL_1E4), "|H(0)| = R_low");
 assert(approx(iir_magnitude(f_carpet, F64_PI), r_high, TOL_1E4), "|H(pi)| = R_high");
 # Carpet: low-pass (a1>0), reflects low freq more.
 assert(f64_gt(iir_magnitude(f_carpet, f64_div(f64_from(5), f64_from(100))),
-iir_magnitude(f_carpet, f64_sub(F64_PI, f64_div(f64_from(5), f64_from(100))))), "carpet low>high");
+    iir_magnitude(f_carpet, f64_sub(F64_PI, f64_div(f64_from(5), f64_from(100))))), "carpet low>high");
 assert(f64_gt(BoundaryFilter_a1(f_carpet), 0), "carpet a1>0");
 # Glass: high-pass (a1<0), reflects high freq more.
 var f_glass = boundary_filter_from_material(acoustic_material_glass());
 assert(f64_gt(iir_magnitude(f_glass, f64_sub(F64_PI, f64_div(f64_from(5), f64_from(100)))),
-iir_magnitude(f_glass, f64_div(f64_from(5), f64_from(100)))), "glass high>low");
+    iir_magnitude(f_glass, f64_div(f64_from(5), f64_from(100)))), "glass high>low");
 assert(f64_lt(BoundaryFilter_a1(f_glass), 0), "glass a1<0");
 # Pole stays in [-0.99, 0.99] for all named materials.
 assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_concrete()))),
-DWM_POS_099), "concrete pole stable");
+    DWM_POS_099), "concrete pole stable");
 assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_wood()))), DWM_POS_099),
-"wood pole stable");
+  "wood pole stable");
 assert(f64_le(f64_abs(BoundaryFilter_a1(boundary_filter_from_material(acoustic_material_drywall()))),
-DWM_POS_099), "drywall pole stable");
+    DWM_POS_099), "drywall pole stable");
 
 # ================================================================
 test_group("mesh_frequency / dispersion_factor");
@@ -197,7 +197,7 @@ assert_eq(1, 1, "empty signal no panic");
 var sigs = vec_new();
 vec_push(sigs, f64_from(3));
 dispersion_correction_apply(dispersion_correction_new(f64_div(f64_from(12), f64_from(10)),
-f64_div(f64_neg(F64_TWO), f64_from(10))), sigs);
+    f64_div(f64_neg(F64_TWO), f64_from(10))), sigs);
 assert(approx(vec_get(sigs, 0), V_3_6, TOL_1E6), "single sample y0 = 3.6");
 # boosts amplitude at f_mesh/2 by ~boost
 var dcb = dispersion_correction_calibrated(cfg, V_1_10);
@@ -235,10 +235,10 @@ assert(f64_gt(f64_from(DwmResult_time_steps(solve_dwm_3d(c_ok, pulse, vec_new())
 var c_tiny = small_config();
 DwmConfig_set_nx(c_tiny, 1);
 assert_eq(DwmResult_time_steps(solve_dwm_3d(c_tiny, dwm_source_gaussian_pulse(0, 0, 0, 5, F64_ONE, F64_ONE),
-vec_new())), 0, "tiny grid -> empty");
+      vec_new())), 0, "tiny grid -> empty");
 # source out of grid -> empty.
 assert_eq(DwmResult_time_steps(solve_dwm_3d(small_config(), dwm_source_gaussian_pulse(1000, 0, 0, 5, F64_ONE,
-F64_ONE), vec_new())), 0, "source oob -> empty");
+        F64_ONE), vec_new())), 0, "source oob -> empty");
 # zero dx -> empty.
 var c_zdx = small_config();
 DwmConfig_set_dx(c_zdx, 0);
@@ -253,7 +253,7 @@ DwmConfig_set_nx(c_cap, 1000);
 DwmConfig_set_ny(c_cap, 1000);
 DwmConfig_set_nz(c_cap, 1000);
 assert_eq(DwmResult_time_steps(solve_dwm_3d(c_cap, dwm_source_gaussian_pulse(0, 0, 0, 5, F64_ONE, F64_ONE),
-vec_new())), 0, "grid cap -> empty");
+      vec_new())), 0, "grid cap -> empty");
 
 # ================================================================
 test_group("solve_dwm_3d: propagation");
@@ -289,7 +289,7 @@ var c_drain = small_config();
 DwmConfig_set_duration_seconds(c_drain, V_0_1);
 DwmConfig_set_wall_materials(c_drain, uniform_alpha(F64_ONE));
 assert(f64_lt(field_energy(DwmResult_final_pressure(solve_dwm_3d(c_drain, apulse, vec_new()))), F64_ONE),
-"fully absorbing drains");
+  "fully absorbing drains");
 # Out-of-range absorption (α=5) is clamped: run stays finite.
 var c_bogus = small_config();
 DwmConfig_set_duration_seconds(c_bogus, V_0_02);

@@ -245,8 +245,8 @@ AcousticRoom_set_geometry(empty_room, empty_geom);
 AcousticRoom_set_temperature_celsius(empty_room, f64_from(20));
 AcousticRoom_set_humidity_percent(empty_room, f64_from(50));
 var refl13 = compute_early_reflections(
-hvec3_new(F64_ONE, F64_ONE, F64_ONE), hvec3_new(f64_from(2), F64_ONE, F64_ONE),
-empty_room, 3, f64_from(343));
+  hvec3_new(F64_ONE, F64_ONE, F64_ONE), hvec3_new(f64_from(2), F64_ONE, F64_ONE),
+  empty_room, 3, f64_from(343));
 assert_eq(vec_len(refl13), 0, "empty geometry produces no reflections");
 
 # ================================================================
@@ -277,21 +277,21 @@ test_group("early_reflections_non_shoebox_room");
 var matn = acoustic_material_concrete();
 var walls18 = vec_new();
 vec_push(walls18, mk_wall(
-hvec3_new(0, 0, 0), hvec3_new(f64_from(10), 0, 0),
-hvec3_new(f64_from(10), f64_from(3), 0), hvec3_new(0, f64_from(3), 0),
-matn, hvec3_new(0, 0, f64_neg(F64_ONE))));
+    hvec3_new(0, 0, 0), hvec3_new(f64_from(10), 0, 0),
+    hvec3_new(f64_from(10), f64_from(3), 0), hvec3_new(0, f64_from(3), 0),
+    matn, hvec3_new(0, 0, f64_neg(F64_ONE))));
 vec_push(walls18, mk_wall(
-hvec3_new(0, 0, f64_from(8)), hvec3_new(f64_from(10), 0, f64_from(8)),
-hvec3_new(f64_from(10), f64_from(3), f64_from(8)), hvec3_new(0, f64_from(3), f64_from(8)),
-matn, hvec3_new(0, 0, F64_ONE)));
+    hvec3_new(0, 0, f64_from(8)), hvec3_new(f64_from(10), 0, f64_from(8)),
+    hvec3_new(f64_from(10), f64_from(3), f64_from(8)), hvec3_new(0, f64_from(3), f64_from(8)),
+    matn, hvec3_new(0, 0, F64_ONE)));
 vec_push(walls18, mk_wall(
-hvec3_new(0, 0, 0), hvec3_new(0, 0, f64_from(8)),
-hvec3_new(0, f64_from(3), f64_from(8)), hvec3_new(0, f64_from(3), 0),
-matn, hvec3_new(f64_neg(F64_ONE), 0, 0)));
+    hvec3_new(0, 0, 0), hvec3_new(0, 0, f64_from(8)),
+    hvec3_new(0, f64_from(3), f64_from(8)), hvec3_new(0, f64_from(3), 0),
+    matn, hvec3_new(f64_neg(F64_ONE), 0, 0)));
 vec_push(walls18, mk_wall(
-hvec3_new(f64_from(10), 0, 0), hvec3_new(f64_from(10), 0, f64_from(8)),
-hvec3_new(f64_from(10), f64_from(3), f64_from(8)), hvec3_new(f64_from(10), f64_from(3), 0),
-matn, hvec3_new(F64_ONE, 0, 0)));
+    hvec3_new(f64_from(10), 0, 0), hvec3_new(f64_from(10), 0, f64_from(8)),
+    hvec3_new(f64_from(10), f64_from(3), f64_from(8)), hvec3_new(f64_from(10), f64_from(3), 0),
+    matn, hvec3_new(F64_ONE, 0, 0)));
 var geom18 = alloc(sizeof(RoomGeometry));
 RoomGeometry_set_walls(geom18, walls18);
 var room18 = alloc(sizeof(AcousticRoom));
@@ -299,9 +299,9 @@ AcousticRoom_set_geometry(room18, geom18);
 AcousticRoom_set_temperature_celsius(room18, f64_from(20));
 AcousticRoom_set_humidity_percent(room18, f64_from(50));
 var refl18 = compute_early_reflections(
-hvec3_new(f64_from(5), V_1_5, f64_from(4)),
-hvec3_new(f64_from(5), V_1_5, f64_add(f64_from(4), F64_HALF)),
-room18, 2, c20);
+  hvec3_new(f64_from(5), V_1_5, f64_from(4)),
+  hvec3_new(f64_from(5), V_1_5, f64_add(f64_from(4), F64_HALF)),
+  room18, 2, c20);
 assert(vec_len(refl18) > 0, "non-shoebox geometry still produces reflections");
 
 var rc = assert_summary();

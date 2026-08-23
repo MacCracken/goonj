@@ -2,7 +2,62 @@
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+- **`scripts/bench-history.sh` rewritten as a Cyrius bench recorder.** It still
+  ran `cargo bench --bench benchmarks`, so it had been broken since the
+  Rust→Cyrius port — there is no root `Cargo.toml` (the Rust tree is frozen at
+  `rust-old/` as a parity oracle), it exited 101, and because it piped through
+  `tee -a` it left a 0-byte `bench-history.csv` behind on every run. Unrelated
+  to the 2.0.1 toolchain bump; found during that verification sweep and held
+  back to avoid bundling. It now runs `cyrius bench tests/<suite>.bcyr` over
+  every `tests/*.bcyr` suite (16 today, globbed rather than hardcoded) and
+  appends one CSV row per benchmark — a ~48 s sweep producing 37 rows. This is
+  the mechanism `docs/benchmarks/results.md` had listed as future work, and the
+  one `lib/hisab.cyr`'s `[measured: bench-history.csv …]` citations assume.
+
+  Result rows are selected with the exact glob `lib/bench.cyr:456` promises the
+  script uses (`*": "*" avg"*`), so the `[timer floor …]` line — which
+  deliberately omits `" avg"` — still cannot land in the CSV as a fake
+  benchmark. Times are stored as integer nanoseconds; the parser forces base 10,
+  since `_fmt_pad3`'s zero-padded fraction otherwise reads as octal (`052` → 42)
+  or as an outright syntax error (`098`), which is the same class of silent
+  corruption as PF-01. Each row carries the `floor_ns` measured by **its own
+  suite's process** (the floor is printed once per process), plus `boot_id` and
+  a `cmp` flag: `boot` when `min_ns` < 10 µs, `global` otherwise — making the
+  "not comparable across boots" caveat a filterable column instead of a comment
+  someone has to remember. A run that parses no rows now writes no file at all.
+
+## [2.0.1] - 2026-08-22
+
+Maintenance release: toolchain and dependency refresh on top of the completed
+2.0.0 port. **No behavioural source changes** — all 3585 parity assertions across
+36 suites stay green, and `dist/goonj.cyr` is unchanged apart from its version
+stamp and formatting whitespace.
+
+### Changed
+- Toolchain pin **6.3.14 → 6.5.35** (`cyrius.cyml [package].cyrius`), moved
+  deliberately (the pin is still a decision, not a chase of `cycc` wrapper drift).
+  The 25 vendored stdlib files were re-synced from the 6.5.35 snapshot via
+  `cyrius lib sync`.
+- **hisab 2.6.7 → 2.11.2** (`[deps.hisab].tag`) — a five-minor-version jump —
+  and transitive **sakshi 2.4.2 → 2.4.11**, re-resolved by `cyrius deps`.
+  `lib/callback.cyr` and `lib/tagged.cyr` arrive as new stdlib leaves, taking
+  `cyrius.lock` from 29 entries to 31.
+- **Tree re-canonicalised for the 6.5.35 formatter**, which indents continuation
+  lines deeper than 6.3.x did: 23 `src/` files + 28 `tests/` files, 267 lines,
+  **whitespace-only** (verified per file with `diff -w -B`). Restores a green
+  `cyrius audit` fmt gate. Tooling gotchas worth recording, all verified on
+  6.5.35: `cyrius fmt <file>` **rewrites in place** while printing nothing (it
+  is not a dry run), and both `--check` and `--dry` report a non-canonical file
+  as clean, so neither can gate. `cyrfmt <file>` is the read-only variant —
+  it prints canonical output to stdout and never modifies the file — so
+  `diff <(cyrfmt f) f` is the per-file check, and `cyrius audit`'s fmt section
+  is the project-wide one.
+
+### Added
+- **`dist/goonj.deps`** — dependency sidecar emitted by `cyrius distlib` under
+  6.5.35, naming the 13 stdlib leaves the bundle needs in scope. `cyrius deps`
+  consumes it downstream, so it ships alongside `dist/goonj.cyr`.
 
 ## [2.0.0] - 2026-06-30
 

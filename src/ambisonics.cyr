@@ -167,7 +167,7 @@ fn spherical_harmonics(order, theta, phi) {
         store64(sh + 10 * 8, f64_mul(f64_mul(n3_2, s2c), f64_sin(two_phi)));           # ACN 10
         store64(sh + 11 * 8, f64_mul(f64_mul(n3_1, sin_t), f64_mul(five_cos2_m1, f64_sin(phi)))); # ACN 11
         store64(sh + 12 * 8,
-        f64_sub(f64_mul(f64_mul(c2_5, cos2b), cos_t), f64_mul(c1_5b, cos_t)));     # ACN 12
+          f64_sub(f64_mul(f64_mul(c2_5, cos2b), cos_t), f64_mul(c1_5b, cos_t)));     # ACN 12
         store64(sh + 13 * 8, f64_mul(f64_mul(n3_1, sin_t), f64_mul(five_cos2_m1, f64_cos(phi)))); # ACN 13
         store64(sh + 14 * 8, f64_mul(f64_mul(n3_2, s2c), f64_cos(two_phi)));           # ACN 14
         store64(sh + 15 * 8, f64_mul(f64_mul(n3_3, sin3), f64_cos(three_phi)));        # ACN 15

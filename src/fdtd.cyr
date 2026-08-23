@@ -277,7 +277,7 @@ fn solve_fdtd_2d(config, source, receivers) {
         var tl = f64_add(load64(p_next + (top_row + 1) * 8), load64(p_next + (top_row - nx) * 8));
         store64(p_next + top_row * 8, f64_mul(F64_HALF, tl));
         var trc = f64_add(load64(p_next + (top_row + nx - 2) * 8),
-        load64(p_next + (top_row + nx - 1 - nx) * 8));
+          load64(p_next + (top_row + nx - 1 - nx) * 8));
         store64(p_next + (top_row + nx - 1) * 8, f64_mul(F64_HALF, trc));
 
         # Source injection (additive).

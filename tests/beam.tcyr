@@ -24,19 +24,19 @@ fn dfrac(a, b) { return f64_div(f64_from(a), f64_from(b)); }
 # Shoebox wall lists from the Rust test fixtures (length 10, width 8, height 3).
 fn concrete_walls() {
     return RoomGeometry_walls(
-    room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3),
-    acoustic_material_concrete()));
+      room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3),
+        acoustic_material_concrete()));
 }
 fn carpet_walls() {
     return RoomGeometry_walls(
-    room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3),
-    acoustic_material_carpet()));
+      room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3),
+        acoustic_material_carpet()));
 }
 
 # Standard test beam: apex (5, 1.5, 4), +Z axis, given half-angle.
 fn test_beam(half_angle) {
     return acoustic_beam_new(hvec3_new(f64_from(5), dfrac(3, 2), f64_from(4)),
-    hvec3_unit_z(), half_angle);
+      hvec3_unit_z(), half_angle);
 }
 
 alloc_init();
@@ -76,7 +76,7 @@ assert(vec_len(sd_b1) > vec_len(sd_b0), "more beams at higher subdivision");
 # ================================================================
 test_group("beam empty scene");
 var es_path = trace_beam(
-acoustic_beam_new(hvec3_zero(), hvec3_unit_x(), dfrac(1, 10)), vec_new(), 10);
+  acoustic_beam_new(hvec3_zero(), hvec3_unit_x(), dfrac(1, 10)), vec_new(), 10);
 assert_eq(vec_len(beam_path_hits(es_path)), 0, "empty scene no hits");
 
 # ================================================================

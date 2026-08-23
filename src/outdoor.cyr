@@ -156,7 +156,7 @@ fn ground_attenuation(distance, source_height, receiver_height, ground_factor) {
 
         # Middle region: proportional to distance and G.
         var mid_factor = f64_max(f64_sub(F64_ONE,
-        f64_div(f64_mul(f64_from(30), f64_add(h_s, h_r)), dp)), 0);
+            f64_div(f64_mul(f64_from(30), f64_add(h_s, h_r)), dp)), 0);
         var a_m = f64_mul(f64_mul(f64_neg(f64_from(3)), g), mid_factor);
 
         var total = f64_add(f64_add(a_s, a_m), a_r);

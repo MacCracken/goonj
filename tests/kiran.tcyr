@@ -28,15 +28,15 @@ fn mk_wall(v0, v1, v2, v3, material, normal) {
 # A 20x20x3 concrete room with an internal wall at x=10 blocking the path.
 fn blocked_room() {
     var room = acoustic_room_shoebox(f64_from(20), f64_from(20), f64_from(3),
-    acoustic_material_concrete());
+      acoustic_material_concrete());
     var walls = RoomGeometry_walls(AcousticRoom_geometry(room));
     var nx = hvec3_new(f64_neg(F64_ONE), 0, 0);
     var wall = mk_wall(
-    hvec3_new(f64_from(10), f64_neg(f64_from(5)), f64_from(5)),
-    hvec3_new(f64_from(10), f64_from(5), f64_from(5)),
-    hvec3_new(f64_from(10), f64_from(5), f64_neg(f64_from(5))),
-    hvec3_new(f64_from(10), f64_neg(f64_from(5)), f64_neg(f64_from(5))),
-    acoustic_material_concrete(), nx);
+      hvec3_new(f64_from(10), f64_neg(f64_from(5)), f64_from(5)),
+      hvec3_new(f64_from(10), f64_from(5), f64_from(5)),
+      hvec3_new(f64_from(10), f64_from(5), f64_neg(f64_from(5))),
+      hvec3_new(f64_from(10), f64_neg(f64_from(5)), f64_neg(f64_from(5))),
+      acoustic_material_concrete(), nx);
     vec_push(walls, wall);
     return room;
 }
@@ -47,7 +47,7 @@ alloc_init();
 test_group("unoccluded_path_zero_attenuation");
 
 var room1 = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
-acoustic_material_concrete());
+  acoustic_material_concrete());
 var engine1 = kiran_occlusion_engine_new(room1);
 var src1 = hvec3_new(f64_from(3), onehalf(), f64_from(4));
 var lis1 = hvec3_new(f64_from(7), onehalf(), f64_from(4));
@@ -60,17 +60,17 @@ test_group("occluded_path_has_attenuation");
 
 var engine2 = kiran_occlusion_engine_new(blocked_room());
 var res2 = kiran_occlusion_query(engine2, hvec3_new(f64_from(5), 0, 0),
-hvec3_new(f64_from(15), 0, 0));
+  hvec3_new(f64_from(15), 0, 0));
 assert_eq(kiran_occlusion_result_is_occluded(res2), 1, "blocked path is occluded");
 assert(f64_lt(kiran_occlusion_result_attenuation_db(res2), 0),
-"occlusion produces negative attenuation");
+  "occlusion produces negative attenuation");
 
 # --- frequency_dependent_attenuation ---
 test_group("frequency_dependent_attenuation");
 
 var engine3 = kiran_occlusion_engine_new(blocked_room());
 var res3 = kiran_occlusion_query(engine3, hvec3_new(f64_from(5), 0, 0),
-hvec3_new(f64_from(15), 0, 0));
+  hvec3_new(f64_from(15), 0, 0));
 var band5 = kiran_occlusion_result_band(res3, 5);
 var band0 = kiran_occlusion_result_band(res3, 0);
 assert(f64_lt(band5, band0), "high freq more attenuated than low freq");
@@ -79,7 +79,7 @@ assert(f64_lt(band5, band0), "high freq more attenuated than low freq");
 test_group("occlusion_engine_room_accessor");
 
 var room5 = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
-acoustic_material_concrete());
+  acoustic_material_concrete());
 var engine5 = kiran_occlusion_engine_new(room5);
 var walls5 = RoomGeometry_walls(AcousticRoom_geometry(kiran_occlusion_engine_room(engine5)));
 assert_eq(vec_len(walls5), 6, "shoebox room has 6 walls");

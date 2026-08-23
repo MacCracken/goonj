@@ -33,7 +33,7 @@ fn b_order_5() {
 fn main() {
     alloc_init();
     _room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
-    acoustic_material_concrete());
+      acoustic_material_concrete());
     _source = hvec3_new(f64_from(3), f64_div(f64_from(3), F64_TWO), f64_from(4));
     _listener = hvec3_new(f64_from(7), f64_div(f64_from(3), F64_TWO), f64_from(4));
     _spd = speed_of_sound(f64_from(20));

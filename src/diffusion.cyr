@@ -136,10 +136,10 @@ fn solve_diffusion_2d(config, absorption_field, absorption_len, source_field, so
                 var idx = y * nx + x;
                 var wc = vec_get(w, idx);
                 var laplacian = f64_sub(
-                f64_add(
-                f64_add(vec_get(w, idx - 1), vec_get(w, idx + 1)),
-                f64_add(vec_get(w, idx - nx), vec_get(w, idx + nx))),
-                f64_mul(f64_from(4), wc));
+                  f64_add(
+                    f64_add(vec_get(w, idx - 1), vec_get(w, idx + 1)),
+                    f64_add(vec_get(w, idx - nx), vec_get(w, idx + nx))),
+                  f64_mul(f64_from(4), wc));
 
                 # Absorption term (0 beyond the supplied field).
                 var alpha = 0;

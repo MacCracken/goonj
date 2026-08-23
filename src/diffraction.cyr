@@ -87,7 +87,7 @@ fn _diff_cot_term(beta, sign, inv_n, wedge_n, k, l) {
 # Wedge diffraction loss (dB, negative = loss). exterior angle = n × π.
 #must_use
 fn utd_wedge_diffraction(frequency, wedge_n, source_angle, receiver_angle,
-distance_source, distance_receiver, temperature_celsius) {
+  distance_source, distance_receiver, temperature_celsius) {
     if (f64_le(frequency, 0) == 1) { return 0; }
     if (f64_le(wedge_n, 0) == 1) { return 0; }
     if (f64_le(distance_source, 0) == 1) { return 0; }

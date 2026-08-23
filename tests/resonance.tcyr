@@ -48,10 +48,10 @@ test_group("schroeder_frequency");
 assert(approx(schroeder_frequency(F64_ONE, f64_from(100)), f64_from(200), F64_ONE), "fs ~200 Hz");
 # Larger room → lower fs.
 assert(f64_lt(schroeder_frequency(F64_ONE, f64_from(500)),
-              schroeder_frequency(F64_ONE, f64_from(50))), "larger room lower fs");
+    schroeder_frequency(F64_ONE, f64_from(50))), "larger room lower fs");
 # Longer RT60 → higher fs.
 assert(f64_gt(schroeder_frequency(F64_TWO, f64_from(100)),
-              schroeder_frequency(F64_HALF, f64_from(100))), "longer RT60 higher fs");
+    schroeder_frequency(F64_HALF, f64_from(100))), "longer RT60 higher fs");
 # Guards.
 assert_eq(f64_to(schroeder_frequency(F64_ONE, 0)), 0, "zero volume -> 0");
 assert_eq(f64_to(schroeder_frequency(0, f64_from(100))), 0, "zero RT60 -> 0");
@@ -60,9 +60,9 @@ assert_eq(f64_to(schroeder_frequency(0, f64_from(100))), 0, "zero RT60 -> 0");
 test_group("modal_density");
 # Rises with frequency and with volume.
 assert(f64_gt(modal_density(f64_from(1000), f64_from(200), f64_from(343)),
-              modal_density(f64_from(100), f64_from(200), f64_from(343))), "rises with frequency");
+    modal_density(f64_from(100), f64_from(200), f64_from(343))), "rises with frequency");
 assert(f64_gt(modal_density(f64_from(500), f64_from(500), f64_from(343)),
-              modal_density(f64_from(500), f64_from(50), f64_from(343))), "rises with volume");
+    modal_density(f64_from(500), f64_from(50), f64_from(343))), "rises with volume");
 # Guard: zero speed → 0.
 assert_eq(f64_to(modal_density(f64_from(500), f64_from(100), 0)), 0, "zero speed -> 0");
 

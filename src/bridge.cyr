@@ -120,7 +120,7 @@ fn em_resonance_coupling(em_frequency_hz, structural_freq_hz, damping_ratio) {
     var one_minus_r2 = f64_sub(F64_ONE, f64_mul(r, r));
     var two_zeta_r = f64_mul(f64_mul(F64_TWO, zeta), r);
     var denom = f64_sqrt(f64_add(f64_mul(one_minus_r2, one_minus_r2),
-    f64_mul(two_zeta_r, two_zeta_r)));
+        f64_mul(two_zeta_r, two_zeta_r)));
     if (f64_lt(denom, DENOM_THRESH) == 1) { return f64_from(1000); }
     return f64_min(f64_div(F64_ONE, denom), f64_from(1000));
 }
@@ -134,6 +134,6 @@ fn piezo_acoustic_power(e_field_v_per_m, frequency_hz, piezo_coefficient_m_per_v
     var displacement = f64_mul(piezo_coefficient_m_per_v, e_field_v_per_m);
     var velocity = f64_mul(f64_mul(f64_mul(displacement, F64_TWO), F64_PI), frequency_hz);
     var power = f64_mul(f64_mul(f64_mul(f64_mul(F64_HALF, RHO_AIR), c),
-    transducer_area_m2), f64_mul(velocity, velocity));
+        transducer_area_m2), f64_mul(velocity, velocity));
     return f64_max(power, 0);
 }

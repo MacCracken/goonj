@@ -158,10 +158,10 @@ fn ocean_absorption_db_per_km(frequency_hz, profile) {
     var a3 = 0;
     if (f64_le(t, f64_from(20)) == 1) {
         a3 = f64_sub(f64_add(f64_sub(PW_LO_0, f64_mul(PW_LO_1, t)),
-        f64_mul(PW_LO_2, t2)), f64_mul(PW_LO_3, t3));
+            f64_mul(PW_LO_2, t2)), f64_mul(PW_LO_3, t3));
     } else {
         a3 = f64_sub(f64_add(f64_sub(PW_HI_0, f64_mul(PW_HI_1, t)),
-        f64_mul(PW_HI_2, t2)), f64_mul(PW_HI_3, t3));
+            f64_mul(PW_HI_2, t2)), f64_mul(PW_HI_3, t3));
     }
     var pure_water = f64_mul(f64_mul(a3, f2), p_factor);
 
@@ -251,7 +251,7 @@ fn surface_scattering_loss(frequency_hz, grazing_angle_rad, rms_wave_height, wat
 
     # Rayleigh roughness parameter: R = 4*pi*h_rms*sin(theta) / lambda.
     var roughness = f64_div(
-    f64_mul(f64_mul(f64_mul(f64_from(4), F64_PI), rms_wave_height), sin_theta), wavelength);
+      f64_mul(f64_mul(f64_mul(f64_from(4), F64_PI), rms_wave_height), sin_theta), wavelength);
 
     # Eckart model: scattering loss ~ exp(-R^2/2) -> dB.
     var coherent = f64_exp(f64_div(f64_neg(f64_mul(roughness, roughness)), F64_TWO));

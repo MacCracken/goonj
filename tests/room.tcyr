@@ -22,7 +22,7 @@ fn approx(a, b, tol) {
 # A 10 × 8 × 3 m concrete shoebox (the oracle's test_room()).
 fn test_room() {
     return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
-    acoustic_material_concrete());
+      acoustic_material_concrete());
 }
 
 alloc_init();
@@ -58,12 +58,12 @@ assert(approx(wall_area(rect), f64_from(15), TOL_1E2), "rectangle area ~15");
 # ================================================================
 test_group("absorption_area_depends_on_material");
 var concrete_room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
-acoustic_material_concrete());
+  acoustic_material_concrete());
 var carpet_room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
-acoustic_material_carpet());
+  acoustic_material_carpet());
 assert(f64_gt(room_geometry_total_absorption(AcousticRoom_geometry(carpet_room)),
-room_geometry_total_absorption(AcousticRoom_geometry(concrete_room))),
-"carpet absorbs more than concrete");
+    room_geometry_total_absorption(AcousticRoom_geometry(concrete_room))),
+  "carpet absorbs more than concrete");
 
 # ================================================================
 test_group("default_conditions");

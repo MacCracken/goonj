@@ -54,6 +54,19 @@ jobs:
           mkdir -p build
           cyrius build src/main.cyr build/${{ github.event.repository.name }}
 
+      - name: Verify distlib bundle freshness
+        # Belt-and-braces: the `ci` gate above already ran this on the same
+        # commit. Repeated here because the tarball below is `git archive
+        # HEAD` — dist/goonj.cyr and dist/goonj.deps ship inside it, and
+        # that tarball is what downstream `cyrius deps` fetches and
+        # sha256-verifies. This is the last point where a stale or missing
+        # bundle can still be caught before it is tagged and published.
+        run: |
+          cyrius distlib --check || {
+            echo "::error::dist/ is stale — run 'cyrius distlib', commit dist/goonj.cyr and dist/goonj.deps, then re-tag"
+            exit 1
+          }
+
       - name: Extract changelog
         # Pull the tagged section out of CHANGELOG.md for the release body.
         run: |

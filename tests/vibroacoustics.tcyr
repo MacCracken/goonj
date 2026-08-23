@@ -81,7 +81,7 @@ test_group("radiated_sound_power: increases with velocity");
 var res_low = _one_surface_power(_milli());
 var res_high = _one_surface_power(_centi());
 assert(f64_gt(radiation_result_sound_power_watts(res_high),
-radiation_result_sound_power_watts(res_low)), "higher velocity -> more power");
+    radiation_result_sound_power_watts(res_low)), "higher velocity -> more power");
 
 # ================================================================
 test_group("modal_radiation: produces output");

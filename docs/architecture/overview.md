@@ -1,11 +1,15 @@
 # Goonj Architecture
 
-goonj is a Cyrius library (v2.0.0): 37 self-contained modules in `src/*.cyr`
+goonj is a Cyrius library (v2.0.1): 37 self-contained modules in `src/*.cyr`
 (plus `src/main.cyr`, a smoke binary that does not include the library). Modules
 carry no `include` lines; stdlib + hisab resolve from `cyrius.cyml`. All 37
 concatenate — in the dependency order below — into `dist/goonj.cyr` via
 `cyrius distlib`. There are **no Cargo-style feature flags**; every module ships
-in the bundle, and consumers pull the single file.
+in the bundle, and consumers pull the single file. `cyrius distlib` also emits
+`dist/goonj.deps`, a sidecar naming the 13 stdlib leaves the bundle needs in
+scope; downstream `cyrius deps` reads it, so it ships with the bundle. Both
+files are tracked — a consumer that has to hand-declare those leaves gets no
+error when it under-declares.
 
 ## Module map (by dependency layer)
 

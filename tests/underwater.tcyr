@@ -122,7 +122,7 @@ assert(f64_gt(rough2, calm2), "rough sea scatters more than calm");
 # ================================================================
 test_group("surface_scattering_zero_waves");
 assert_eq(f64_to(surface_scattering_loss(f64_from(1000), F64_HALF, 0, f64_from(1500))), 0,
-"zero waves -> 0 loss");
+  "zero waves -> 0 loss");
 
 # ================================================================
 test_group("sediment_presets_valid");

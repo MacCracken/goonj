@@ -44,16 +44,16 @@ fn b_generate_ir() {
 fn main() {
     alloc_init();
     _room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),
-    acoustic_material_concrete());
+      acoustic_material_concrete());
 
     # HRTF pairs: front (az 0) and right (az pi/2), each with 3-tap HRIRs.
     var left1 = _v3(F64_ONE, F64_HALF, f64_div(F64_ONE, f64_from(5)));       # 1.0 0.5 0.2
     var right1 = _v3(F64_ONE, F64_HALF, f64_div(F64_ONE, f64_from(5)));      # 1.0 0.5 0.2
     var left2 = _v3(f64_div(f64_from(3), f64_from(10)),                      # 0.3
-    f64_div(F64_ONE, f64_from(10)),                                     # 0.1
-    f64_div(F64_ONE, f64_from(20)));                                    # 0.05
+      f64_div(F64_ONE, f64_from(10)),                                     # 0.1
+      f64_div(F64_ONE, f64_from(20)));                                    # 0.05
     var right2 = _v3(F64_ONE, f64_div(f64_from(4), f64_from(5)),             # 1.0 0.8
-    f64_div(f64_from(2), f64_from(5)));                                 # 0.4
+      f64_div(f64_from(2), f64_from(5)));                                 # 0.4
     var pairs = vec_new();
     vec_push(pairs, hrtf_pair_new(0, 0, left1, right1));
     vec_push(pairs, hrtf_pair_new(F64_PI_2, 0, left2, right2));

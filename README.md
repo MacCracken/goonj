@@ -4,9 +4,9 @@
 [AGNOS](https://github.com/MacCracken/agnosticos) ecosystem.
 
 Goonj is a **[Cyrius](https://github.com/MacCracken/cyrius) library** — the
-completed **v2.0.0** Rust → Cyrius port of the original ~14,630-line Rust engine
+completed Rust → Cyrius port (**v2.0.1**) of the original ~14,630-line Rust engine
 (frozen at `rust-old/` as a parity oracle). It is compiled by `cycc` (toolchain
-pinned `cyrius = "6.3.14"` in `cyrius.cyml`), built on
+pinned `cyrius = "6.5.35"` in `cyrius.cyml`), built on
 [hisab](https://github.com/MacCracken/hisab) for math/geometry, and ships as a
 single distlib bundle, `dist/goonj.cyr`, for downstream Cyrius consumers.
 
@@ -56,8 +56,8 @@ var c    = speed_of_sound(f64_from(20));   # ≈ 343.4 m/s at 20 °C
 
 ```
 goonj (Cyrius acoustics)
-  ├── hisab (math/geometry — HVec3, geo, BVH; consumed as dist/hisab.cyr, tag 2.6.7)
-  ├── sakshi (structured logging; pulled transitively via hisab)
+  ├── hisab (math/geometry — HVec3, geo, BVH; consumed as dist/hisab.cyr, tag 2.11.2)
+  ├── sakshi (structured logging; pulled transitively via hisab, 2.4.11)
   └── Cyrius stdlib (math, ganita, vec, fnptr, bench, …)
 ```
 

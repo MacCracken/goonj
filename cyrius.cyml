@@ -5,7 +5,7 @@ description = "goonj — acoustics engine (sound propagation, room simulation, i
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/goonj"
 language = "cyrius"
-cyrius = "6.3.14"
+cyrius = "6.5.35"
 
 [build]
 entry = "src/main.cyr"
@@ -85,5 +85,5 @@ stdlib = [
 # hisab's current release.
 [deps.hisab]
 git = "https://github.com/MacCracken/hisab.git"
-tag = "2.6.7"
+tag = "2.11.2"
 modules = ["dist/hisab.cyr"]

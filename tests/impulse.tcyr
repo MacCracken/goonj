@@ -95,10 +95,10 @@ assert_eq(g2_ok, 1, "broadband should be normalized");
 # ================================================================
 test_group("multiband IR band count");
 var g3_ir = generate_ir(
-hvec3_new(f64_from(5), tenths(15), f64_from(4)),
-hvec3_new(f64_from(5), tenths(15), f64_add(f64_from(4), F64_HALF)),
-concrete_room(),
-ir_config_small(50, tenths(1)));
+  hvec3_new(f64_from(5), tenths(15), f64_from(4)),
+  hvec3_new(f64_from(5), tenths(15), f64_add(f64_from(4), F64_HALF)),
+  concrete_room(),
+  ir_config_small(50, tenths(1)));
 var g3_count = 0;
 var g3_b = 0;
 while (g3_b < NUM_BANDS) {
@@ -251,7 +251,7 @@ store64(fn_axes + 8, axis_absorption_new(pct(60), f64_from(160)));
 store64(fn_axes + 16, axis_absorption_new(pct(5), f64_from(48)));
 var fn_fitz = fitzroy_rt60(f64_from(240), f64_from(268), fn_axes);
 var fn_weighted = f64_add(f64_add(f64_mul(pct(5), f64_from(60)), f64_mul(pct(60), f64_from(160))),
-f64_mul(pct(5), f64_from(48)));
+  f64_mul(pct(5), f64_from(48)));
 var fn_avg = f64_div(fn_weighted, f64_from(268));
 var fn_sab = sabine_rt60(f64_from(240), f64_mul(f64_from(268), fn_avg));
 var fn_rel = f64_div(f64_abs(f64_sub(fn_fitz, fn_sab)), fn_sab);

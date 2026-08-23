@@ -73,12 +73,12 @@ fn hrtf_dataset_nearest(dataset, azimuth, elevation) {
     if (n == 0) { return 0; }
     var best = vec_get(pairs, 0);
     var best_dist = binaural_angular_distance(
-    HrtfPair_azimuth(best), HrtfPair_elevation(best), azimuth, elevation);
+      HrtfPair_azimuth(best), HrtfPair_elevation(best), azimuth, elevation);
     var i = 1;
     while (i < n) {
         var cand = vec_get(pairs, i);
         var d = binaural_angular_distance(
-        HrtfPair_azimuth(cand), HrtfPair_elevation(cand), azimuth, elevation);
+          HrtfPair_azimuth(cand), HrtfPair_elevation(cand), azimuth, elevation);
         if (f64_lt(d, best_dist) == 1) {
             best = cand;
             best_dist = d;
@@ -110,7 +110,7 @@ fn binaural_ir_new(left, right, sample_rate) {
 #must_use
 fn binaural_ir_to_wav(bir) {
     return write_wav_stereo(
-    BinauralIr_left(bir), BinauralIr_right(bir), BinauralIr_sample_rate(bir));
+      BinauralIr_left(bir), BinauralIr_right(bir), BinauralIr_sample_rate(bir));
 }
 
 # ================================================================
@@ -186,7 +186,7 @@ fn generate_binaural_ir(source, listener, room, hrtf, config) {
             if (f64_ge(amp, GOONJ_EPSILON) == 1) {
                 var angles = binaural_direction_to_angles(early_reflection_direction(refl));
                 var pair = hrtf_dataset_nearest(
-                hrtf, BinauralAngles_azimuth(angles), BinauralAngles_elevation(angles));
+                  hrtf, BinauralAngles_azimuth(angles), BinauralAngles_elevation(angles));
                 if (pair != 0) {
                     # Convolve: add the scaled HRIR at the reflection's arrival.
                     var hl_vec = HrtfPair_left(pair);

@@ -33,7 +33,7 @@ fn main() {
     _source = hvec3_new(f64_from(3), f64_div(f64_from(3), F64_TWO), f64_from(4));
     _listener = hvec3_new(f64_from(7), f64_div(f64_from(3), F64_TWO), f64_from(4));
     _config = diffuse_rain_config_new(1000, 50, f64_from(2), f64_div(f64_from(3), F64_TWO),
-    speed_of_sound(f64_from(20)), 42);
+      speed_of_sound(f64_from(20)), 42);
 
     bench("diffuse/1000_rays_shoebox", &b_diffuse_1000_rays, 10);
     return 0;

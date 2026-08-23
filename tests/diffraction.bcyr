@@ -48,7 +48,7 @@ fn main() {
     _source = hvec3_new(f64_from(3), F64_ONE_HALF, f64_from(4));
     _listener = hvec3_new(f64_from(7), F64_ONE_HALF, f64_from(4));
     _walls = RoomGeometry_walls(room_geometry_shoebox(f64_from(10), f64_from(8),
-    f64_from(3), acoustic_material_concrete()));
+        f64_from(3), acoustic_material_concrete()));
 
     bench("diffraction/edge_loss", &b_edge_loss, 1000000);
     bench("diffraction/is_occluded_shoebox", &b_is_occluded, 200000);

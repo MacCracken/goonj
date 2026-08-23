@@ -22,7 +22,7 @@ fn main() {
     alloc_init();
     # NegativeStiffness { k_eff: Lorentzian(500, 800, 50, K0_air), rho: rho_air }.
     var k_eff = lorentzian_resonance_new(f64_from(500), f64_from(800), f64_from(50),
-    AIR_BULK_MODULUS);
+      AIR_BULK_MODULUS);
     _m = metamaterial_negative_stiffness(k_eff, AIR_DENSITY);
 
     bench("metamaterial/absorption_bands_negstiff", &b_absorption_bands, 500000);

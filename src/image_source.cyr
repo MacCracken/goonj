@@ -327,7 +327,7 @@ fn compute_early_reflections(source, listener, room, max_order, c_sound) {
     }
 
     var image_sources = compute_image_sources_shoebox(
-    source, HVec3_x(dims), HVec3_z(dims), HVec3_y(dims), materials, max_order);
+      source, HVec3_x(dims), HVec3_z(dims), HVec3_y(dims), materials, max_order);
 
     var ns = vec_len(image_sources);
     var s = 0;
@@ -343,7 +343,7 @@ fn compute_early_reflections(source, listener, room, max_order, c_sound) {
             var band = 0;
             while (band < NUM_BANDS) {
                 store64(r + ER_AMP + band * 8,
-                f64_mul(image_source_atten_band(img, band), inv_dist));
+                  f64_mul(image_source_atten_band(img, band), inv_dist));
                 band = band + 1;
             }
             vec_push(reflections, r);

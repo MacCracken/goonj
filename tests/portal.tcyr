@@ -19,7 +19,7 @@ fn approx(a, b, tol) {
 # Rust standard_door(): position (5,1,0), normal +Z, 0.9 x 2.1 m.
 fn standard_door() {
     return portal_new(hvec3_new(f64_from(5), F64_ONE, 0), hvec3_unit_z(),
-    f64_div(f64_from(9), f64_from(10)), f64_div(f64_from(21), f64_from(10)));
+      f64_div(f64_from(9), f64_from(10)), f64_div(f64_from(21), f64_from(10)));
 }
 
 # Sum all NUM_BANDS energy/transmission factors in a band buffer.
@@ -74,9 +74,9 @@ assert(f64_gt(load64(energy + 4 * 8), 0), "1 kHz on-axis has energy");
 test_group("portal_energy_off_axis_lower");
 var door2 = standard_door();
 var on_axis = portal_energy_transfer(hvec3_new(f64_from(5), F64_ONE, f64_neg(f64_from(3))),
-door2, hvec3_new(f64_from(5), F64_ONE, f64_from(3)), f64_from(20));
+  door2, hvec3_new(f64_from(5), F64_ONE, f64_from(3)), f64_from(20));
 var off_axis = portal_energy_transfer(hvec3_new(0, F64_ONE, f64_neg(f64_from(3))),
-door2, hvec3_new(f64_from(5), F64_ONE, f64_from(3)), f64_from(20));
+  door2, hvec3_new(f64_from(5), F64_ONE, f64_from(3)), f64_from(20));
 assert(f64_gt(band_sum(on_axis), band_sum(off_axis)), "on-axis > off-axis energy");
 
 # ================================================================

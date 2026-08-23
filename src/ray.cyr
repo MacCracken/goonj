@@ -199,7 +199,7 @@ fn _reflect_direction(d, n, scattering) {
     var specular = hvec3_sub(d, hvec3_scale(n, f64_mul(F64_TWO, hvec3_dot(d, n))));
     if (f64_gt(scattering, GOONJ_EPSILON) == 1) {
         var blended = hvec3_add(hvec3_scale(specular, f64_sub(F64_ONE, scattering)),
-        hvec3_scale(n, scattering));
+          hvec3_scale(n, scattering));
         var len = hvec3_length(blended);
         if (f64_gt(len, GOONJ_EPSILON) == 1) { return hvec3_scale(blended, f64_div(F64_ONE, len)); }
         return specular;
@@ -365,7 +365,7 @@ fn trace_ray(ray, walls, max_bounces) {
                 RayHit_set_distance(hit, t);
                 RayHit_set_wall_index(hit, idx);
                 current = reflect_ray_multiband(current, hit, _wall_absorption_ptr(wall),
-                am_scattering(Wall_material(wall)));
+                  am_scattering(Wall_material(wall)));
                 vec_push(bounces, _make_bounce(point, Wall_normal(wall), idx, t, current));
                 last_wall = idx;
                 b = b + 1;
@@ -407,7 +407,7 @@ fn trace_ray_bvh(ray, accel_room, max_bounces) {
                 RayHit_set_distance(hit, t);
                 RayHit_set_wall_index(hit, idx);
                 current = reflect_ray_multiband(current, hit, _wall_absorption_ptr(wall),
-                am_scattering(Wall_material(wall)));
+                  am_scattering(Wall_material(wall)));
                 vec_push(bounces, _make_bounce(point, Wall_normal(wall), idx, t, current));
                 last_wall = idx;
                 b = b + 1;

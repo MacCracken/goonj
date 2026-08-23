@@ -123,7 +123,7 @@ struct GfpeConfig {
 
 #must_use
 fn gfpe_config_new(frequency_hz, source_height_m, max_range_m, max_height_m,
-range_step_m, height_step_m, ground_impedance, atmosphere) {
+  range_step_m, height_step_m, ground_impedance, atmosphere) {
     var c = alloc(sizeof(GfpeConfig));
     GfpeConfig_set_frequency_hz(c, frequency_hz);
     GfpeConfig_set_source_height_m(c, source_height_m);
@@ -375,8 +375,8 @@ fn solve_gfpe(terrain, config) {
 
     # Reflection coefficient at a representative grazing angle.
     var rep_angle = f64_max(
-    f64_atan(f64_div(f64_max(src_h, dz), f64_max(max_range, dr))),
-    GFPE_1E3);
+      f64_atan(f64_div(f64_max(src_h, dz), f64_max(max_range, dr))),
+      GFPE_1E3);
     var rcplx = gfpe_ground_reflection_complex(freq, rep_angle, GfpeConfig_ground_impedance(config));
     var r_re = GfpeCplx_re(rcplx);
     var r_im = GfpeCplx_im(rcplx);

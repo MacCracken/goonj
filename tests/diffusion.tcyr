@@ -17,12 +17,12 @@ fn approx(a, b, tol) {
 # Shared config: dx=0.5, dt=0.001, 20x16 grid, c(20C), mfp=4, max_time=0.1.
 fn simple_config() {
     return diffusion_config_new(
-    F64_HALF,                            # dx = 0.5
-    f64_div(F64_ONE, f64_from(1000)),    # dt = 0.001
-    20, 16,                              # nx, ny
-    speed_of_sound(f64_from(20)),        # speed of sound at 20 C
-    f64_from(4),                         # mean free path = 4
-    f64_div(F64_ONE, f64_from(10)));     # max_time = 0.1
+      F64_HALF,                            # dx = 0.5
+      f64_div(F64_ONE, f64_from(1000)),    # dt = 0.001
+      20, 16,                              # nx, ny
+      speed_of_sound(f64_from(20)),        # speed of sound at 20 C
+      f64_from(4),                         # mean free path = 4
+      f64_div(F64_ONE, f64_from(10)));     # max_time = 0.1
 }
 
 # Alloc an n-element f64 buffer filled with `val`.
@@ -89,14 +89,14 @@ assert(nonneg, "energy density non-negative");
 test_group("diffusion_invalid_config");
 # dx = 0 -> invalid config -> 0 steps.
 var cfg4 = diffusion_config_new(0, f64_div(F64_ONE, f64_from(1000)), 10, 10,
-f64_from(343), f64_from(4), f64_div(F64_ONE, f64_from(10)));
+  f64_from(343), f64_from(4), f64_div(F64_ONE, f64_from(10)));
 var res4 = solve_diffusion_2d(cfg4, 0, 0, 0, 0);
 assert_eq(DiffusionResult_time_steps(res4), 0, "invalid config -> 0 steps");
 
 # ================================================================
 test_group("diffusion_zero_speed_of_sound_returns_empty");
 var cfg5 = diffusion_config_new(F64_HALF, f64_div(F64_ONE, f64_from(1000)), 10, 10,
-0, f64_from(4), f64_div(F64_ONE, f64_from(10)));
+  0, f64_from(4), f64_div(F64_ONE, f64_from(10)));
 var res5 = solve_diffusion_2d(cfg5, 0, 0, 0, 0);
 assert_eq(DiffusionResult_time_steps(res5), 0, "zero speed -> 0 steps");
 var ed5 = DiffusionResult_energy_density(res5);

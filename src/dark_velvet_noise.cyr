@@ -101,7 +101,7 @@ fn dvn_config_new(sample_rate, pulse_density_hz, duration_seconds, decay, init_c
 fn dvn_config_default() {
     var decay = decay_exponential(f64_div(f64_from(3), f64_from(2)));
     return dvn_config_new(48000, f64_from(2000), f64_from(2), decay, f64_from(16000), f64_from(800),
-    DVN_DEFAULT_SEED);
+      DVN_DEFAULT_SEED);
 }
 
 # ================================================================

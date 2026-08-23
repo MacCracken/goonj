@@ -192,14 +192,14 @@ fn trace_beam(beam, walls, max_order) {
                 }
 
                 var hit_point = hvec3_add(beam_apex(current),
-                hvec3_scale(beam_direction(current), t2));
+                  hvec3_scale(beam_direction(current), t2));
                 vec_push(hits, beam_wall_hit_new(hit_point, t2, best_idx, coverage));
 
                 # Reflect the axis direction specularly about the wall normal.
                 var n = Wall_normal(wall);
                 var d_dot_n = hvec3_dot(beam_direction(current), n);
                 var reflected_dir = hvec3_sub(beam_direction(current),
-                hvec3_scale(n, f64_mul(F64_TWO, d_dot_n)));
+                  hvec3_scale(n, f64_mul(F64_TWO, d_dot_n)));
                 var len = hvec3_length(reflected_dir);
                 if (f64_gt(len, GOONJ_EPSILON) == 1) {
                     reflected_dir = hvec3_scale(reflected_dir, f64_div(F64_ONE, len));
@@ -214,7 +214,7 @@ fn trace_beam(beam, walls, max_order) {
                 var band = 0;
                 while (band < NUM_BANDS) {
                     var ne = f64_mul(beam_energy_band(current, band),
-                    f64_sub(F64_ONE, am_absorption_band(mat, band)));
+                      f64_sub(F64_ONE, am_absorption_band(mat, band)));
                     store64(next + BEAM_ENERGY + band * 8, ne);
                     max_e = f64_max(max_e, ne);
                     band = band + 1;

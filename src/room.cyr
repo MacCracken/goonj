@@ -164,63 +164,63 @@ fn room_geometry_shoebox(length, width, height, material) {
 
     # Floor (y = 0), normal (0, -1, 0).
     vec_push(walls, wall_new(
-    _verts4(
-    hvec3_new(0, 0, 0),
-    hvec3_new(length, 0, 0),
-    hvec3_new(length, 0, width),
-    hvec3_new(0, 0, width)),
-    material,
-    hvec3_new(0, f64_neg(F64_ONE), 0)));
+        _verts4(
+          hvec3_new(0, 0, 0),
+          hvec3_new(length, 0, 0),
+          hvec3_new(length, 0, width),
+          hvec3_new(0, 0, width)),
+        material,
+        hvec3_new(0, f64_neg(F64_ONE), 0)));
 
     # Ceiling (y = height), normal (0, 1, 0).
     vec_push(walls, wall_new(
-    _verts4(
-    hvec3_new(0, height, width),
-    hvec3_new(length, height, width),
-    hvec3_new(length, height, 0),
-    hvec3_new(0, height, 0)),
-    material,
-    hvec3_new(0, F64_ONE, 0)));
+        _verts4(
+          hvec3_new(0, height, width),
+          hvec3_new(length, height, width),
+          hvec3_new(length, height, 0),
+          hvec3_new(0, height, 0)),
+        material,
+        hvec3_new(0, F64_ONE, 0)));
 
     # Front wall (z = 0), normal (0, 0, -1).
     vec_push(walls, wall_new(
-    _verts4(
-    hvec3_new(0, height, 0),
-    hvec3_new(length, height, 0),
-    hvec3_new(length, 0, 0),
-    hvec3_new(0, 0, 0)),
-    material,
-    hvec3_new(0, 0, f64_neg(F64_ONE))));
+        _verts4(
+          hvec3_new(0, height, 0),
+          hvec3_new(length, height, 0),
+          hvec3_new(length, 0, 0),
+          hvec3_new(0, 0, 0)),
+        material,
+        hvec3_new(0, 0, f64_neg(F64_ONE))));
 
     # Back wall (z = width), normal (0, 0, 1).
     vec_push(walls, wall_new(
-    _verts4(
-    hvec3_new(0, 0, width),
-    hvec3_new(length, 0, width),
-    hvec3_new(length, height, width),
-    hvec3_new(0, height, width)),
-    material,
-    hvec3_new(0, 0, F64_ONE)));
+        _verts4(
+          hvec3_new(0, 0, width),
+          hvec3_new(length, 0, width),
+          hvec3_new(length, height, width),
+          hvec3_new(0, height, width)),
+        material,
+        hvec3_new(0, 0, F64_ONE)));
 
     # Left wall (x = 0), normal (-1, 0, 0).
     vec_push(walls, wall_new(
-    _verts4(
-    hvec3_new(0, 0, 0),
-    hvec3_new(0, 0, width),
-    hvec3_new(0, height, width),
-    hvec3_new(0, height, 0)),
-    material,
-    hvec3_new(f64_neg(F64_ONE), 0, 0)));
+        _verts4(
+          hvec3_new(0, 0, 0),
+          hvec3_new(0, 0, width),
+          hvec3_new(0, height, width),
+          hvec3_new(0, height, 0)),
+        material,
+        hvec3_new(f64_neg(F64_ONE), 0, 0)));
 
     # Right wall (x = length), normal (1, 0, 0).
     vec_push(walls, wall_new(
-    _verts4(
-    hvec3_new(length, height, 0),
-    hvec3_new(length, height, width),
-    hvec3_new(length, 0, width),
-    hvec3_new(length, 0, 0)),
-    material,
-    hvec3_new(F64_ONE, 0, 0)));
+        _verts4(
+          hvec3_new(length, height, 0),
+          hvec3_new(length, height, width),
+          hvec3_new(length, 0, width),
+          hvec3_new(length, 0, 0)),
+        material,
+        hvec3_new(F64_ONE, 0, 0)));
 
     var g = alloc(sizeof(RoomGeometry));
     RoomGeometry_set_walls(g, walls);

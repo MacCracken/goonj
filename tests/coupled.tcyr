@@ -19,12 +19,12 @@ include "src/coupled.cyr"
 fn two_rooms() {
     var cr = alloc(sizeof(CoupledRooms));
     CoupledRooms_set_room_a(cr,
-    acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete()));
+      acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete()));
     CoupledRooms_set_room_b(cr,
-    acoustic_room_shoebox(f64_from(8), f64_from(6), f64_from(3), acoustic_material_carpet()));
+      acoustic_room_shoebox(f64_from(8), f64_from(6), f64_from(3), acoustic_material_carpet()));
     CoupledRooms_set_portal(cr,
-    portal_new(hvec3_new(f64_from(10), F64_ONE, f64_from(4)), hvec3_unit_x(),
-    f64_div(f64_from(9), f64_from(10)), f64_div(f64_from(21), f64_from(10))));
+      portal_new(hvec3_new(f64_from(10), F64_ONE, f64_from(4)), hvec3_unit_x(),
+        f64_div(f64_from(9), f64_from(10)), f64_div(f64_from(21), f64_from(10))));
     return cr;
 }
 
@@ -36,7 +36,7 @@ var decay = coupled_room_decay(two_rooms());
 assert(f64_gt(CoupledDecay_rt60_early(decay), 0), "rt60_early > 0");
 assert(f64_gt(CoupledDecay_rt60_late(decay), 0), "rt60_late > 0");
 assert(f64_gt(CoupledDecay_rt60_late(decay), CoupledDecay_rt60_early(decay)),
-"late should be longer than early");
+  "late should be longer than early");
 
 # ================================================================
 test_group("coupling_strength_in_range");

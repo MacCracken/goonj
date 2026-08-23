@@ -96,7 +96,7 @@ var mat_c = acoustic_material_concrete();
 var nz = hvec3_new(0, 0, f64_neg(F64_ONE));
 # Ray +Z from (2.5,1.5,0), wall at z=5 -> hit t=5.
 var wall_front = mk_wall(hvec3_new(0, 0, f64_from(5)), hvec3_new(0, f64_from(3), f64_from(5)),
-hvec3_new(f64_from(5), f64_from(3), f64_from(5)), hvec3_new(f64_from(5), 0, f64_from(5)), mat_c, nz);
+  hvec3_new(f64_from(5), f64_from(3), f64_from(5)), hvec3_new(f64_from(5), 0, f64_from(5)), mat_c, nz);
 var ray_hit = acoustic_ray_new(hvec3_new(d10(25), d10(15), 0), hvec3_unit_z(), f64_from(1000));
 var t_hit = ray_wall_intersection(ray_hit, wall_front);
 assert(f64_ge(t_hit, 0), "ray hits wall (some)");
@@ -252,9 +252,9 @@ while (mb2 < vec_len(bmono)) {
 }
 # single-wall room -> exactly one bounce
 var wall1 = mk_wall(hvec3_new(f64_neg(f64_from(5)), f64_neg(f64_from(5)), f64_from(5)),
-hvec3_new(f64_neg(f64_from(5)), f64_from(5), f64_from(5)),
-hvec3_new(f64_from(5), f64_from(5), f64_from(5)),
-hvec3_new(f64_from(5), f64_neg(f64_from(5)), f64_from(5)), acoustic_material_concrete(), nz);
+  hvec3_new(f64_neg(f64_from(5)), f64_from(5), f64_from(5)),
+  hvec3_new(f64_from(5), f64_from(5), f64_from(5)),
+  hvec3_new(f64_from(5), f64_neg(f64_from(5)), f64_from(5)), acoustic_material_concrete(), nz);
 assert_eq(vec_len(ray_path_bounces(trace_ray(multiband_ray_new(hvec3_zero(), hvec3_unit_z()), walls_of1(wall1), 50))), 1, "single wall one bounce");
 
 # ================================================================
@@ -286,7 +286,7 @@ assert(f64_le(f64_from(vec_len(ray_path_bounces(path_zerodir))), f64_from(10)), 
 # ================================================================
 test_group("wall aabb / area (room re-coverage)");
 var wtri = mk_wall(hvec3_new(F64_ONE, F64_TWO, f64_from(3)), hvec3_new(f64_from(4), f64_from(5), f64_from(3)),
-hvec3_new(f64_from(4), F64_TWO, f64_from(3)), hvec3_new(f64_from(4), F64_TWO, f64_from(3)), acoustic_material_concrete(), hvec3_unit_z());
+  hvec3_new(f64_from(4), F64_TWO, f64_from(3)), hvec3_new(f64_from(4), F64_TWO, f64_from(3)), acoustic_material_concrete(), hvec3_unit_z());
 var ab = wall_aabb(wtri);
 assert_eq(aabb_contains(ab, hvec3_new(F64_ONE, F64_TWO, f64_from(3))), 1, "aabb contains v0");
 assert_eq(aabb_contains(ab, hvec3_new(f64_from(4), f64_from(5), f64_from(3))), 1, "aabb contains v1");

@@ -37,11 +37,11 @@ fn bt_hrir3(n1, d1, n2, d2, n3, d3) {
 fn simple_hrtf() {
     var pairs = vec_new();
     vec_push(pairs, hrtf_pair_new(
-    f64_from(0), f64_from(0), bt_hrir3(1, 1, 1, 2, 1, 5), bt_hrir3(1, 1, 1, 2, 1, 5)));
+        f64_from(0), f64_from(0), bt_hrir3(1, 1, 1, 2, 1, 5), bt_hrir3(1, 1, 1, 2, 1, 5)));
     vec_push(pairs, hrtf_pair_new(
-    frac_pi_2(), f64_from(0), bt_hrir3(3, 10, 1, 10, 1, 20), bt_hrir3(1, 1, 4, 5, 2, 5)));
+        frac_pi_2(), f64_from(0), bt_hrir3(3, 10, 1, 10, 1, 20), bt_hrir3(1, 1, 4, 5, 2, 5)));
     vec_push(pairs, hrtf_pair_new(
-    f64_neg(frac_pi_2()), f64_from(0), bt_hrir3(1, 1, 4, 5, 2, 5), bt_hrir3(3, 10, 1, 10, 1, 20)));
+        f64_neg(frac_pi_2()), f64_from(0), bt_hrir3(1, 1, 4, 5, 2, 5), bt_hrir3(3, 10, 1, 10, 1, 20)));
     return hrtf_dataset_from_pairs(pairs, 48000);
 }
 
@@ -103,7 +103,7 @@ test_group("hrtf nearest finds closest");
 var c3_hrtf = simple_hrtf();
 var c3_front = hrtf_dataset_nearest(c3_hrtf, tenths(1), f64_from(0));
 assert(f64_lt(f64_abs(HrtfPair_azimuth(c3_front)), pct(1)) == 1,
-"should find front HRTF for near-front direction");
+  "should find front HRTF for near-front direction");
 
 # ================================================================
 test_group("direction to angles front");
@@ -115,13 +115,13 @@ assert(f64_lt(f64_abs(BinauralAngles_elevation(c4_a)), pct(1)) == 1, "front elev
 test_group("direction to angles right");
 var c5_a = binaural_direction_to_angles(hvec3_unit_x());
 assert(f64_lt(f64_abs(f64_sub(BinauralAngles_azimuth(c5_a), frac_pi_2())), pct(1)) == 1,
-"right azimuth ~π/2");
+  "right azimuth ~π/2");
 
 # ================================================================
 test_group("direction to angles up");
 var c6_a = binaural_direction_to_angles(hvec3_unit_y());
 assert(f64_lt(f64_abs(f64_sub(BinauralAngles_elevation(c6_a), frac_pi_2())), pct(1)) == 1,
-"up elevation ~π/2");
+  "up elevation ~π/2");
 
 # ================================================================
 test_group("angular distance same direction");

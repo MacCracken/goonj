@@ -48,3 +48,28 @@ jobs:
         # stub didn't exist (Issue 1) and also wouldn't ever exercise
         # tests/${proj}.tcyr.
         run: cyrius test
+
+      - name: Verify distlib bundle freshness
+        # dist/goonj.cyr (all 37 modules concatenated) and dist/goonj.deps
+        # (the stdlib-leaf sidecar that downstream `cyrius deps` reads) are
+        # tracked artifacts that must be regenerated with `cyrius distlib`
+        # whenever src/ changes. Nothing else in this pipeline notices when
+        # they drift, and the downstream failure is quiet: a consumer that
+        # under-declares goonj's 13 stdlib leaves gets a misconfiguration,
+        # not an error. `--check` recomputes both from src/ and compares
+        # without writing (it removes its own dist/.check-*.deps scratch
+        # file, so the tree stays clean for later steps).
+        #
+        # A missing sidecar counts as STALE, so this also catches the case
+        # where dist/goonj.deps was never committed — a fresh checkout
+        # simply won't have it.
+        #
+        # Deliberately AFTER build+test: --check is a text comparison, not
+        # a compile, so a syntax error in src/ also reports "STALE". Gating
+        # it behind a green build makes STALE unambiguous — the code is
+        # fine, the bundle just wasn't regenerated.
+        run: |
+          cyrius distlib --check || {
+            echo "::error::dist/ is stale — run 'cyrius distlib', then commit dist/goonj.cyr and dist/goonj.deps"
+            exit 1
+          }

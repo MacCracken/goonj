@@ -267,7 +267,7 @@ fn sound_strength_g(ir) {
     var integrated = f64_mul(total_energy, dt);
     if (f64_lt(integrated, GOONJ_EPSILON) == 1) { return F64_NEG_INF; }
     var ref_energy = f64_mul(
-    f64_div(F64_ONE, f64_mul(f64_mul(f64_from(4), F64_PI), f64_from(100))), dt);
+      f64_div(F64_ONE, f64_mul(f64_mul(f64_from(4), F64_PI), f64_from(100))), dt);
     return f64_mul(f64_from(10), _analysis_log10(f64_div(integrated, ref_energy)));
 }
 
@@ -324,7 +324,7 @@ fn octave_band_filter(ir, centre_freq) {
 
     # a0 = 1 + sqrt2*bw + bw*bw + ww*(2 + sqrt2*bw)
     var a0 = f64_add(f64_add(f64_add(F64_ONE, f64_mul(sqrt2, bw)), f64_mul(bw, bw)),
-    f64_mul(ww, f64_add(F64_TWO, f64_mul(sqrt2, bw))));
+      f64_mul(ww, f64_add(F64_TWO, f64_mul(sqrt2, bw))));
     if (f64_lt(f64_abs(a0), GOONJ_EPSILON) == 1) {
         var zeros = vec_new();
         var zi = 0;
@@ -343,20 +343,20 @@ fn octave_band_filter(ir, centre_freq) {
 
     # a1 = (2*(ww*(2 + sqrt2*bw) - 1 - sqrt2*bw)) * inv_a0
     var a1 = f64_mul(f64_mul(F64_TWO,
-    f64_sub(f64_sub(f64_mul(ww, f64_add(F64_TWO, f64_mul(sqrt2, bw))), F64_ONE),
-    f64_mul(sqrt2, bw))), inv_a0);
+        f64_sub(f64_sub(f64_mul(ww, f64_add(F64_TWO, f64_mul(sqrt2, bw))), F64_ONE),
+          f64_mul(sqrt2, bw))), inv_a0);
     # a2 = (2*(1 - bw*bw + ww*(2*ww - 2))) * inv_a0
     var a2 = f64_mul(f64_mul(F64_TWO,
-    f64_add(f64_sub(F64_ONE, f64_mul(bw, bw)),
-    f64_mul(ww, f64_sub(f64_mul(F64_TWO, ww), F64_TWO)))), inv_a0);
+        f64_add(f64_sub(F64_ONE, f64_mul(bw, bw)),
+          f64_mul(ww, f64_sub(f64_mul(F64_TWO, ww), F64_TWO)))), inv_a0);
     # a3 = (2*(ww*(2 - sqrt2*bw) - 1 + sqrt2*bw)) * inv_a0
     var a3 = f64_mul(f64_mul(F64_TWO,
-    f64_add(f64_sub(f64_mul(ww, f64_sub(F64_TWO, f64_mul(sqrt2, bw))), F64_ONE),
-    f64_mul(sqrt2, bw))), inv_a0);
+        f64_add(f64_sub(f64_mul(ww, f64_sub(F64_TWO, f64_mul(sqrt2, bw))), F64_ONE),
+          f64_mul(sqrt2, bw))), inv_a0);
     # a4 = (1 - sqrt2*bw + bw*bw + ww*(2 - sqrt2*bw)) * inv_a0
     var a4 = f64_mul(
-    f64_add(f64_add(f64_sub(F64_ONE, f64_mul(sqrt2, bw)), f64_mul(bw, bw)),
-    f64_mul(ww, f64_sub(F64_TWO, f64_mul(sqrt2, bw)))), inv_a0);
+      f64_add(f64_add(f64_sub(F64_ONE, f64_mul(sqrt2, bw)), f64_mul(bw, bw)),
+        f64_mul(ww, f64_sub(F64_TWO, f64_mul(sqrt2, bw)))), inv_a0);
 
     var out = vec_new();
     var oi = 0;

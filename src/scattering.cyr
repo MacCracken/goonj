@@ -64,8 +64,8 @@ fn cosine_hemisphere_sample(normal, u1, u2) {
     var bitangent = Basis_bitangent(basis);
 
     var dir = hvec3_add(
-    hvec3_add(hvec3_scale(tangent, x), hvec3_scale(bitangent, y)),
-    hvec3_scale(normal, z));
+      hvec3_add(hvec3_scale(tangent, x), hvec3_scale(bitangent, y)),
+      hvec3_scale(normal, z));
     var len = hvec3_length(dir);
     if (f64_gt(len, GOONJ_EPSILON) == 1) {
         return hvec3_scale(dir, f64_div(F64_ONE, len));
@@ -86,8 +86,8 @@ fn scatter_direction(specular, normal, scattering, u1, u2) {
 
     var diffuse = cosine_hemisphere_sample(normal, u1, u2);
     var blended = hvec3_add(
-    hvec3_scale(specular, f64_sub(F64_ONE, scattering)),
-    hvec3_scale(diffuse, scattering));
+      hvec3_scale(specular, f64_sub(F64_ONE, scattering)),
+      hvec3_scale(diffuse, scattering));
     var len = hvec3_length(blended);
     if (f64_gt(len, GOONJ_EPSILON) == 1) {
         return hvec3_scale(blended, f64_div(F64_ONE, len));

@@ -24,7 +24,7 @@ fn main() {
     alloc_init();
     _terrain = gfpe_terrain_flat(f64_from(100));
     _config = gfpe_config_new(f64_from(500), f64_from(5), f64_from(100), f64_from(30),
-    f64_from(5), f64_from(1), ground_impedance_grass(), gfpe_atmosphere_default());
+      f64_from(5), f64_from(1), ground_impedance_grass(), gfpe_atmosphere_default());
 
     bench("gfpe/solve_100m_30m_500hz", &b_solve_gfpe, 200);
     return 0;

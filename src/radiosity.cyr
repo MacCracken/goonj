@@ -123,8 +123,8 @@ fn create_patches(walls, patches_per_wall) {
                     var w2 = f64_mul(u, v);
                     var w3 = f64_mul(f64_sub(F64_ONE, u), v);
                     var centre = hvec3_add(
-                    hvec3_add(hvec3_scale(v0, w0), hvec3_scale(v1, w1)),
-                    hvec3_add(hvec3_scale(v2, w2), hvec3_scale(v3, w3)));
+                      hvec3_add(hvec3_scale(v0, w0), hvec3_scale(v1, w1)),
+                      hvec3_add(hvec3_scale(v2, w2), hvec3_scale(v3, w3)));
                     vec_push(patches, patch_new(centre, normal, patch_area, refl));
                     ix = ix + 1;
                 }

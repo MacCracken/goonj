@@ -129,7 +129,7 @@ var sr_cfg = test_config(100);
 var sr_r1 = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), sr_cfg);
 var sr_r2 = generate_diffuse_rain(src_default(), lis_default(), concrete_room(), sr_cfg);
 assert_eq(vec_len(DiffuseRainResult_contributions(sr_r1)), vec_len(DiffuseRainResult_contributions(sr_r2)),
-"same seed same contribution count");
+  "same seed same contribution count");
 assert_eq(same_times(sr_r1, sr_r2, TOL_1E4), 1, "same seed identical results");
 
 # ================================================================
@@ -183,7 +183,7 @@ while (xr_i < 1000) {
 # ================================================================
 test_group("energy decays over time");
 var ed_res = generate_diffuse_rain(hvec3_new(f64_from(5), d10(15), f64_from(4)),
-hvec3_new(f64_from(5), d10(15), d10(45)), concrete_room(), test_config(1000));
+  hvec3_new(f64_from(5), d10(15), d10(45)), concrete_room(), test_config(1000));
 var ed_contribs = DiffuseRainResult_contributions(ed_res);
 var ed_len = vec_len(ed_contribs);
 if (ed_len > 3) {

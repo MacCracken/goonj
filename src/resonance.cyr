@@ -16,7 +16,7 @@ fn room_mode(dimension_length, mode_number, speed_of_sound) {
     if (f64_le(dimension_length, 0) == 1) { return 0; }
     if (mode_number == 0) { return 0; }
     return f64_div(f64_mul(f64_from(mode_number), speed_of_sound),
-        f64_mul(F64_TWO, dimension_length));
+      f64_mul(F64_TWO, dimension_length));
 }
 
 # Push every axial mode of `dim` below `max_frequency` onto `dst`.
@@ -94,6 +94,6 @@ fn modal_density(frequency, volume, speed_of_sound) {
     if (f64_le(speed_of_sound, 0) == 1) { return 0; }
     var c3 = f64_mul(f64_mul(speed_of_sound, speed_of_sound), speed_of_sound);
     var numer = f64_mul(f64_mul(f64_mul(f64_from(4), F64_PI), volume),
-        f64_mul(frequency, frequency));
+      f64_mul(frequency, frequency));
     return f64_div(numer, c3);
 }

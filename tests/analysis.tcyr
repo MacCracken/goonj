@@ -328,7 +328,7 @@ assert_eq(vec_len(t29_empty), 0, "empty ir -> empty filter");
 # ================================================================
 test_group("octave band filter zero freq");
 assert_eq(vec_len(octave_band_filter(make_exponential_ir(F64_ONE, 48000, F64_ONE), 0)), 0,
-"zero freq -> empty filter");
+  "zero freq -> empty filter");
 
 # ================================================================
 test_group("lf identical channels zero");

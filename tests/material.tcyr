@@ -86,7 +86,7 @@ assert(all_in_range(acoustic_material_tile()), "tile in range");
 # ================================================================
 test_group("AcousticMaterial: averages & band access");
 assert(f64_gt(average_absorption(acoustic_material_carpet()),
-              average_absorption(acoustic_material_concrete())), "carpet > concrete");
+    average_absorption(acoustic_material_concrete())), "carpet > concrete");
 assert(approx(average_absorption(acoustic_material_concrete()), AVG_CONCRETE, TOL_1E2), "concrete avg ~0.0183");
 var wood = acoustic_material_wood();
 assert(approx(absorption_at_band(wood, 0), pct(15), TOL_1E2), "wood band0 ~0.15");
@@ -118,13 +118,13 @@ var drywall = wall_drywall_single();
 assert(f64_gt(transmission_loss_db(concrete, f64_from(1000)), f64_from(40)), "concrete >40 dB @1k");
 # Concrete isolates more than drywall.
 assert(f64_gt(transmission_loss_db(concrete, f64_from(1000)),
-              transmission_loss_db(drywall, f64_from(1000))), "concrete > drywall");
+    transmission_loss_db(drywall, f64_from(1000))), "concrete > drywall");
 # Mass-law regime: TL rises with frequency.
 assert(f64_gt(transmission_loss_db(concrete, f64_from(1000)),
-              transmission_loss_db(concrete, f64_from(250))), "TL rises with freq");
+    transmission_loss_db(concrete, f64_from(250))), "TL rises with freq");
 # Double drywall isolates more than single at 500 Hz.
 assert(f64_gt(transmission_loss_db(wall_drywall_double(), f64_from(500)),
-              transmission_loss_db(drywall, f64_from(500))), "double > single");
+    transmission_loss_db(drywall, f64_from(500))), "double > single");
 # Zero frequency -> 0.
 assert_eq(f64_to(transmission_loss_db(concrete, 0)), 0, "zero freq -> 0 TL");
 # Ranges across bands.
@@ -138,7 +138,7 @@ var mw = jcal_mineral_wool();
 assert(f64_gt(jcal_absorption_coefficient(mw, f64_from(1000), pct(5)), pct(30)), "mineral wool absorbs >0.3");
 # Thicker absorbs at least as much.
 assert(f64_ge(jcal_absorption_coefficient(mw, f64_from(1000), pct(10)),
-              jcal_absorption_coefficient(mw, f64_from(1000), milli(25))), "thicker >= thinner");
+    jcal_absorption_coefficient(mw, f64_from(1000), milli(25))), "thicker >= thinner");
 # In-range sweep (open-cell foam, 50 mm).
 assert_jcal_in_range(jcal_open_cell_foam(), pct(5));
 # Zero frequency -> impedance 1.0.

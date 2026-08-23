@@ -107,11 +107,11 @@ fn atmospheric_absorption(frequency_hz, humidity_percent, temperature_celsius, p
 
     # O2 and N2 relaxation terms.
     var o2_term = f64_div(
-        f64_mul(f64_mul(O2_COEFF, f64_exp(f64_div(O2_EXPNUM, t_kelvin))), fr_o2),
-        f64_add(f64_mul(fr_o2, fr_o2), f2));
+      f64_mul(f64_mul(O2_COEFF, f64_exp(f64_div(O2_EXPNUM, t_kelvin))), fr_o2),
+      f64_add(f64_mul(fr_o2, fr_o2), f2));
     var n2_term = f64_div(
-        f64_mul(f64_mul(N2_COEFF, f64_exp(f64_div(N2_EXPNUM, t_kelvin))), fr_n2),
-        f64_add(f64_mul(fr_n2, fr_n2), f2));
+      f64_mul(f64_mul(N2_COEFF, f64_exp(f64_div(N2_EXPNUM, t_kelvin))), fr_n2),
+      f64_add(f64_mul(fr_n2, fr_n2), f2));
 
     var relax = f64_mul(f64_pow(t_ratio, T_EXP), f64_add(o2_term, n2_term));
     var alpha = f64_mul(f2, f64_add(classical, relax));
@@ -223,7 +223,7 @@ fn temperature_profile_new(ground_temp_celsius, lapse_rate) {
 #must_use
 fn refracted_speed(base_speed, wind, ray_direction, height) {
     var wind_speed = f64_add(WindProfile_speed_ground(wind),
-        f64_mul(WindProfile_gradient(wind), height));
+      f64_mul(WindProfile_gradient(wind), height));
     var cos_angle = hvec3_dot(WindProfile_direction(wind), ray_direction);
     return f64_add(base_speed, f64_mul(wind_speed, cos_angle));
 }
@@ -232,7 +232,7 @@ fn refracted_speed(base_speed, wind, ray_direction, height) {
 #must_use
 fn speed_at_height(profile, height) {
     var temp = f64_add(TemperatureProfile_ground_temp_celsius(profile),
-        f64_mul(TemperatureProfile_lapse_rate(profile), height));
+      f64_mul(TemperatureProfile_lapse_rate(profile), height));
     return speed_of_sound(temp);
 }
 
@@ -289,9 +289,9 @@ fn refract_ray_step(origin, direction, speed_fn, ctx, step_size) {
     var vert_sign = F64_ONE;
     if (f64_lt(HVec3_y(direction), 0) == 1) { vert_sign = f64_neg(F64_ONE); }
     var nd = hvec3_new(
-        f64_mul(f64_div(HVec3_x(direction), h_len), new_sin),
-        f64_mul(vert_sign, new_cos),
-        f64_mul(f64_div(HVec3_z(direction), h_len), new_sin));
+      f64_mul(f64_div(HVec3_x(direction), h_len), new_sin),
+      f64_mul(vert_sign, new_cos),
+      f64_mul(f64_div(HVec3_z(direction), h_len), new_sin));
 
     var len = hvec3_length(nd);
     var new_dir = direction;
