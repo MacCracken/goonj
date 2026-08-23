@@ -25,11 +25,16 @@ var _rays100 = 0;      # 100 MultibandRays spread over ~2π
 var _many_walls = 0;   # 100-wall room geometry walls (linear)
 var _many_accel = 0;   # 100-wall AcceleratedRoom (BVH)
 var _many_ray = 0;     # MultibandRay from (10, 1.5, 10) along +X
+var _shoe_ray = 0;     # MultibandRay from _shoe_src along +Z (pre-built)
 
 # ray/wall_intersection — one ray↔quad test.
 fn b_wall_intersection() { return ray_wall_intersection(_probe_ray, _probe_wall); }
 # ray/trace_single_shoebox — one multiband ray, 50 bounces, 6-wall shoebox.
-fn b_trace_single() { return trace_ray(multiband_ray_new(_shoe_src, hvec3_unit_z()), _shoe_walls, 50); }
+# The ray is pre-built, matching Rust's `let ray = ...` outside the timed
+# closure (rust-old/benches/benchmarks.rs:86-89). Building it inside charged an
+# allocation to every iteration that Rust never paid. reflect_ray_multiband is
+# purely functional, so reusing one ray yields bit-identical paths.
+fn b_trace_single() { return trace_ray(_shoe_ray, _shoe_walls, 50); }
 # ray/trace_100_rays_shoebox — trace all 100 pre-built rays (50 bounces each).
 fn b_trace_100_rays() {
     var i = 0;
@@ -82,6 +87,7 @@ fn main() {
     var shoe = room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
     _shoe_walls = RoomGeometry_walls(shoe);
     _shoe_src = hvec3_new(f64_from(5), half3, f64_from(4));
+    _shoe_ray = multiband_ray_new(_shoe_src, hvec3_unit_z());
 
     # 100 rays spread over ~2π (dir = (cos, 0.1, sin)); angle = i*0.0628.
     _rays100 = vec_new();

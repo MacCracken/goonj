@@ -290,6 +290,21 @@ DwmConfig_set_duration_seconds(c_drain, V_0_1);
 DwmConfig_set_wall_materials(c_drain, uniform_alpha(F64_ONE));
 assert(f64_lt(field_energy(DwmResult_final_pressure(solve_dwm_3d(c_drain, apulse, vec_new()))), F64_ONE),
   "fully absorbing drains");
+# Per-face wall materials reach the solver. Ports rust-old/src/dwm.rs:1093
+# (asymmetric_walls_drain_more_than_all_concrete). This is the ONLY test in
+# either language that gives the six faces different materials, so it is what
+# would catch the solver failing to read all six face filters. It does NOT pin
+# face->filter ORDERING: a y_neg/y_pos transposition still passes, because the
+# source sits at the y-centre and the two are mirror-symmetric.
+var c_asym = small_config();
+DwmConfig_set_duration_seconds(c_asym, V_0_1);
+DwmConfig_set_wall_materials(c_asym, wall_materials_uniform(acoustic_material_concrete()));
+var e_all_concrete = field_energy(DwmResult_final_pressure(solve_dwm_3d(c_asym, apulse, vec_new())));
+var wm_asym = wall_materials_uniform(acoustic_material_concrete());
+WallMaterials_set_y_neg(wm_asym, acoustic_material_carpet());
+DwmConfig_set_wall_materials(c_asym, wm_asym);
+var e_carpet_floor = field_energy(DwmResult_final_pressure(solve_dwm_3d(c_asym, apulse, vec_new())));
+assert(f64_lt(e_carpet_floor, e_all_concrete), "carpet on one face drains more than all-concrete");
 # Out-of-range absorption (α=5) is clamped: run stays finite.
 var c_bogus = small_config();
 DwmConfig_set_duration_seconds(c_bogus, V_0_02);

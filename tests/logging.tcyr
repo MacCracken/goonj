@@ -47,5 +47,20 @@ var mid = sakshi_ring_event_count();
 goonj_log_debug("suppressed below threshold");
 assert_eq(sakshi_ring_event_count(), mid, "debug suppressed below threshold");
 
+test_group("GOONJ_LOG level names (ports rust-old/src/logging.rs:8-12)");
+assert_eq(_logging_level_from_name("trace"), LOG_TRACE, "trace");
+assert_eq(_logging_level_from_name("debug"), LOG_DEBUG, "debug");
+assert_eq(_logging_level_from_name("info"), LOG_INFO, "info");
+assert_eq(_logging_level_from_name("warn"), LOG_WARN, "warn");
+assert_eq(_logging_level_from_name("error"), LOG_ERROR, "error");
+assert_eq(_logging_level_from_name("fatal"), LOG_FATAL, "fatal");
+# Unrecognised values fall back to WARN in logging_init, matching Rust's
+# unwrap_or_else(|_| EnvFilter::new("warn")).
+assert_eq(_logging_level_from_name("nonsense"), 0 - 1, "unknown -> -1");
+assert_eq(_logging_level_from_name(""), 0 - 1, "empty -> -1");
+# With GOONJ_LOG unset in the test environment, init lands on WARN.
+logging_init();
+assert_eq(logging_get_level(), LOG_WARN, "unset GOONJ_LOG -> WARN");
+
 var rc = assert_summary();
 syscall(60, rc);

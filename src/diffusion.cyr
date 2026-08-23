@@ -109,8 +109,18 @@ fn solve_diffusion_2d(config, absorption_field, absorption_len, source_field, so
     # Stability: dt < dx^2 / (4 D) for the 2D explicit scheme; use 0.9 of it.
     var dt_max = f64_div(dx2, f64_mul(f64_from(4), d_coeff));
     var dt = f64_min(dt_cfg, f64_mul(dt_max, f64_div(f64_from(9), f64_from(10))));
-    var num_steps = f64_to(f64_div(DiffusionConfig_max_time(config), dt));
-    if (num_steps > 1000000) { num_steps = 1000000; }
+    # Rust: `(max_time / dt) as u32` then `.min(1_000_000)` — a saturating cast,
+    # so a negative or NaN max_time yields 0 steps (and time_steps: 0 in the
+    # result) while a huge one runs the cap. f64_to keeps the sign and overflows
+    # to INT64_MIN, so a negative max_time was reported verbatim as a negative
+    # time_steps. Unlike fdtd/dwm this must NOT early-return: Rust falls through
+    # and returns a normal result with time_steps = 0.
+    var steps_f = f64_div(DiffusionConfig_max_time(config), dt);
+    var num_steps = 0;
+    if (f64_ge(steps_f, f64_from(1000000)) == 1) { num_steps = 1000000; }
+    if (f64_gt(steps_f, 0) == 1) {
+        if (f64_lt(steps_f, f64_from(1000000)) == 1) { num_steps = f64_to(steps_f); }
+    }
 
     var w = _diff_zeros(n);       # energy density
     var w_new = _diff_zeros(n);

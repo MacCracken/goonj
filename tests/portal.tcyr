@@ -85,7 +85,9 @@ var tiny = portal_new(hvec3_zero(), hvec3_unit_z(), 0, 0);
 var zfac = portal_transmission_factor(tiny, f64_from(20));
 var i = 0;
 while (i < 8) {
-    assert_eq(f64_to(load64(zfac + i * 8)), 0, "zero-size band -> 0");
+    # Raw bits, not f64_to: transmission factors live in [0, 1), so the old
+    # f64_to form passed for ANY band value below 1.0.
+    assert_eq(load64(zfac + i * 8), 0, "zero-size band -> 0");
     i = i + 1;
 }
 

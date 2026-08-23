@@ -224,9 +224,17 @@ fn synthesize_dvn_ir(config) {
         if (cell_end > num_samples) { cell_end = num_samples; }
         var cell_len = cell_end - cell_start;
         var r = xorshift64_next_u64(rng);
-        # Unsigned-style index in [0, cell_len): C modulo can go negative.
-        var k = r % cell_len;
-        if (k < 0) { k = k + cell_len; }
+        # Rust: `(r as usize) % cell_len` on a u64 draw — an UNSIGNED modulo.
+        # Cyrius has no u64, and the previous "negate-and-add-back" correction
+        # computes the residue of the SIGNED value, i.e. (r - 2^64) mod cell_len.
+        # That equals the unsigned result only when 2^64 mod cell_len == 0, i.e.
+        # only for power-of-two cell_len — and the canonical configs use 24 and
+        # 12 (2^64 mod 24 = 16, mod 12 = 4), so every top-bit-set draw landed on
+        # the wrong pulse position. Split the draw into two 32-bit halves, which
+        # are both non-negative, and recombine: r = hi*2^32 + lo.
+        var hi = (r >> 32) % cell_len;
+        var lo = (r & 0xFFFFFFFF) % cell_len;
+        var k = (hi * (4294967296 % cell_len) + lo) % cell_len;
         var bit = (r >> 32) & 1;
         var sign = F64_ONE;
         if (bit == 1) { sign = f64_neg(F64_ONE); }

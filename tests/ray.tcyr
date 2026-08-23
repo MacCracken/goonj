@@ -277,9 +277,23 @@ var lin_k = trace_ray(multiband_ray_new(hvec3_new(f64_from(3), F64_ONE, F64_TWO)
 var bvh_k = trace_ray_bvh(multiband_ray_new(hvec3_new(f64_from(3), F64_ONE, F64_TWO), odir), accel_k, 30);
 var eb = 0;
 while (eb < 8) { assert(approx(ray_path_final_energy(lin_k, eb), ray_path_final_energy(bvh_k, eb), TOL_1E3), "bvh energy matches"); eb = eb + 1; }
-# empty room bvh -> no bounces
-var accel_empty = accelerated_room_new(acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete()));
-# (reuse a real room but zero direction guard test below)
+# Empty room -> no bounces. Ports rust-old/src/ray.rs:939-950. The previous
+# version built `accel_empty` from a REAL shoebox and then never used it, so
+# the empty-room case went untested; this builds a genuinely wall-less room.
+var empty_geom = alloc(sizeof(RoomGeometry));
+RoomGeometry_set_walls(empty_geom, vec_new());
+var empty_room = alloc(sizeof(AcousticRoom));
+AcousticRoom_set_geometry(empty_room, empty_geom);
+AcousticRoom_set_temperature_celsius(empty_room, f64_from(20));
+AcousticRoom_set_humidity_percent(empty_room, f64_from(50));
+var accel_empty = accelerated_room_new(empty_room);
+# src/room.cyr:142-148 documents "Returns 0 for an empty room"; only the
+# non-null side of that contract was covered (tests/room.tcyr:103).
+assert_eq(AcceleratedRoom_bvh(accel_empty), 0, "empty room -> null bvh");
+var path_empty = trace_ray_bvh(multiband_ray_new(hvec3_zero(), hvec3_unit_x()), accel_empty, 50);
+assert_eq(vec_len(ray_path_bounces(path_empty)), 0, "empty room bvh -> no bounces");
+
+# Zero-direction guard (ports rust-old/src/ray.rs:1116-1124).
 var path_zerodir = trace_ray_bvh(multiband_ray_new(src, hvec3_zero()), accel, 10);
 assert(f64_le(f64_from(vec_len(ray_path_bounces(path_zerodir))), f64_from(10)), "zero-dir bvh no panic");
 

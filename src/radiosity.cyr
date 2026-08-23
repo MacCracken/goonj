@@ -165,10 +165,37 @@ fn _form_factor(p_i, p_j) {
 #derive(accessors)
 struct RadiosityResult { patches; iterations; converged; }
 
+# Deep-copy one patch (centre/normal/area + both 8-band arrays), so a result
+# does not alias the live patch objects. Mirrors _beam_clone in src/beam.cyr.
+#must_use
+fn _patch_clone(src) {
+    var p = alloc(PA_SIZE);
+    _patch_set_centre(p, patch_centre(src));
+    _patch_set_normal(p, patch_normal(src));
+    _patch_set_area(p, patch_area(src));
+    var b = 0;
+    while (b < NUM_BANDS) {
+        _patch_set_reflectance(p, b, patch_reflectance_band(src, b));
+        _patch_set_energy(p, b, patch_energy_band(src, b));
+        b = b + 1;
+    }
+    return p;
+}
+
 #must_use
 fn _radiosity_result(patches, iterations, converged) {
     var r = alloc(sizeof(RadiosityResult));
-    RadiosityResult_set_patches(r, patches);
+    # Rust returns `patches.to_vec()` at every return site — a snapshot taken at
+    # return. Storing the caller's vec pointer instead made the result ALIAS the
+    # live patches, so a second solve retroactively rewrote the first result.
+    var snapshot = vec_new();
+    var i = 0;
+    var n = vec_len(patches);
+    while (i < n) {
+        vec_push(snapshot, _patch_clone(vec_get(patches, i)));
+        i = i + 1;
+    }
+    RadiosityResult_set_patches(r, snapshot);
     RadiosityResult_set_iterations(r, iterations);
     RadiosityResult_set_converged(r, converged);
     return r;

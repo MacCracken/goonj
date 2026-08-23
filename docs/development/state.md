@@ -5,6 +5,11 @@
 
 ## Version
 
+**2.0.4** — closes out the `rust-old/` parity sweep: 7 behavioural divergences
+fixed (DVN unsigned modulo, radiosity result aliasing, saturating step counts in
+fdtd/dwm/diffusion, gfpe cap + negative index, `GOONJ_LOG`), 6 vacuous tests made
+falsifiable, 3 dropped tests restored, and `error` given a suite.
+
 **2.0.3** — fixes a regression 2.0.2 introduced in `generate_ir` (a negative or
 NaN `max_time_seconds` allocated ~7.4 GB where Rust yields an empty IR). Found
 by the `rust-old/` parity sweep, not by the hardening sweep that caused it.
@@ -101,29 +106,30 @@ Per-module detail in [`port-audit.md`](port-audit.md). Benchmarks in
 
 ## Tests
 
-One `tests/<module>.tcyr` suite per ported module, each ported one-for-one from
-that module's Rust `#[test]` blocks (serde round-trips dropped — no serde).
-**36 suites, 3585 assertions, all green.** Run one with
-`cyrius test tests/<module>.tcyr`.
+One `tests/<module>.tcyr` suite per ported module — including `error` as of
+2.0.4, whose Rust tests had covered only the `Display` impl and the `Result`
+alias (both dropped by design), leaving it the one module without a suite. Each
+suite is ported one-for-one from its module's Rust `#[test]` blocks, minus serde
+round-trips (no serde in Cyrius). **37 suites, 3624 assertions, all green.** Run
+one with `cyrius test tests/<module>.tcyr`.
 
-Plus **`tests/hardening.tcyr`** (2.0.2): 23 assertions covering every P-1 defect
-the hardening audit found — negative grid indices, cell-cap multiply overflow,
-NaN material coefficients, unsaturated `f64_to` indices, odd-length lookup
-tables. It runs against the shipped `dist/goonj.cyr`, so it also proves each
-repair reached the bundle. It is a real regression suite, not a smoke test: it
-SIGSEGVs or aborts against 2.0.1.
+Four suites sit outside that per-module set, bringing the totals to
+**41 suites / 3667 assertions**:
 
-Two smoke suites (`goonj`, `bundle`) bring the totals to **39 suites / 3621
-assertions**.
+- **`hardening.tcyr`** (26) — every P-1 defect from the 2.0.2 sweep plus the
+  2.0.3 IR sample-count contract. Runs against the shipped `dist/goonj.cyr`, so
+  it also proves each repair reached the bundle. A real regression suite: it
+  SIGSEGVs or aborts against 2.0.1.
+- **`dwm_modal.tcyr`** (4) — the DWM solver's only physics-correctness check
+  (first axial mode dominates). Split out because it runs ~15 s.
+- **`bundle.tcyr`**, **`goonj.tcyr`** — cross-layer and smoke.
 
-Six parallel workflows landed 30 of the 37 modules (L2 ×13 + wave-2 ×6 + L4 ×2 +
-impulse/beam ×2 + analysis/coupled/wav ×3 + final ×4); the rest were ported solo.
+Six parallel workflows landed 30 of the 37 modules; the rest were ported solo.
 Each batch was independently re-verified in main (tests + canonical-fmt diff +
 lint) — that integration gate is the real one, not the agents' self-checks.
-`logging` is real sakshi-backed logging with a verbose mode
-(`logging_init_verbose`) for diagnosis. `ray` and `dwm` carry hot-path
-benchmarks (`cyrius bench tests/{ray,dwm}.bcyr`); 16 `.bcyr` suites exist in
-total, recorded by `scripts/bench-history.sh`.
+`logging` is real sakshi-backed logging, honouring `GOONJ_LOG` as the Rust
+original did. `ray` and `dwm` carry hot-path benchmarks; 16 `.bcyr` suites exist
+in total, recorded by `scripts/bench-history.sh`.
 
 ## Dependencies
 

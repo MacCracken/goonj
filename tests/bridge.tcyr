@@ -33,14 +33,18 @@ alloc_init();
 # ================================================================
 # ── Pavan bridges ──
 test_group("wind_attenuation_factor");
-# Zero wind → zero attenuation.
-assert_eq(f64_to(wind_attenuation_factor(0)), 0, "zero wind -> 0");
+# NB: assert on the raw f64 bits, not f64_to(x). wind_attenuation_factor's
+# entire range is [0, 0.005], and f64_to TRUNCATES, so `f64_to(x) == 0` was true
+# for every possible input - the clamp could have been deleted and these still
+# passed. A Cyrius f64 is a raw i64 bit pattern and +0.0 is 0, so comparing
+# against 0 directly is exact and matches Rust's assert_eq!(w, 0.0).
+assert_eq(wind_attenuation_factor(0), 0, "zero wind -> 0");
 # Attenuation increases with wind speed.
 var wlow = wind_attenuation_factor(f64_from(5));
 var whigh = wind_attenuation_factor(f64_from(10));
 assert(f64_gt(whigh, wlow), "attenuation rises with speed");
 # Negative wind speed is clamped to zero.
-assert_eq(f64_to(wind_attenuation_factor(f64_neg(f64_from(5)))), 0, "neg wind clamped -> 0");
+assert_eq(wind_attenuation_factor(f64_neg(f64_from(5))), 0, "neg wind clamped -> 0");
 
 # ================================================================
 test_group("doppler_ratio_from_mach");
@@ -112,7 +116,9 @@ assert(approx(em_resonance_coupling(f64_from(100), 0, pct2()), F64_ONE, TOL_1E3)
 # ================================================================
 test_group("piezo_acoustic_power");
 # Zero field → zero power.
-assert_eq(f64_to(piezo_acoustic_power(0, f64_from(1000), PIEZO_COEFF, pct1())), 0, "zero field -> 0 power");
+# Raw-bit compare: piezo power for a 1000 V/m field is ~1e-7 W, which f64_to
+# also truncates to 0 - the old assertion could not tell the two apart.
+assert_eq(piezo_acoustic_power(0, f64_from(1000), PIEZO_COEFF, pct1()), 0, "zero field -> 0 power");
 # Non-zero field → positive power.
 assert(f64_gt(piezo_acoustic_power(f64_from(1000), f64_from(1000), PIEZO_COEFF, pct1()), 0), "field -> positive power");
 # Power rises with frequency (∝ f²).

@@ -1,0 +1,55 @@
+# error.tcyr -- the integer error-code layer.
+#
+# rust-old/src/error.rs's own #[test] blocks covered only the `Display` impl and
+# the `Result<T>` alias, both of which the port drops by design (ADR 0001): there
+# is no Display trait and no Result type in Cyrius, so error.rs was the one
+# module that shipped without a suite. What DOES need pinning is the contract the
+# rest of the codebase leans on — codes are negative and distinct, ERR_NONE is 0,
+# goonj_is_err discriminates on sign, and goonj_err_name is total.
+#
+# This matters more than it looks: `0` doubles as both ERR_NONE and the
+# null/failure sentinel returned by constructors like acoustic_material_new, so
+# goonj_is_err(0) == 0 is load-bearing and easy to "tidy" into a bug.
+include "src/error.cyr"
+
+test_group("error codes: values and distinctness");
+assert_eq(ERR_NONE, 0, "ERR_NONE is 0");
+assert_eq(ERR_INVALID_GEOMETRY, 0 - 1, "ERR_INVALID_GEOMETRY is -1");
+assert_eq(ERR_INVALID_MATERIAL, 0 - 2, "ERR_INVALID_MATERIAL is -2");
+assert_eq(ERR_INVALID_FREQUENCY, 0 - 3, "ERR_INVALID_FREQUENCY is -3");
+assert_eq(ERR_PROPAGATION_FAILED, 0 - 4, "ERR_PROPAGATION_FAILED is -4");
+assert_eq(ERR_COMPUTATION, 0 - 5, "ERR_COMPUTATION is -5");
+
+test_group("goonj_is_err discriminates on sign");
+assert_eq(goonj_is_err(ERR_NONE), 0, "ERR_NONE is not an error");
+assert_eq(goonj_is_err(ERR_INVALID_GEOMETRY), 1, "invalid geometry is an error");
+assert_eq(goonj_is_err(ERR_INVALID_MATERIAL), 1, "invalid material is an error");
+assert_eq(goonj_is_err(ERR_INVALID_FREQUENCY), 1, "invalid frequency is an error");
+assert_eq(goonj_is_err(ERR_PROPAGATION_FAILED), 1, "propagation failed is an error");
+assert_eq(goonj_is_err(ERR_COMPUTATION), 1, "computation is an error");
+# A valid pointer or count is never mistaken for an error.
+assert_eq(goonj_is_err(1), 0, "positive value is not an error");
+assert_eq(goonj_is_err(115200000), 0, "large positive is not an error");
+
+test_group("goonj_err_name is total");
+assert_streq(goonj_err_name(ERR_NONE), "none", "ERR_NONE -> none");
+assert_streq(goonj_err_name(ERR_INVALID_GEOMETRY), "invalid geometry", "geometry name");
+assert_streq(goonj_err_name(ERR_INVALID_MATERIAL), "invalid material", "material name");
+assert_streq(goonj_err_name(ERR_INVALID_FREQUENCY), "invalid frequency", "frequency name");
+assert_streq(goonj_err_name(ERR_PROPAGATION_FAILED), "propagation failed", "propagation name");
+assert_streq(goonj_err_name(ERR_COMPUTATION), "computation error", "computation name");
+# Unmapped codes must not fall off the end.
+assert_streq(goonj_err_name(0 - 99), "unknown error", "unmapped negative -> unknown");
+assert_streq(goonj_err_name(42), "unknown error", "unmapped positive -> unknown");
+
+test_group("shared tolerances / sentinels");
+# GOONJ_EPSILON is f32::EPSILON promoted to f64 (the Rust guards were f32).
+assert_eq(GOONJ_EPSILON, 0x3E80000000000000, "GOONJ_EPSILON is f32::EPSILON");
+assert(f64_gt(GOONJ_EPSILON, 0), "GOONJ_EPSILON is positive");
+assert(f64_lt(GOONJ_EPSILON, F64_ONE), "GOONJ_EPSILON is small");
+# F64_NEG_INF is what pressure_to_db_spl returns for a non-positive pressure.
+assert(f64_lt(F64_NEG_INF, f64_neg(f64_from(1000000))), "F64_NEG_INF is very negative");
+assert_eq(f64_eq(F64_NEG_INF, F64_NEG_INF), 1, "F64_NEG_INF is not NaN");
+
+var rc = assert_summary();
+syscall(60, rc);

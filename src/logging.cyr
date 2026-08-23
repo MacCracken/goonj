@@ -23,11 +23,35 @@ enum LogLevel {
     LOG_TRACE = 5,
 }
 
-# Initialize logging at the default WARN threshold (matches the Rust default
-# of "warn"), emitting to stderr. Returns 0.
+# Map a GOONJ_LOG value to a threshold, or -1 if unrecognised.
+# Ports the level vocabulary tracing_subscriber's EnvFilter accepted.
+fn _logging_level_from_name(s) {
+    if (streq(s, "trace") == 1) { return LOG_TRACE; }
+    if (streq(s, "debug") == 1) { return LOG_DEBUG; }
+    if (streq(s, "info") == 1)  { return LOG_INFO; }
+    if (streq(s, "warn") == 1)  { return LOG_WARN; }
+    if (streq(s, "error") == 1) { return LOG_ERROR; }
+    if (streq(s, "fatal") == 1) { return LOG_FATAL; }
+    return 0 - 1;
+}
+
+# Initialize logging to stderr, honouring GOONJ_LOG.
+#
+# Ports rust-old/src/logging.rs:8-12, which read the level from the GOONJ_LOG
+# environment variable and fell back to "warn"
+# (`EnvFilter::try_from_env("GOONJ_LOG").unwrap_or_else(|_| EnvFilter::new("warn"))`).
+# The port originally hardcoded WARN and exposed logging_init_verbose() instead,
+# which silently dropped the env-var control; this restores it. An unset or
+# unrecognised value falls back to WARN, matching the Rust unwrap_or_else.
 fn logging_init() {
     sakshi_set_output(SK_OUT_STDERR);
-    sakshi_set_level(LOG_WARN);
+    var level = LOG_WARN;
+    var env = getenv("GOONJ_LOG");
+    if (env != 0) {
+        var parsed = _logging_level_from_name(env);
+        if (parsed >= 0) { level = parsed; }
+    }
+    sakshi_set_level(level);
     return 0;
 }
 

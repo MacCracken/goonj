@@ -160,6 +160,12 @@ fn gfpe_result_num_heights(r) { return vec_len(GfpeResult_heights_m(r)); }
 #must_use
 fn gfpe_result_at(r, range_idx, height_idx) {
     var nz = gfpe_result_num_heights(r);
+    # GfpeResult::at took `usize` in Rust (rust-old/src/gfpe.rs:152-158), so the
+    # `>=` pair was a complete bound. As signed i64 the lower half is gone: a
+    # negative range_idx aborts in vec_get, and a negative height_idx wraps into
+    # the previous range column and returns a wrong FINITE value.
+    if (range_idx < 0) { return GFPE_POS_INF; }
+    if (height_idx < 0) { return GFPE_POS_INF; }
     if (range_idx >= gfpe_result_num_ranges(r)) { return GFPE_POS_INF; }
     if (height_idx >= nz) { return GFPE_POS_INF; }
     return vec_get(GfpeResult_excess_attenuation_db(r), range_idx * nz + height_idx);
@@ -320,10 +326,22 @@ fn solve_gfpe(terrain, config) {
     if (f64_le(height_step, 0) == 1) { return _gfpe_empty_result(); }
     if (f64_le(ref_speed, 0) == 1) { return _gfpe_empty_result(); }
 
-    var nz = f64_to(f64_div(max_height, height_step));
-    if (nz < 2) { nz = 2; }
-    var num_ranges = f64_to(f64_div(max_range, range_step));
-    if (num_ranges < 1) { num_ranges = 1; }
+    # Rust used saturating float->usize casts, so an absurd ratio saturates to
+    # usize::MAX and the cell cap below fires. f64_to overflows to INT64_MIN,
+    # which the `< 2` / `< 1` floors then laundered back into a LEGAL value —
+    # so the cap passed and the solver returned a plausible-looking 2-row grid
+    # for an input Rust rejected outright. Bail in f64, before the conversion.
+    # nz > GFPE_MAX_GRID_CELLS implies nz*num_ranges > cap (num_ranges >= 2),
+    # so this is exactly Rust's outcome and never over-rejects. NaN fails every
+    # f64_gt test and falls to the floor, matching `NaN as usize == 0`.
+    var nz_f = f64_div(max_height, height_step);
+    if (f64_gt(nz_f, f64_from(GFPE_MAX_GRID_CELLS)) == 1) { return _gfpe_empty_result(); }
+    var nz = 2;
+    if (f64_gt(nz_f, f64_from(2)) == 1) { nz = f64_to(nz_f); }
+    var nr_f = f64_div(max_range, range_step);
+    if (f64_gt(nr_f, f64_from(GFPE_MAX_GRID_CELLS)) == 1) { return _gfpe_empty_result(); }
+    var num_ranges = 1;
+    if (f64_gt(nr_f, F64_ONE) == 1) { num_ranges = f64_to(nr_f); }
     num_ranges = num_ranges + 1;
 
     # saturating_mul guard in f64 to avoid i64 overflow on huge grids.

@@ -1,0 +1,60 @@
+# dwm_modal.tcyr -- the DWM solver's one physics-correctness check.
+#
+# Ports rust-old/src/dwm.rs:853 (first_axial_mode_in_response), which
+# tests/dwm.tcyr deliberately omitted for routine-suite runtime. It lives in
+# its own suite so the fast dwm suite stays fast, and so this numeric parity
+# point is captured before the Rust oracle leaves the working tree.
+#
+# A 1 m rigid cube (~37^3 cells at the default dx) puts the first (1,0,0)
+# axial mode at f1 = c/(2L) = 343/2 = 171.5 Hz. DWM has no numerical
+# dissipation, so a broadband pulse against rigid walls would accumulate energy
+# at the lattice frequency; a wide Gaussian (sigma = 30 samples, spectral
+# half-width ~125 Hz) keeps the injected energy below ~600 Hz, where that mode
+# lives. Band 0 is the 125 Hz octave band, so it must dominate.
+#
+# Rust asserted only `dominant <= 3`. This asserts the stronger `dominant == 0`,
+# which both implementations satisfy — measured band-for-band agreement to ~4
+# significant figures.
+#
+# Runtime: ~4400 steps over 50,653 cells.
+include "lib/sakshi.cyr"
+include "src/error.cyr"
+include "src/material.cyr"
+include "src/hybrid.cyr"
+include "src/fdtd.cyr"
+include "src/logging.cyr"
+include "src/dwm.cyr"
+
+var V_0_2 = 0x3FC999999999999A;   # 0.2
+var V_30  = 0x403E000000000000;   # 30.0
+
+test_group("first axial mode dominates the receiver response");
+
+var dx = required_dx(22050, f64_from(343));
+var n = f64_to(f64_round(f64_div(F64_ONE, dx)));
+assert_gt(n, 30, "grid resolves to ~37 cells per metre");
+
+var cfg = dwm_config_new(22050, dx, f64_from(343), n, n, n, V_0_2, wall_materials_rigid());
+var src = dwm_source_gaussian_pulse(n / 5, n / 2, n / 2, 60, V_30, F64_ONE);
+
+var recvs = vec_new();
+vec_push(recvs, dwm_receiver_new(4 * n / 5, n / 2, n / 2));
+
+var res = solve_dwm_3d(cfg, src, recvs);
+var trace = vec_get(DwmResult_receiver_signals(res), 0);
+assert_gt(vec_len(trace), 0, "receiver captured a signal");
+
+var energies = dwm_band_energies(trace, 22050);
+var dominant = 0;
+var best = load64(energies);
+var i = 1;
+while (i < 8) {
+    var e = load64(energies + i * 8);
+    if (f64_gt(e, best) == 1) { best = e; dominant = i; }
+    i = i + 1;
+}
+assert_eq(dominant, 0, "band 0 (125 Hz octave) dominates -- the 171.5 Hz axial mode");
+assert(f64_gt(best, 0), "dominant band carries energy");
+
+var rc = assert_summary();
+syscall(60, rc);

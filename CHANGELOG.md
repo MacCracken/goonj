@@ -4,6 +4,90 @@
 
 _Nothing yet._
 
+## [2.0.4] - 2026-08-23
+
+Closes out the `rust-old/` parity sweep — the last audit run while the Rust
+oracle was still in the working tree. Seven behavioural divergences fixed, six
+vacuous tests made falsifiable, three dropped tests restored, and the `error`
+module finally given a suite. **41 suites / 3667 assertions** (parity: 37 suites
+/ 3624), all green.
+
+### Fixed — behaviour divergence from the oracle
+- **`dark_velvet_noise` pulse positions were wrong for every canonical config.**
+  Rust takes `(r as usize) % cell_len` — an *unsigned* modulo on a `u64` draw.
+  The port applied C truncated modulo to the same bits as a signed `i64` and
+  added `cell_len` back when negative, which computes `(r - 2^64) mod cell_len`
+  — equal to the unsigned result only when `cell_len` is a power of two. The
+  canonical densities give `cell_len` 24 and 12 (`2^64 mod 24 = 16`,
+  `mod 12 = 4`), so **every draw with the top bit set landed on the wrong pulse
+  position**. Now splits the draw into two 32-bit halves and recombines;
+  verified against a rustc reference for both cell lengths, seed 42.
+- **`radiosity` results aliased the live patches.** Rust returns
+  `patches.to_vec()` at every return site — a snapshot. The port stored the
+  caller's vec pointer while mutating those same patches in place, so a second
+  `solve_radiosity` retroactively rewrote the first call's result. Now deep-
+  copies via a new `_patch_clone`, one allocation per solve.
+- **`fdtd` / `dwm` / `diffusion`: an enormous duration ran ZERO steps.** Rust's
+  `as u32` saturates, so a huge quotient pins to the 1,000,000-step cap and the
+  solver runs. `f64_to` overflows to `INT64_MIN`, which is neither `> MAX` nor
+  `== 0`, so the step loop never executed and `diffusion` additionally reported
+  a *negative* `time_steps`. All three now clamp in f64 before converting.
+- **`gfpe` returned a plausible-looking grid for input Rust rejected.** An
+  absurd `max_height/height_step` overflowed `f64_to` to `INT64_MIN`, which the
+  `< 2` floor laundered back into a legal `2` — so the `MAX_GRID_CELLS` cap
+  passed and the solver ran a degenerate 2-row slice. Now bails in f64.
+- **`gfpe_result_at` aborted the process** on a negative index where Rust
+  returned `INFINITY` (`GfpeResult::at` took `usize`). Same class as the v2.0.2
+  fdtd/dwm sweep, which had missed gfpe.
+- **`logging` silently dropped `GOONJ_LOG`.** Rust read the level from the
+  environment and fell back to `warn`; the port hardcoded WARN. Restored with
+  the same level vocabulary and fallback.
+
+### Fixed — tests that could not fail
+Six assertions wrapped their value in `f64_to`, which **truncates**. Since every
+quantity involved lives in `[0, 1)`, `f64_to(x) == 0` was true for *every
+possible input* — the guards under test could have been deleted outright and
+these still passed. Now compare raw f64 bits (a Cyrius f64 *is* an `i64` bit
+pattern, and `+0.0` is `0`), matching Rust's `assert_eq!(w, 0.0)`:
+`bridge` wind-attenuation clamp ×2 and piezo zero-field, `vibroacoustics` empty
+radiated/modal power ×2, `portal` zero-size transmission.
+
+### Added — restored test coverage
+- **`tests/error.tcyr`** (27) — `error` was the only module of 37 without a
+  suite, because its Rust tests covered just the `Display` impl and `Result`
+  alias, both dropped by design. Pins what the codebase actually leans on:
+  codes negative and distinct, `goonj_err_name` total, and — load-bearing —
+  `goonj_is_err(0) == 0`, since `0` doubles as `ERR_NONE` *and* the null
+  sentinel returned by failing constructors.
+- **`tests/dwm_modal.tcyr`** (4) — ports `first_axial_mode_in_response`, the
+  solver's only physics-correctness check, in its own suite so the fast dwm
+  suite stays fast (~15 s). Asserts the stronger `dominant == 0` where Rust
+  asserted `dominant <= 3`.
+- **`dwm` per-face wall materials** — the only test in either language giving
+  the six faces different materials. Note it does *not* pin face→filter
+  ordering: a y_neg/y_pos transposition still passes, because the source sits
+  at the y-centre and the two are mirror-symmetric.
+- **`ray` empty-room BVH** — the suite built `accel_empty` from a *real*
+  shoebox and never used it. Now builds a genuinely wall-less room and also
+  asserts `AcceleratedRoom_bvh == 0`, the documented-but-untested half of that
+  contract.
+
+### Changed — benchmark method
+`ray/trace_single_shoebox` built its ray *inside* the timed closure, charging an
+allocation per iteration that Rust never paid; `dwm` allocated a fresh receivers
+vec per iteration. Both are now pre-built, matching the oracle's harness.
+Measured delta is ≤0.6% with a sign that flips between runs — pure noise — so
+**no published number changes**. The `dwm/solve_30x25x20_50ms` "identical
+config" claim is corrected: the grid and step count match, but Rust ran f32 with
+one receiver where this runs f64 with none.
+
+### Not changed (examined, found correct)
+`generate_binaural_ir` skips NaN-amplitude reflections where Rust processed them
+and poisoned the output — the Cyrius behaviour is strictly safer and is kept
+deliberately. `absorption_increases_receiver_decay` and
+`carpet_material_more_absorbing_than_concrete` were left unported: both are
+already pinned by strictly stronger existing assertions.
+
 ## [2.0.3] - 2026-08-23
 
 **Fixes a regression introduced by 2.0.2.** 2.0.2's hardening of `generate_ir`

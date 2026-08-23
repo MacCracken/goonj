@@ -98,7 +98,7 @@ compute-bound band instead of being unmeasurable.
 | `analysis/sti`                    | 3.67 ms | 59.8 ms  | 59.58 ms  | ~16× |
 | `impulse/energy_decay_curve`      | 206 µs  | 3.70 ms  | 3.564 ms  | ~17× |
 
-`dwm/solve_30x25x20_50ms` (identical config all three eras — 15k cells, 1102 steps)
+`dwm/solve_30x25x20_50ms` (identical grid all three eras — 15k cells, 1102 steps)
 is the exemplar: a tight `f64` triple loop over raw `load64`/`store64` buffers,
 **no per-iteration allocation**. Its ~14× is the cleanest codegen+precision gap
 in the whole suite, and it is the direct target of the number-type + SIMD work.

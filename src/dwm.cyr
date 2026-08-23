@@ -354,8 +354,16 @@ fn solve_dwm_3d(config, source, receivers) {
         goonj_log_warn("dwm: dx deviates from c*dt*sqrt(3) by >1%; sound speed will be off");
     }
 
-    var num_steps = f64_to(f64_div(DwmConfig_duration_seconds(config), dt));
-    if (num_steps > DWM_MAX_TIME_STEPS) { num_steps = DWM_MAX_TIME_STEPS; }
+    # Rust: `(duration / dt) as u32` then `.min(MAX)`. The `as` cast SATURATES —
+    # NaN and negatives to 0, overflow to u32::MAX — so a huge duration runs the
+    # CAP. Cyrius f64_to yields INT64_MIN instead, which is neither > MAX nor
+    # == 0, so the step loop silently ran ZERO times. Clamp in f64 first.
+    var steps_f = f64_div(DwmConfig_duration_seconds(config), dt);
+    var num_steps = 0;
+    if (f64_ge(steps_f, f64_from(DWM_MAX_TIME_STEPS)) == 1) { num_steps = DWM_MAX_TIME_STEPS; }
+    if (f64_gt(steps_f, 0) == 1) {
+        if (f64_lt(steps_f, f64_from(DWM_MAX_TIME_STEPS)) == 1) { num_steps = f64_to(steps_f); }
+    }
     if (num_steps == 0) { return _dwm_empty_result(); }
 
     var walls = DwmConfig_wall_materials(config);

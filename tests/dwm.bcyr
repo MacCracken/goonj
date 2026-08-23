@@ -23,13 +23,17 @@ var _src = 0;
 var _src_default = 0;
 var _dc = 0;
 var _dsig = 0;
+var _no_recv = 0;      # pre-built empty receivers vec (Rust builds its list once)
 
 # Full solve on a rigid box (the triple-loop grid sweep is the hot path).
-fn b_solve_small() { return solve_dwm_3d(_cfg_small, _src, vec_new()); }
-fn b_solve_med() { return solve_dwm_3d(_cfg_med, _src, vec_new()); }
-# Default config = 30x25x20 grid @ 50 ms — matches the Rust
-# dwm/solve_30x25x20_50ms benchmark exactly (like-for-like comparison).
-fn b_solve_default() { return solve_dwm_3d(_cfg_default, _src_default, vec_new()); }
+fn b_solve_small() { return solve_dwm_3d(_cfg_small, _src, _no_recv); }
+fn b_solve_med() { return solve_dwm_3d(_cfg_med, _src, _no_recv); }
+# Default config = 30x25x20 grid @ 50 ms. Matches the Rust
+# dwm/solve_30x25x20_50ms GRID and step count (15,000 cells, 1,102 steps).
+# Two differences that do not touch the hot loop: Rust ran f32 where this runs
+# f64, and Rust passed one receiver where this passes none — so Rust also paid
+# ~1,102 receiver samples per iteration. Do not read the ratio as exact.
+fn b_solve_default() { return solve_dwm_3d(_cfg_default, _src_default, _no_recv); }
 # dwm/dispersion_correct — 2-tap FIR over a 22050-sample (1 s) tone. Applied in
 # place; repeated application costs the same O(n) each call (matches Rust's
 # per-iter apply, minus its fresh clone).
@@ -48,6 +52,7 @@ fn main() {
     _src_default = dwm_source_gaussian_pulse(15, 12, 10, 5, F64_TWO, F64_ONE);
     # dispersion correction over a 22050-sample 1 kHz tone (matches Rust).
     _dc = dispersion_correction_for_config(dwm_config_default());
+    _no_recv = vec_new();
     _dsig = vec_new();
     var di = 0;
     while (di < 22050) {

@@ -74,7 +74,9 @@ assert(finite(radiation_result_sound_power_level_db(res_plate)), "swl is finite"
 # ================================================================
 test_group("radiated_sound_power: empty");
 var res_empty = radiated_sound_power(vec_new(), f64_from(2500), f64_from(20));
-assert_eq(f64_to(radiation_result_sound_power_watts(res_empty)), 0, "empty -> 0 W");
+# Raw-bit compare: radiated power is ~1e-5 W for real inputs, so f64_to
+# truncated every possible value to 0 and the assertion was unfalsifiable.
+assert_eq(radiation_result_sound_power_watts(res_empty), 0, "empty -> 0 W");
 
 # ================================================================
 test_group("radiated_sound_power: increases with velocity");
@@ -106,7 +108,7 @@ assert(f64_gt(radiation_result_sound_power_watts(res_modal), 0), "modal radiatio
 # ================================================================
 test_group("modal_radiation: empty");
 var res_modal_empty = modal_radiation(vec_new(), vec_new(), vec_new(), F64_ONE, f64_from(2500), f64_from(20));
-assert_eq(f64_to(radiation_result_sound_power_watts(res_modal_empty)), 0, "empty modal -> 0 W");
+assert_eq(radiation_result_sound_power_watts(res_modal_empty), 0, "empty modal -> 0 W");
 
 # ================================================================
 test_group("nearest_band");

@@ -66,8 +66,10 @@ plus the dispersion-correction FIR.
 | `solve_dwm_3d_30x25x20_50ms` (15,000 cells, 1,102 steps) | 1.052 s | 5 |
 | `dwm/dispersion_correct_22kHz_1s` | 311.1 µs | 2,000 |
 
-`solve_dwm_3d_30x25x20_50ms` matches the Rust `dwm/solve_30x25x20_50ms` config
-exactly (Rust 74.2 ms → **~14×**) — the cleanest codegen+precision gap in the
+`solve_dwm_3d_30x25x20_50ms` matches the Rust `dwm/solve_30x25x20_50ms` grid and
+step count (15,000 cells, 1,102 steps; Rust 74.2 ms → **~14×**). Two differences
+that do not touch the hot loop: Rust ran f32 where this runs f64, and Rust passed
+one receiver where this passes none — the cleanest codegen+precision gap in the
 whole suite, a tight `f64` triple loop over raw `load64`/`store64` buffers with
 **no per-iteration allocation**. It's the direct target of the number-type + SIMD
 work, and it moved only −1.7% across the 6.3.14 → 6.5.35 bump, which is exactly
