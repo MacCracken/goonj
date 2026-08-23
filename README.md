@@ -4,7 +4,7 @@
 [AGNOS](https://github.com/MacCracken/agnosticos) ecosystem.
 
 Goonj is a **[Cyrius](https://github.com/MacCracken/cyrius) library** — the
-completed Rust → Cyrius port (**v2.0.2**) of the original ~14,630-line Rust engine
+completed Rust → Cyrius port (**v2.0.4**) of the original ~14,630-line Rust engine
 (frozen at `rust-old/` as a parity oracle). It is compiled by `cycc` (toolchain
 pinned `cyrius = "6.5.35"` in `cyrius.cyml`), built on
 [hisab](https://github.com/MacCracken/hisab) for math/geometry, and ships as a
@@ -12,9 +12,9 @@ single distlib bundle, `dist/goonj.cyr`, for downstream Cyrius consumers.
 
 37 modules covering sound propagation, room simulation, ray/beam/image-source
 tracing, wave-based methods (DWM, FDTD, GFPE), impulse-response generation,
-diffraction, resonance, and spatialization — **3,585 parity assertions across 36
-test suites, all green**, plus a `hardening` suite pinning the 2.0.2 security
-fixes.
+diffraction, resonance, and spatialization — **3,624 parity assertions across 37
+test suites, all green** (41 suites / 3,667 assertions counting the hardening,
+modal and smoke suites).
 
 ## Features
 
@@ -28,8 +28,9 @@ fixes.
   propagation, hybrid crossover
 - **Impulse responses & metrics** — Sabine/Eyring/Fitzroy/Kuttruff RT60, energy decay
   curves, room-acoustics metrics (C50/C80/D50/EDT/G/ts/LF/IACC/STI), FDN reverb, dark velvet noise
-- **Diffraction & propagation models** — UTD/BTM edge diffraction, occlusion, UDFA,
-  outdoor (ISO 9613-2), underwater, coupled rooms, portals, vibroacoustics
+- **Diffraction & propagation models** — UTD half-plane and Kouyoumjian-Pathak
+  wedge diffraction, occlusion, UDFA, outdoor (ISO 9613-2), underwater, coupled
+  rooms, portals, vibroacoustics
 - **Spatialization & I/O** — ambisonics (B-format + 3rd-order HOA), binaural HRTF,
   directivity patterns, 16-bit PCM WAV export
 - **Integration APIs** — `dhvani` (IR handoff), `kiran` (occlusion), `soorat` (visualization)
@@ -41,7 +42,8 @@ fixes.
 cyrius deps                                  # resolve hisab (+ transitive sakshi) into lib/
 cyrius build examples/basic.cyr build/basic  # build the demo, then ./build/basic
 cyrius build src/main.cyr build/goonj        # build the smoke binary
-cyrius test tests/propagation.tcyr           # run a parity suite (one .tcyr per module)
+cyrius test                                  # run every suite (auto-discovers all 41)
+cyrius test tests/propagation.tcyr           # or just one, by path
 cyrius bench tests/dwm.bcyr                  # run a benchmark
 cyrius distlib                               # regenerate dist/goonj.cyr (the shippable bundle)
 ```
@@ -90,7 +92,8 @@ own ports.*
 - [`docs/development/state.md`](docs/development/state.md) — live state
 - [`docs/development/roadmap.md`](docs/development/roadmap.md) — milestones
 - [`docs/benchmarks-rust-vs-cyrius.md`](docs/benchmarks-rust-vs-cyrius.md) — Rust→Cyrius perf comparison
-- [`docs/adr/0001-rust-to-cyrius-port-conventions.md`](docs/adr/0001-rust-to-cyrius-port-conventions.md) — port conventions
+- [`docs/guides/getting-started.md`](docs/guides/getting-started.md) — build, layout, how to change a module
+- [`docs/adr/`](docs/adr/) — decision records ([0001](docs/adr/0001-rust-to-cyrius-port-conventions.md) port conventions, [0002](docs/adr/0002-signed-index-and-float-conversion-hazards.md) signed-index / float-conversion hazards)
 
 ## License
 

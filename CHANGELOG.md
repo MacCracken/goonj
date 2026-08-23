@@ -2,7 +2,53 @@
 
 ## [Unreleased]
 
-_Nothing yet._
+### Documentation
+Documentation-only sweep — no source or test changes. Every doc was cross-checked
+against the measured repo state at 2.0.4.
+
+- **`docs/development/roadmap.md` rewritten forward.** It was still "the
+  milestone plan to 2.0.0", ~85% completed history, and had not moved across
+  four releases. Completed work is now compressed into a `Shipped` section
+  (nothing falsified — the M0–M6 facts, dates and the 291-assertion L2 batch all
+  survive) and the file leads with the three genuinely open gates:
+  consumer-green, retiring `rust-old/`, and the 55 undocumented public fns that
+  are the sole reason `cyrius audit` exits 1.
+- **New [ADR-0002](docs/adr/0002-signed-index-and-float-conversion-hazards.md)** —
+  records the hazard class behind 13 of the 18 defects fixed in 2.0.2 and 2.0.4:
+  Rust's `usize` guarantee is lost in signed `i64` so a single upper-bound test
+  is only half a bound, and `f64_to` does not saturate the way Rust's `as` casts
+  do. Written down now because `rust-old/`, the oracle that made it
+  discoverable, is being retired. ADR-0001 had deferred three decisions to
+  "per-occurrence ADRs" that were never written; the index claimed *No ADRs yet*
+  while 0001 sat beside it.
+- **`SECURITY.md` rewritten.** Its supported-versions table said only "2.0.x:
+  Yes", which is materially misleading now that 2.0.0/2.0.1 carry 11 defects
+  reachable through the public API and 2.0.2 carries a memory-exhaustion
+  regression. Now per-release, with the upgrade guidance and attack surface
+  stated explicitly.
+- **A durable rule that had gone false**: CLAUDE.md and
+  `docs/guides/getting-started.md` both stated `cyrius test` has *no
+  auto-discovery* and each suite must be run by name. Bare `cyrius test` in fact
+  discovers and runs all 41 suites — which is what CI has been relying on.
+- **Stale counts corrected** in README, CONTRIBUTING, state.md, port-audit.md,
+  getting-started.md and the comparison doc: `3585 assertions / 36 suites` →
+  **3624 / 37** parity (41 / 3667 repo-wide). `state.md`, the designated state
+  authority, had been contradicting itself — its gates table said 39 suites and
+  its port-progress line 3585/36 while its own Tests section said 37/3624.
+- **`port-audit.md` relabelled** a refreshed port record rather than a living
+  dashboard — its "update the relevant row" directive had gone unhonoured for
+  four releases, which is what let the numbers drift. Its closing fmt advice
+  (`cyrius fmt <file>` "writes canonical to stdout") is dangerous on the current
+  pin — it rewrites in place — and is now corrected there and in
+  getting-started.md.
+- **README**: version stamp two releases stale; claimed **BTM** edge diffraction,
+  which is not implemented (the two models are UTD half-plane and
+  Kouyoumjian-Pathak wedge); missing a link to the getting-started guide.
+- Version numbers de-inlined from CONTRIBUTING.md and
+  `docs/architecture/overview.md` — they restale on every bump, and `VERSION` is
+  the single source of truth.
+- Removed the empty `docs/examples/.gitkeep` placeholder, superseded by the real
+  `examples/basic.cyr`; indexed `overview.md` in the architecture README.
 
 ## [2.0.4] - 2026-08-23
 

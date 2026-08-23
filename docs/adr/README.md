@@ -19,4 +19,7 @@ Decisions about goonj — what we chose, the context, and the consequences we ac
 
 ## Index
 
-_No ADRs yet. Add the first as `0001-kebab-case-title.md`._
+| ADR | Title | Status |
+|-----|-------|--------|
+| [0001](0001-rust-to-cyrius-port-conventions.md) | Rust → Cyrius port conventions | Accepted |
+| [0002](0002-signed-index-and-float-conversion-hazards.md) | Signed-index and float-conversion hazards inherited from the Rust port | Accepted |

@@ -27,7 +27,7 @@ by the `rust-old/` parity sweep, not by the hardening sweep that caused it.
 `rust-old/` (14,630 lines, 37 modules) served as the parity oracle through the
 port and three follow-up sweeps. It is **cleared for deletion**: nothing in the
 build, test, bench or distlib path reads it — verified by building and running
-all 39 suites in a tree with it removed. Two things were extracted first:
+all 41 suites in a tree with it removed. Two things were extracted first:
 
 - `rust-old/bench-history.csv` → [`../benchmarks/rust-bench-history.csv`](../benchmarks/rust-bench-history.csv),
   the frozen Rust baseline behind every Rust figure in the comparison doc. It
@@ -69,7 +69,7 @@ port's audit trail and still resolve against that tag.
 | fmt   | ✅ clean (was FAIL / 23 files before the 2.0.1 re-canonicalisation) |
 | lint  | ✅ clean |
 | docs  | ⚠ **55 undocumented public fns** — pre-existing, unchanged by 2.0.1/2.0.2 |
-| tests | ✅ 39 suites green (38 parity + `hardening`) |
+| tests | ✅ 41 suites green (37 parity + hardening + dwm_modal + 2 smoke) |
 | bench | ✅ 16 suites green |
 
 `cyrius audit` **exits 1**, and did so at 2.0.0 as well — the docs gate is the
@@ -88,14 +88,14 @@ in a compound command reports the `echo`, not the audit.)
 
 Per-module parity is tracked in [`port-audit.md`](port-audit.md). Summary:
 
-**37 / 37 modules ported — PORT COMPLETE · 3585 parity assertions green across 36 suites.**
+**37 / 37 modules ported — PORT COMPLETE · 3624 parity assertions green across 37 suites.**
 
 | Layer | Modules (✅) |
 |-------|-------------|
-| L0    | error, propagation (full, 44), resonance (15), ambisonics (20), scattering (211), dark_velvet_noise (18), logging (11, real sakshi) |
+| L0    | error (27), propagation (full, 44), resonance (15), ambisonics (20), scattering (211), dark_velvet_noise (18), logging (20, real sakshi + `GOONJ_LOG`) |
 | L1    | material (65) |
 | L2    | hybrid (20), directivity (19), metamaterial (51), room (10), fdn (14), gfpe (23), diffusion (7), fdtd (39), outdoor (28), portal (14), udfa (15), underwater (36), vibroacoustics (25), bridge (29) |
-| L3    | radiosity (7), image_source (30), ray (275, +bench), dwm (53, +bench) — **L3 complete** |
+| L3    | radiosity (7), image_source (30), ray (277, +bench), dwm (54, +bench, +`dwm_modal`) — **L3 complete** |
 | L4    | diffuse (2306), diffraction (17), beam (43), analysis (48) — **L4 complete** |
 | L5    | impulse (30), coupled (7) — **L5 complete** |
 | L6    | wav (16), binaural (12), integration: dhvani (5), kiran (6), soorat (16) — **L6 complete** |
@@ -150,7 +150,10 @@ hashes) — up from 29 at 2.0.0, because 6.5.35's stdlib snapshot adds
 ## Consumers
 
 dhvani, shruti, kiran/joshua, aethersafha — *none consuming the Cyrius
-port yet* (gated on the distlib bundle, roadmap M5).
+port yet*. The bundle is not the gate — `dist/goonj.cyr` has shipped since
+2.0.0, is validated by `tests/bundle.tcyr` and gated in CI by
+`cyrius distlib --check`. The gate is the consumers themselves being ported;
+see [`roadmap.md`](roadmap.md#open-gates).
 
 ## Next
 

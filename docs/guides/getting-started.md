@@ -5,13 +5,16 @@
 ```sh
 cyrius deps                              # resolve hisab (+ transitive sakshi) into lib/
 cyrius build src/main.cyr build/goonj    # compile the smoke binary
-cyrius test tests/propagation.tcyr       # run ONE parity suite (explicit path)
-cyrius bench tests/dwm.bcyr             # run a benchmark
+cyrius test                              # run every suite (auto-discovers tests/*.tcyr)
+cyrius test tests/propagation.tcyr       # or one parity suite by path
+cyrius bench tests/dwm.bcyr              # run a benchmark
 cyrius distlib                           # regenerate dist/goonj.cyr (the bundle)
 ```
 
-`cyrius test` takes an explicit suite path; there is no auto-discovery. Run each
-`tests/<module>.tcyr` by name (36 suites, 3,585 parity assertions).
+Bare `cyrius test` auto-discovers and runs every suite (41 suites / 3,667
+assertions; the per-module parity subset is 37 suites / 3,624). Pass an explicit
+`tests/<module>.tcyr` path to run just one — that is the faster loop while
+working on a single module.
 
 ## Layout
 
@@ -22,7 +25,11 @@ cyrius distlib                           # regenerate dist/goonj.cyr (the bundle
   `tests/*.tcyr`, not by the smoke binary.
 - `tests/*.tcyr` — one parity suite per module; `tests/*.bcyr` — benchmarks.
 - `dist/goonj.cyr` — the distlib bundle (all 37 modules concatenated; see
-  `[lib]` in `cyrius.cyml`). Regenerate with `cyrius distlib`.
+  `[lib]` in `cyrius.cyml`). Regenerate with `cyrius distlib`. `cyrius distlib
+  --check` verifies it has not drifted from `src/`; CI gates on it.
+- `examples/basic.cyr` — the runnable demo. Builds against the bundle, so it
+  doubles as a worked example of how a consumer folds goonj in:
+  `cyrius build examples/basic.cyr build/basic && ./build/basic`.
 - `rust-old/` — the original Rust source, frozen as the parity oracle. Do not
   modify.
 
@@ -32,7 +39,9 @@ cyrius distlib                           # regenerate dist/goonj.cyr (the bundle
 2. Cross-check parity against `rust-old/src/<module>.rs`.
 3. Add/extend `tests/<module>.tcyr` (ported from the Rust `#[test]` blocks) and
    run `cyrius test tests/<module>.tcyr` — it must print `N passed, 0 failed`.
-4. `cyrius fmt` canonical + `cyrius lint` clean; if you touched a bundled module,
+4. Formatting canonical (`diff <(cyrfmt src/x.cyr) src/x.cyr` — **not**
+   `cyrius fmt <file>`, which rewrites in place, and **not** `--check`, which
+   passes dirty files) + `cyrius lint` clean; if you touched a bundled module,
    `cyrius distlib` and confirm the bundle stays collision-free.
 5. Bump `VERSION` + add a CHANGELOG entry before tagging (the maintainer tags).
 

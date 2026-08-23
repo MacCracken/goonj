@@ -39,7 +39,8 @@ Project was scaffolded with `cyrius port`. Original Rust at `rust-old/` is the r
 ```sh
 cyrius deps                              # resolve dependencies
 cyrius build src/main.cyr build/goonj    # compile the smoke binary
-cyrius test tests/propagation.tcyr       # run ONE suite (explicit path — no auto-discovery)
+cyrius test                              # run every suite (auto-discovers tests/*.tcyr)
+cyrius test tests/propagation.tcyr       # or one suite by path
 cyrius distlib                           # regenerate dist/goonj.cyr (the bundle)
 ```
 

@@ -198,7 +198,7 @@ The port traded raw speed for **sovereignty, parity, and a single toolchain**
   stdlib allocator's single-threaded fast path), part instrument (the harness now
   subtracts its own timer floor). It is still allocation, not logic, and an
   arena/pool allocator is expected to take more.
-- **Correctness held at parity.** 3585 assertions across 36 suites reproduce the
+- **Correctness held at parity.** 3624 assertions across 37 suites reproduce the
   Rust oracle's behavior (`docs/development/state.md`); these measure the same
   work, not a reduced surface.
 

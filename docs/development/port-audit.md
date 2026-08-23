@@ -1,8 +1,13 @@
 # goonj — Rust → Cyrius Port Audit
 
-Per-module parity ledger for the 2.0.0 port. The Rust oracle is frozen at
-`rust-old/`; every Cyrius module must match it function-for-function. Update
-the relevant row whenever a module's status changes.
+Per-module parity ledger for the Rust → Cyrius port, **refreshed at 2.0.4**.
+Every Cyrius module matches the Rust oracle function-for-function.
+
+> **This is a port record, not a living per-module dashboard.** It is refreshed
+> when the port itself changes, not every release — the live per-module view is
+> the layer table in [`state.md`](state.md), and release detail is in the
+> [CHANGELOG](../../CHANGELOG.md). Keeping two living per-module views is what
+> let these numbers drift across 2.0.1–2.0.3 in the first place.
 
 **Status:** ✅ ported & tested · 🟡 partial · ⬜ pending
 **LOC** = Rust lines (incl. tests) at `rust-old/src/`.
@@ -39,13 +44,13 @@ the relevant row whenever a module's status changes.
 
 | Module            | LOC | Status | Notes |
 |-------------------|----:|--------|-------|
-| error             |  60 | ✅ | Integer codes + `goonj_is_err`/`goonj_err_name`; shared `GOONJ_EPSILON`, `F64_NEG_INF`. |
+| error             |  60 | ✅ | Integer codes + `goonj_is_err`/`goonj_err_name`; shared `GOONJ_EPSILON`, `F64_NEG_INF`. Rust's own tests here covered only the `Display` impl and the `Result` alias — both dropped by design (ADR-0001), so this shipped without a suite until 2.0.4 added `tests/error.tcyr`. 27 tests. |
 | propagation       | 831 | ✅ | Scalar core + Vec3 wind/temp profiles + Snell ray tracers (`refract_ray_step`, `trace_ray_atmospheric`). 44 tests green. Established the closure → fn-pointer+ctx pattern (`TraceCtx`) and tuple→struct (`RayStep`). |
 | resonance         | 194 | ✅ | Room modes, Schroeder freq, modal density. `Vec<f32>` mode lists → stdlib `vec` (f64 in 8-byte slots) + f64 insertion sort. 15 tests green. Established the dynamic-array idiom. |
 | ambisonics        | 259 | ✅ | B-format + 3rd-order HOA (real SH, ACN/SN3D). 20 tests. |
 | dark_velvet_noise | 405 | ✅ | Sparse stochastic late reverb. Self-contained **xorshift64** PRNG (C-style bit ops `^ << >> &`) — no stdlib `random` needed. 18 tests. |
 | scattering        | 165 | ✅ | Cosine-weighted hemisphere sampling. **Randoms are caller-supplied params** (`u1,u2`) — no internal RNG. orthonormal_basis tuple → struct. 211 tests (100-sample sweep). |
-| logging           |  33 | ✅ | Real **sakshi-backed** logging (not a stub): `logging_init`/`logging_init_verbose` (WARN/TRACE thresholds), `logging_set_level`, `goonj_log_{fatal..trace}`. Verbose mode for diagnosis; level gating verified via the ring buffer. 11 tests. |
+| logging           |  33 | ✅ | Real **sakshi-backed** logging (not a stub): `logging_init`/`logging_init_verbose` (WARN/TRACE thresholds), `logging_set_level`, `goonj_log_{fatal..trace}`. Verbose mode for diagnosis; level gating verified via the ring buffer. 2.0.4 restored the `GOONJ_LOG` env-var control the Rust original had. 20 tests. |
 
 ### L1 — the spine
 
@@ -81,10 +86,10 @@ was done, completing L2 (14/14).
 
 | Module       |  LOC | Status | Tests | Deps |
 |--------------|-----:|--------|------:|------|
-| ray          | 1146 | ✅ | 275 | material, room — hot path; ported solo + `tests/ray.bcyr` benchmark |
+| ray          | 1146 | ✅ | 277 | material, room — hot path; ported solo + `tests/ray.bcyr` benchmark |
 | radiosity    |  283 | ✅ | 7 | material, room |
 | image_source |  634 | ✅ | 30 | material, propagation, room |
-| dwm          | 1407 | ✅ | 53 | fdtd ✅, hybrid, material — largest module. Full: config, `BoundaryFilter`, dispersion, and the `solve_dwm_3d` 3D grid solver (raw-buffer hot loop) + `tests/dwm.bcyr` benchmark. `DWM_`-prefixed + `dwm_band_energies` to avoid fdtd's flat-namespace symbols. 1st-axial-mode test omitted (37³ runtime). |
+| dwm          | 1407 | ✅ | 54 | fdtd ✅, hybrid, material — largest module. Full: config, `BoundaryFilter`, dispersion, and the `solve_dwm_3d` 3D grid solver (raw-buffer hot loop) + `tests/dwm.bcyr` benchmark. `DWM_`-prefixed + `dwm_band_energies` to avoid fdtd's flat-namespace symbols. The 1st-axial-mode test landed at 2.0.4 as its own suite, `tests/dwm_modal.tcyr` (37³ runtime, ~15 s). |
 
 ### L4 — energy & metrics
 
@@ -107,8 +112,9 @@ was done, completing L2 (14/14).
 | kiran (integ.)      | 168 | ✅ | 6 | diffraction, material, room — real-time occlusion queries (`kiran_*`) |
 | soorat (integ.)     | 165 | ✅ | 16 | ray, resonance — visualization data (`soorat_*`) |
 
-**Totals: 37 / 37 done — PORT COMPLETE.** 14,630 Rust lines · **3585 parity
-assertions across 36 suites, all green** (cycc 6.3.16, pin 6.3.14). `mod.rs`
+**Totals: 37 / 37 done — PORT COMPLETE.** 14,630 Rust lines · **3624 parity
+assertions across 37 suites, all green** (cycc 6.5.35, pin 6.5.35, as of 2.0.4;
+the port originally shipped 3585/36 on pin 6.3.14). `mod.rs`
 was Rust module-organization only (feature-gated `pub mod`) — nothing to port.
 
 Release close-out status:
@@ -138,6 +144,12 @@ No stdlib `random` dependency was introduced.
 The L2 batch was ported by a 13-agent workflow (each agent in its own git
 worktree). Agents self-verify, but **integration re-verification in main is the
 real gate** — it caught fmt continuation-line drift in 4 source + 6 test files
-that the agents' `cyrius fmt --check` missed (a 6.3.12 quirk: `--check` exits 1
-with empty output, so "no output" ≠ clean). Definitive fmt check:
-`cyrius fmt <file>` (writes canonical to stdout) diffed against the file.
+that the agents' `cyrius fmt --check` missed.
+
+> ⚠ **The fmt advice that used to close this section is wrong on the current
+> pin and was dangerous.** Under 6.5.35, `cyrius fmt <file>` **rewrites the file
+> in place** and prints nothing — using it to "inspect" silently reformats your
+> tree. `--check` and `--dry` both report a non-canonical file as clean, so
+> neither can gate. The read-only tool is `cyrfmt`:
+> `diff <(cyrfmt src/x.cyr) src/x.cyr`. Project-wide, `cyrius audit`'s fmt
+> section is the gate. See [`state.md`](state.md#toolchain).
