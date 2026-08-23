@@ -38,11 +38,24 @@ fixes.
 ## Quick start
 
 ```sh
-cyrius deps                              # resolve hisab (+ transitive sakshi) into lib/
-cyrius build src/main.cyr build/goonj    # build the smoke binary
-cyrius test tests/propagation.tcyr       # run a parity suite (one .tcyr per module)
-cyrius bench tests/dwm.bcyr              # run a benchmark
-cyrius distlib                           # regenerate dist/goonj.cyr (the shippable bundle)
+cyrius deps                                  # resolve hisab (+ transitive sakshi) into lib/
+cyrius build examples/basic.cyr build/basic  # build the demo, then ./build/basic
+cyrius build src/main.cyr build/goonj        # build the smoke binary
+cyrius test tests/propagation.tcyr           # run a parity suite (one .tcyr per module)
+cyrius bench tests/dwm.bcyr                  # run a benchmark
+cyrius distlib                               # regenerate dist/goonj.cyr (the shippable bundle)
+```
+
+[`examples/basic.cyr`](examples/basic.cyr) is the shortest end-to-end tour — speed
+of sound, a shoebox hall, RT60, Schroeder frequency, a room mode and a Doppler
+shift. It builds against the **shipped bundle**, so it doubles as a worked example
+of how a downstream consumer folds goonj in:
+
+```
+Speed of sound at 20 C      : 343.4 m/s
+Hall volume                 : 7200.0 m3
+Sabine RT60                 : 4.95 s
+Schroeder frequency         : 52.0 Hz
 ```
 
 Cyrius has a flat, f64 API (no `use`/methods). A room + RT60, for example:

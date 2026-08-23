@@ -1,0 +1,54 @@
+# basic.cyr -- goonj in ~40 lines, the way a consumer actually uses it.
+#
+# Ports rust-old/examples/basic.rs, which was the Rust line's only runnable
+# demo. It is built against the SHIPPED BUNDLE (dist/goonj.cyr) rather than
+# against src/, because that is exactly what a downstream consumer folds in:
+# one file, plus hisab and sakshi resolved from their own manifest.
+#
+# Build + run:
+#   cyrius build examples/basic.cyr build/basic && ./build/basic
+#
+# Regenerate the bundle first if you have edited src/: `cyrius distlib`.
+
+include "lib/hisab.cyr"
+include "lib/sakshi.cyr"
+include "dist/goonj.cyr"
+
+# Print "<label><value><unit>" with `dp` decimal places.
+fn show(label, value, dp, unit) {
+    print(label, strlen(label));
+    fmt_float(value, dp);
+    println(unit);
+    return 0;
+}
+
+alloc_init();
+
+println("goonj -- acoustics for AGNOS");
+println("");
+
+# Speed of sound at room temperature.
+var c = speed_of_sound(f64_from(20));
+show("Speed of sound at 20 C      : ", c, 1, " m/s");
+
+# A shoebox concert hall, 30 x 20 x 12 m, wood-lined.
+var hall = room_geometry_shoebox(f64_from(30), f64_from(20), f64_from(12),
+  acoustic_material_wood());
+var volume = room_geometry_volume_shoebox(hall);
+var absorption = room_geometry_total_absorption(hall);
+show("Hall volume                 : ", volume, 0, " m3");
+show("Total absorption            : ", absorption, 1, " sabins");
+
+# Reverberation time, and the frequency above which the room behaves diffusely.
+var rt60 = sabine_rt60(volume, absorption);
+show("Sabine RT60                 : ", rt60, 2, " s");
+show("Schroeder frequency         : ", schroeder_frequency(rt60, volume), 0, " Hz");
+
+# First axial mode along the 30 m dimension.
+show("First axial mode (length)   : ", room_mode(f64_from(30), 1, c), 1, " Hz");
+
+# An ambulance approaching at 30 m/s, siren at 440 Hz.
+show("Doppler, approaching 30 m/s : ",
+  doppler_shift(f64_from(440), f64_neg(f64_from(30)), 0, c), 1, " Hz");
+
+syscall(SYS_EXIT, 0);

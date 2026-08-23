@@ -5,19 +5,35 @@
 
 ## Version
 
-**2.0.2** — **security / hardening** release. A P-1 audit of all 37 modules
-against the Rust oracle found and fixed **11 reachable defects** (4 SIGSEGV,
-3 process aborts, 4 silently-wrong results), all reachable through the public
-API. Pinned by `tests/hardening.tcyr`, which fails against 2.0.1. Parity is
-untouched: the same 3585 assertions, still green. See the CHANGELOG for the
-root cause — signed `i64` indices where Rust used `usize`, plus a non-saturating
-`f64_to` where Rust's `as` casts saturate.
+**2.0.3** — fixes a regression 2.0.2 introduced in `generate_ir` (a negative or
+NaN `max_time_seconds` allocated ~7.4 GB where Rust yields an empty IR). Found
+by the `rust-old/` parity sweep, not by the hardening sweep that caused it.
 
-**2.0.1** — maintenance release: toolchain + dependency refresh on top of the
-completed port. No source-behaviour changes (the only `src/` edits were
-canonical-fmt whitespace). **2.0.0** (released 2026-06-30) was the port itself —
-goonj's Rust line shipped through 1.4.3 and the Cyrius rewrite is a major break.
-The 14,630-line Rust source is frozen at `rust-old/` as the parity oracle.
+**2.0.2** — **security / hardening**: 11 reachable P-1 defects fixed (4 SIGSEGV,
+3 process aborts, 4 silently-wrong results), pinned by `tests/hardening.tcyr`.
+
+**2.0.1** — toolchain + dependency refresh (pin 6.3.14 → 6.5.35, hisab → 2.11.2).
+
+**2.0.0** (2026-06-30) was the port itself — goonj's Rust line shipped through
+1.4.3 and the Cyrius rewrite is a major break.
+
+### The Rust oracle
+
+`rust-old/` (14,630 lines, 37 modules) served as the parity oracle through the
+port and three follow-up sweeps. It is **cleared for deletion**: nothing in the
+build, test, bench or distlib path reads it — verified by building and running
+all 39 suites in a tree with it removed. Two things were extracted first:
+
+- `rust-old/bench-history.csv` → [`../benchmarks/rust-bench-history.csv`](../benchmarks/rust-bench-history.csv),
+  the frozen Rust baseline behind every Rust figure in the comparison doc. It
+  cannot be regenerated once the tree is gone (no `Cargo.toml`, no Rust toolchain).
+- `rust-old/examples/basic.rs` → [`../../examples/basic.cyr`](../../examples/basic.cyr),
+  the port's only runnable demo.
+
+After removal the oracle stays readable at tag `2.0.2`:
+`git show 2.0.2:rust-old/src/<module>.rs`. The `Ports rust-old/src/x.rs`
+provenance comments in `src/` and `tests/` are deliberately kept — they are the
+port's audit trail and still resolve against that tag.
 
 ## Toolchain
 

@@ -191,6 +191,41 @@ fn _h_propagation() {
 }
 
 # ================================================================
+# impulse / binaural -- Rust's `as usize` cast SATURATES (NaN and
+# negatives to 0, overflow to usize::MAX). Cyrius f64_to does not, so
+# the sample-count clamp has to happen in f64. Mapping the INT64_MIN
+# sentinel to max_samples instead (as 2.0.2 first did) turns Rust's
+# no-op into an 8 x 115.2M x 8 B ~= 7.4 GB allocation.
+# ================================================================
+fn _h_ir_sample_count() {
+    test_group("impulse/binaural: non-finite max_time yields an empty IR, not 7.4 GB");
+
+    var mat = acoustic_material_concrete();
+    var room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), mat);
+    var src = hvec3_new(F64_ONE, F64_ONE, F64_ONE);
+    var lis = hvec3_new(f64_from(5), F64_ONE, f64_from(2));
+
+    # Negative max_time: Rust saturates to 0 samples.
+    var neg = ir_config_new(48000, 1, 0, 2, f64_neg(F64_ONE), 42);
+    var ir_neg = generate_ir(src, lis, room, neg);
+    assert_eq(vec_len(multiband_ir_band(ir_neg, 0)), 0,
+      "generate_ir negative max_time -> 0 samples");
+
+    # NaN max_time: Rust's `NaN as usize` is 0.
+    var nan_cfg = ir_config_new(48000, 1, 0, 2, _h_nan(), 42);
+    var ir_nan = generate_ir(src, lis, room, nan_cfg);
+    assert_eq(vec_len(multiband_ir_band(ir_nan, 0)), 0,
+      "generate_ir NaN max_time -> 0 samples");
+
+    # An ordinary duration is unaffected: 0.05 s at 48 kHz = 2400 samples.
+    var ok = ir_config_new(48000, 1, 0, 2, f64_div(f64_from(5), f64_from(100)), 42);
+    var ir_ok = generate_ir(src, lis, room, ok);
+    assert_eq(vec_len(multiband_ir_band(ir_ok, 0)), 2400,
+      "generate_ir 0.05s @ 48kHz -> 2400 samples");
+    return 0;
+}
+
+# ================================================================
 # ambisonics / radiosity -- negative caller-supplied indices aborted
 # the process inside vec_set / vec_get.
 # ================================================================
@@ -227,6 +262,7 @@ _h_material();
 _h_metamaterial();
 _h_analysis();
 _h_propagation();
+_h_ir_sample_count();
 _h_index_guards();
 
 var rc = assert_summary();

@@ -152,7 +152,18 @@ fn binaural_direction_to_angles(dir) {
 fn generate_binaural_ir(source, listener, room, hrtf, config) {
     var c = speed_of_sound(AcousticRoom_temperature_celsius(room));
     var rate = IrConfig_sample_rate(config);
-    var num_samples = f64_to(f64_mul(IrConfig_max_time_seconds(config), f64_from(rate)));
+    # Same saturating-cast contract as generate_ir: Rust's `as usize` sends NaN
+    # and negatives to 0. Bounded by the same 10-minutes-at-192kHz cap so a
+    # non-finite max_time cannot drive the output buffers arbitrarily large.
+    var max_samples = 115200000;
+    var t_samples = f64_mul(IrConfig_max_time_seconds(config), f64_from(rate));
+    var num_samples = 0;
+    if (f64_gt(t_samples, 0) == 1) {
+        num_samples = max_samples;
+        if (f64_lt(t_samples, f64_from(max_samples)) == 1) {
+            num_samples = f64_to(t_samples);
+        }
+    }
 
     var pairs = HrtfDataset_pairs(hrtf);
     var hrir_len = 0;

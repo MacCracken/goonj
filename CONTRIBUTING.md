@@ -37,7 +37,10 @@ toolchain — the Rust source at `rust-old/` is a frozen parity oracle only.
 
 - Tests: `cyrius test tests/<suite>.tcyr` (`tests/*.tcyr`, ported one-for-one
   from the Rust `#[test]` blocks)
-- Benchmarks: `cyrius bench tests/<suite>.bcyr` (`tests/*.bcyr`, 15 modules); see
+- Example: `cyrius build examples/basic.cyr build/basic && ./build/basic` — it
+  compiles against `dist/goonj.cyr`, so it also catches a bundle that has drifted
+  from `src/` (run `cyrius distlib` first if you changed a module)
+- Benchmarks: `cyrius bench tests/<suite>.bcyr` (`tests/*.bcyr`, 16 suites); see
   [`docs/benchmarks-rust-vs-cyrius.md`](docs/benchmarks-rust-vs-cyrius.md)
 - Distlib: after touching `src/*.cyr` or the `[lib]` list, regenerate the bundle
   with `cyrius distlib` and keep it collision-free

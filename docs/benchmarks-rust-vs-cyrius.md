@@ -18,7 +18,8 @@ Cyrius `.bcyr` benchmark replicates the *same operation, same inputs* as the Rus
 > training/inference); once those land, goonj's hot paths pick appropriate widths
 > and vectorize — see the [post-2.0.0 backlog](development/roadmap.md#post-200-backlog).
 
-- **Rust** — `rust-old/bench-history.csv`, final pre-port run (ns/iter, f32). Frozen.
+- **Rust** — [`benchmarks/rust-bench-history.csv`](benchmarks/rust-bench-history.csv),
+  final pre-port run (ns/iter, f32). Frozen. See *Provenance* below.
 - **Cyrius v2.0.0** — `lib/bench.cyr` wall-clock **min**, toolchain **6.3.14**.
 - **Cyrius v2.0.1** — same suites, toolchain **6.5.35**, idle host.
 
@@ -49,6 +50,22 @@ Both on the same x86_64 Linux host. `cyrius bench tests/<x>.bcyr`.
 > Ratios below are computed against the **v2.0.1** column and the frozen Rust
 > baseline. Source is unchanged between the two Cyrius columns — `git diff -w`
 > across `src/` and `tests/` is empty for 2.0.1 — so none of the movement is code.
+
+## Provenance of the Rust column
+
+Every Rust figure in this document is the **final run** recorded in
+[`benchmarks/rust-bench-history.csv`](benchmarks/rust-bench-history.csv) — 841
+`cargo bench` rows across several runs, of which the last covers all 34
+benchmarks. Spot-check: `dwm/solve_30x25x20_50ms` 74,249,133 ns → 74.2 ms;
+`analysis/sti` 3,668,267 ns → 3.67 ms; `fdtd/solve_40x40_50ms` 1,166,514 ns →
+1.17 ms; `binaural/generate_ir_shoebox` 6,995 ns → 7.0 µs.
+
+That file was archived out of `rust-old/bench-history.csv` when the frozen Rust
+tree was retired. It is the **only** evidence for the Rust column — the
+benchmarks cannot be re-run once `rust-old/` is gone (no `Cargo.toml`, no Rust
+toolchain in this project), so treat it as a permanent record rather than a
+regenerable artifact. The Cyrius column, by contrast, is reproducible at any
+time with `scripts/bench-history.sh`.
 
 ## The pattern
 
@@ -196,4 +213,5 @@ _Regenerate the Cyrius numbers: `cyrius bench tests/<module>.bcyr` (15 files:
 propagation, resonance, impulse, image_source, diffuse, analysis, wav, binaural,
 dark_velvet_noise, diffraction, fdtd, gfpe, metamaterial, ray, dwm). Record the
 `[timer floor …]` line each run prints — it is per-boot and figures below ~10 µs
-are only comparable within one boot. Rust baseline: `rust-old/bench-history.csv`._
+are only comparable within one boot. Rust baseline:
+[`benchmarks/rust-bench-history.csv`](benchmarks/rust-bench-history.csv)._

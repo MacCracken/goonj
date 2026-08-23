@@ -4,6 +4,28 @@
 
 _Nothing yet._
 
+## [2.0.3] - 2026-08-23
+
+**Fixes a regression introduced by 2.0.2.** 2.0.2's hardening of `generate_ir`
+mapped the `f64_to` sentinel to `max_samples` instead of to zero, so a negative
+or NaN `max_time_seconds` — which Rust turns into an **empty IR** — allocated
+eight bands of 115,200,000 samples, about **7.4 GB**. This was strictly worse
+than 2.0.1, where the negative count simply skipped the fill loop and happened
+to match Rust. Found by the `rust-old/` parity sweep.
+
+### Fixed
+- **`impulse.generate_ir`** — the sample count is now clamped in f64 *before*
+  `f64_to`, reproducing Rust's saturating `as usize` exactly: NaN and negatives
+  to 0, overflow and `+Inf` to the 10-minutes-at-192kHz cap. Reached
+  transitively from `dhvani.generate_dhvani_ir`, so that path is fixed too.
+- **`binaural.generate_binaural_ir`** — the same unsaturated conversion, which
+  additionally had no cap at all. Now shares the `generate_ir` contract.
+
+### Added
+- Three assertions in `tests/hardening.tcyr` covering the sample-count contract
+  (negative -> 0, NaN -> 0, 0.05 s @ 48 kHz -> 2400), so the mapping cannot
+  silently flip again in either direction.
+
 ## [2.0.2] - 2026-08-23
 
 **Security / hardening release.** A P-1 audit of all 37 modules against the

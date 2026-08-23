@@ -282,12 +282,21 @@ fn generate_ir(source, listener, room, config) {
     var rate = IrConfig_sample_rate(config);
     # Cap to 10 minutes at 192 kHz (~115M samples) to prevent OOM.
     var max_samples = 115200000;
-    var num_samples = f64_to(f64_mul(IrConfig_max_time_seconds(config), f64_from(rate)));
-    # Rust's `as usize` saturates (NaN/negative -> 0, overflow -> usize::MAX,
-    # then .min(max_samples)). Cyrius f64_to returns INT64_MIN for NaN, +/-Inf
-    # and anything outside i64, so the upper clamp alone lets a negative through.
-    if (num_samples < 0) { num_samples = max_samples; }
-    if (num_samples > max_samples) { num_samples = max_samples; }
+    # Rust: `(max_time_seconds * sample_rate) as usize` then `.min(max_samples)`.
+    # The `as` cast SATURATES — NaN and negatives to 0, overflow to usize::MAX —
+    # so Rust yields an empty IR for a negative or NaN max_time. Cyrius f64_to
+    # does not saturate (INT64_MIN for NaN/+-Inf/out-of-range), so the clamp has
+    # to happen in f64, before the conversion. Getting this wrong in either
+    # direction is expensive: mapping the sentinel to max_samples allocates
+    # 8 bands x 115.2M x 8 B ~= 7.4 GB for what Rust treats as a no-op.
+    var t_samples = f64_mul(IrConfig_max_time_seconds(config), f64_from(rate));
+    var num_samples = 0;
+    if (f64_gt(t_samples, 0) == 1) {
+        num_samples = max_samples;
+        if (f64_lt(t_samples, f64_from(max_samples)) == 1) {
+            num_samples = f64_to(t_samples);
+        }
+    }
 
     var mi = multiband_ir_new(rate, 0);
     var b = 0;
