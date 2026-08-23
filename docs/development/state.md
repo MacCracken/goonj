@@ -5,6 +5,14 @@
 
 ## Version
 
+**2.0.2** — **security / hardening** release. A P-1 audit of all 37 modules
+against the Rust oracle found and fixed **11 reachable defects** (4 SIGSEGV,
+3 process aborts, 4 silently-wrong results), all reachable through the public
+API. Pinned by `tests/hardening.tcyr`, which fails against 2.0.1. Parity is
+untouched: the same 3585 assertions, still green. See the CHANGELOG for the
+root cause — signed `i64` indices where Rust used `usize`, plus a non-saturating
+`f64_to` where Rust's `as` casts saturate.
+
 **2.0.1** — maintenance release: toolchain + dependency refresh on top of the
 completed port. No source-behaviour changes (the only `src/` edits were
 canonical-fmt whitespace). **2.0.0** (released 2026-06-30) was the port itself —
@@ -39,8 +47,8 @@ The 14,630-line Rust source is frozen at `rust-old/` as the parity oracle.
 |------|--------|
 | fmt   | ✅ clean (was FAIL / 23 files before the 2.0.1 re-canonicalisation) |
 | lint  | ✅ clean |
-| docs  | ⚠ **55 undocumented public fns** — pre-existing, unchanged by 2.0.1 |
-| tests | ✅ 38 suites green |
+| docs  | ⚠ **55 undocumented public fns** — pre-existing, unchanged by 2.0.1/2.0.2 |
+| tests | ✅ 39 suites green (38 parity + `hardening`) |
 | bench | ✅ 16 suites green |
 
 `cyrius audit` **exits 1**, and did so at 2.0.0 as well — the docs gate is the
@@ -77,17 +85,29 @@ Per-module detail in [`port-audit.md`](port-audit.md). Benchmarks in
 
 ## Tests
 
-One `tests/<module>.tcyr` suite per ported module, each ported one-for-one
-from that module's Rust `#[test]` blocks (serde round-trips dropped — no
-serde). **36 suites, 3585 assertions, all green.** Run a suite with
-`cyrius test tests/<module>.tcyr`. Six parallel workflows landed 30 of the 37
-modules (L2 ×13 + wave-2 ×6 + L4 ×2 + impulse/beam ×2 + analysis/coupled/wav ×3 +
-final ×4); the rest were ported solo — each batch independently re-verified in
-main (tests + canonical-fmt diff + lint). `logging` is real sakshi-backed
-logging with a verbose mode (`logging_init_verbose`) for diagnosis. Hot-path
-benchmarks: `ray`, `dwm` (`cyrius bench tests/{ray,dwm}.bcyr`). Each batch was independently re-verified in main (tests +
-canonical-fmt diff + lint). `ray` and `dwm` have hot-path benchmarks
-(`cyrius bench tests/{ray,dwm}.bcyr`).
+One `tests/<module>.tcyr` suite per ported module, each ported one-for-one from
+that module's Rust `#[test]` blocks (serde round-trips dropped — no serde).
+**36 suites, 3585 assertions, all green.** Run one with
+`cyrius test tests/<module>.tcyr`.
+
+Plus **`tests/hardening.tcyr`** (2.0.2): 23 assertions covering every P-1 defect
+the hardening audit found — negative grid indices, cell-cap multiply overflow,
+NaN material coefficients, unsaturated `f64_to` indices, odd-length lookup
+tables. It runs against the shipped `dist/goonj.cyr`, so it also proves each
+repair reached the bundle. It is a real regression suite, not a smoke test: it
+SIGSEGVs or aborts against 2.0.1.
+
+Two smoke suites (`goonj`, `bundle`) bring the totals to **39 suites / 3621
+assertions**.
+
+Six parallel workflows landed 30 of the 37 modules (L2 ×13 + wave-2 ×6 + L4 ×2 +
+impulse/beam ×2 + analysis/coupled/wav ×3 + final ×4); the rest were ported solo.
+Each batch was independently re-verified in main (tests + canonical-fmt diff +
+lint) — that integration gate is the real one, not the agents' self-checks.
+`logging` is real sakshi-backed logging with a verbose mode
+(`logging_init_verbose`) for diagnosis. `ray` and `dwm` carry hot-path
+benchmarks (`cyrius bench tests/{ray,dwm}.bcyr`); 16 `.bcyr` suites exist in
+total, recorded by `scripts/bench-history.sh`.
 
 ## Dependencies
 
@@ -126,6 +146,11 @@ mostly done:**
   to the 6.5.35 formatter (23 `src/` + 28 `tests/` files, whitespace only). All
   3585 parity assertions stay green; `dist/goonj.cyr` is byte-identical apart
   from the version stamp and the fmt whitespace.
+- ✅ **2.0.2** — P-1 hardening sweep: 11 reachable defects fixed across `fdtd`,
+  `dwm`, `material`, `metamaterial`, `analysis`, `propagation`, `impulse`,
+  `binaural`, `ambisonics`, `radiosity`, `wav`; `tests/hardening.tcyr` added.
+  Rust-era `scripts/{version-bump,bench-history}.sh` ported to Cyrius; CI now
+  gates `cyrius distlib --check`.
 - ⏳ **Consumer-green** — deferred until a downstream consumer (dhvani/shruti/
   kiran) is itself ported (working up the stack).
 

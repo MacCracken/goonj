@@ -1,6 +1,6 @@
 # Goonj Architecture
 
-goonj is a Cyrius library (v2.0.1): 37 self-contained modules in `src/*.cyr`
+goonj is a Cyrius library (v2.0.2): 37 self-contained modules in `src/*.cyr`
 (plus `src/main.cyr`, a smoke binary that does not include the library). Modules
 carry no `include` lines; stdlib + hisab resolve from `cyrius.cyml`. All 37
 concatenate — in the dependency order below — into `dist/goonj.cyr` via

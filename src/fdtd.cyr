@@ -185,12 +185,31 @@ fn solve_fdtd_2d(config, source, receivers) {
     if (f64_le(duration, 0) == 1) {
         return fdtd_empty_result();
     }
+    # Rust used saturating_mul here (rust-old/src/fdtd.rs:157). A plain i64
+    # multiply wraps: nx=4, ny=2^62+1 wraps to 4 and slips the cap, after which
+    # the solver sweeps the true dimensions over a tiny allocation. Bound each
+    # extent first so the product (<= 1.6e13) cannot wrap.
+    if (nx > MAX_GRID_CELLS) {
+        return fdtd_empty_result();
+    }
+    if (ny > MAX_GRID_CELLS) {
+        return fdtd_empty_result();
+    }
     if (nx * ny > MAX_GRID_CELLS) {
         return fdtd_empty_result();
     }
 
     var source_ix = FdtdSource_ix(source);
     var source_iy = FdtdSource_iy(source);
+    # FdtdSource.ix/iy were `usize` in Rust (rust-old/src/fdtd.rs:77-79), so
+    # `>= nx` was a complete bound. As signed i64 the lower half is gone and a
+    # negative index reaches the store64 below, writing before the grid buffer.
+    if (source_ix < 0) {
+        return fdtd_empty_result();
+    }
+    if (source_iy < 0) {
+        return fdtd_empty_result();
+    }
     if (source_ix >= nx) {
         return fdtd_empty_result();
     }
@@ -292,12 +311,13 @@ fn solve_fdtd_2d(config, source, receivers) {
             var rx = vec_get(receivers, rj);
             var rxix = FdtdReceiver_ix(rx);
             var rxiy = FdtdReceiver_iy(rx);
-            var inrange = 0;
-            if (rxix < nx) {
-                if (rxiy < ny) {
-                    inrange = 1;
-                }
-            }
+            # FdtdReceiver.ix/iy were `usize` in Rust (rust-old/src/fdtd.rs:112-114).
+            # An out-of-grid receiver keeps its empty trace, as in the oracle.
+            var inrange = 1;
+            if (rxix < 0) { inrange = 0; }
+            if (rxiy < 0) { inrange = 0; }
+            if (rxix >= nx) { inrange = 0; }
+            if (rxiy >= ny) { inrange = 0; }
             if (inrange == 1) {
                 var trace = vec_get(receiver_signals, rj);
                 vec_push(trace, load64(p_next + (rxiy * nx + rxix) * 8));

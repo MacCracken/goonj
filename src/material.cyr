@@ -111,12 +111,16 @@ fn acoustic_material_new(name, absorption, scattering) {
     var i = 0;
     while (i < NUM_BANDS) {
         var a = load64(absorption + i * 8);
-        if (f64_lt(a, 0) == 1) { return 0; }
-        if (f64_gt(a, F64_ONE) == 1) { return 0; }
+        # Rust rejects with `!(0.0..=1.0).contains(&a)` (rust-old/src/material.rs:31-41),
+        # which is TRUE for NaN. Negating into two one-sided rejections inverted
+        # that: f64_lt/f64_gt are both 0 for NaN, so a NaN coefficient was
+        # ACCEPTED. f64_ge/f64_le are 0 for NaN too, so `== 0` rejects it.
+        if (f64_ge(a, 0) == 0) { return 0; }
+        if (f64_le(a, F64_ONE) == 0) { return 0; }
         i = i + 1;
     }
-    if (f64_lt(scattering, 0) == 1) { return 0; }
-    if (f64_gt(scattering, F64_ONE) == 1) { return 0; }
+    if (f64_ge(scattering, 0) == 0) { return 0; }
+    if (f64_le(scattering, F64_ONE) == 0) { return 0; }
 
     var m = alloc(AM_SIZE);
     store64(m + AM_NAME, name);

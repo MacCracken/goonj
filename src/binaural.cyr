@@ -174,35 +174,39 @@ fn generate_binaural_ir(source, listener, room, hrtf, config) {
     while (ri < nr) {
         var refl = vec_get(reflections, ri);
         var sample_idx = f64_to(f64_mul(early_reflection_delay_seconds(refl), f64_from(rate)));
-        if (sample_idx < num_samples) {
-            # Average amplitude across bands for broadband HRTF application.
-            var amp_sum = 0;
-            var band = 0;
-            while (band < NUM_BANDS) {
-                amp_sum = f64_add(amp_sum, early_reflection_amplitude_band(refl, band));
-                band = band + 1;
-            }
-            var amp = f64_div(amp_sum, f64_from(NUM_BANDS));
-            if (f64_ge(amp, GOONJ_EPSILON) == 1) {
-                var angles = binaural_direction_to_angles(early_reflection_direction(refl));
-                var pair = hrtf_dataset_nearest(
-                  hrtf, BinauralAngles_azimuth(angles), BinauralAngles_elevation(angles));
-                if (pair != 0) {
-                    # Convolve: add the scaled HRIR at the reflection's arrival.
-                    var hl_vec = HrtfPair_left(pair);
-                    var hr_vec = HrtfPair_right(pair);
-                    var conv_len = vec_len(hl_vec);
-                    if (vec_len(hr_vec) < conv_len) { conv_len = vec_len(hr_vec); }
-                    var i = 0;
-                    while (i < conv_len) {
-                        var idx = sample_idx + i;
-                        if (idx < buf_len) {
-                            var hl = vec_get(hl_vec, i);
-                            var hr = vec_get(hr_vec, i);
-                            vec_set(out_left, idx, f64_add(vec_get(out_left, idx), f64_mul(amp, hl)));
-                            vec_set(out_right, idx, f64_add(vec_get(out_right, idx), f64_mul(amp, hr)));
+        # f64_to does not saturate (INT64_MIN on NaN/Inf/overflow) where Rust's
+        # `as usize` does, so the upper-bound test alone is not a full bound.
+        if (sample_idx >= 0) {
+            if (sample_idx < num_samples) {
+                # Average amplitude across bands for broadband HRTF application.
+                var amp_sum = 0;
+                var band = 0;
+                while (band < NUM_BANDS) {
+                    amp_sum = f64_add(amp_sum, early_reflection_amplitude_band(refl, band));
+                    band = band + 1;
+                }
+                var amp = f64_div(amp_sum, f64_from(NUM_BANDS));
+                if (f64_ge(amp, GOONJ_EPSILON) == 1) {
+                    var angles = binaural_direction_to_angles(early_reflection_direction(refl));
+                    var pair = hrtf_dataset_nearest(
+                      hrtf, BinauralAngles_azimuth(angles), BinauralAngles_elevation(angles));
+                    if (pair != 0) {
+                        # Convolve: add the scaled HRIR at the reflection's arrival.
+                        var hl_vec = HrtfPair_left(pair);
+                        var hr_vec = HrtfPair_right(pair);
+                        var conv_len = vec_len(hl_vec);
+                        if (vec_len(hr_vec) < conv_len) { conv_len = vec_len(hr_vec); }
+                        var i = 0;
+                        while (i < conv_len) {
+                            var idx = sample_idx + i;
+                            if (idx < buf_len) {
+                                var hl = vec_get(hl_vec, i);
+                                var hr = vec_get(hr_vec, i);
+                                vec_set(out_left, idx, f64_add(vec_get(out_left, idx), f64_mul(amp, hl)));
+                                vec_set(out_right, idx, f64_add(vec_get(out_right, idx), f64_mul(amp, hr)));
+                            }
+                            i = i + 1;
                         }
-                        i = i + 1;
                     }
                 }
             }

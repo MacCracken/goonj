@@ -104,6 +104,9 @@ fn write_wav_mono(samples, sample_rate) {
     var file_size = 36 + data_size;
     var total = 44 + data_size;
     var buf = alloc(total);
+    # alloc() signals failure by returning 0 (lib/alloc.cyr:224-235); emitting the
+    # header into it would store through the null page.
+    if (buf == 0) { return ERR_COMPUTATION; }
     var pos = _wav_write_header(buf, 0, file_size, num_channels, sample_rate, byte_rate,
       block_align, bits_per_sample, data_size);
     var i = 0;
@@ -132,6 +135,9 @@ fn write_wav_stereo(left, right, sample_rate) {
     var file_size = 36 + data_size;
     var total = 44 + data_size;
     var buf = alloc(total);
+    # alloc() signals failure by returning 0 (lib/alloc.cyr:224-235); emitting the
+    # header into it would store through the null page.
+    if (buf == 0) { return ERR_COMPUTATION; }
     var pos = _wav_write_header(buf, 0, file_size, num_channels, sample_rate, byte_rate,
       block_align, bits_per_sample, data_size);
     var i = 0;

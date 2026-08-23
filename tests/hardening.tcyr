@@ -1,0 +1,233 @@
+# hardening.tcyr -- regression suite for the 2.0.2 P-1 hardening pass.
+#
+# Every case here is a defect that was REPRODUCED against 2.0.1 (most as a
+# SIGSEGV or a hard process abort) and is now expected to return a degenerate
+# result instead. They share one root cause: the Rust oracle typed its indices
+# and extents `usize`/`u32`, so non-negativity and saturating float->int casts
+# came free from the type system. The Cyrius port carries all of them as signed
+# i64 with a non-saturating `f64_to`, so every guard that Rust wrote as a single
+# upper-bound test lost its lower half.
+#
+# Run: cyrius test tests/hardening.tcyr
+#
+# Tests the SHIPPED bundle (same posture as bundle.tcyr), so it also proves the
+# repairs reached dist/goonj.cyr.
+include "lib/hisab.cyr"
+include "lib/sakshi.cyr"
+include "dist/goonj.cyr"
+
+fn _h_pct(n) { return f64_div(f64_from(n), f64_from(100)); }
+fn _h_nan() { return f64_div(f64_from(0), f64_from(0)); }
+fn _h_inf() { return f64_div(f64_from(1), f64_from(0)); }
+
+fn _h_sig1() {
+    var v = vec_new();
+    vec_push(v, F64_ONE);
+    return v;
+}
+
+# ================================================================
+# fdtd -- negative source/receiver indices, and the cell-cap overflow.
+# 2.0.1: each of these exited 139 (SIGSEGV).
+# ================================================================
+fn _h_fdtd() {
+    test_group("fdtd: negative indices and cap overflow are rejected");
+
+    var cfg = fdtd_config_new(22050, _h_pct(5), f64_from(343), 40, 40, _h_pct(1));
+
+    # Negative source index: passed `>= nx` and stored before the grid buffer.
+    var r1 = solve_fdtd_2d(cfg, fdtd_source_new(0 - 100000000, 0, _h_sig1()), vec_new());
+    assert_eq(FdtdResult_time_steps(r1), 0, "fdtd negative source ix -> empty result");
+
+    var r2 = solve_fdtd_2d(cfg, fdtd_source_new(0, 0 - 7, _h_sig1()), vec_new());
+    assert_eq(FdtdResult_time_steps(r2), 0, "fdtd negative source iy -> empty result");
+
+    # Negative receiver index: passed `< nx` and read outside the field.
+    var recv = vec_new();
+    vec_push(recv, fdtd_receiver_new(0 - 100000000, 0));
+    var r3 = solve_fdtd_2d(cfg, fdtd_source_new(1, 1, _h_sig1()), recv);
+    var tr = vec_get(FdtdResult_receiver_signals(r3), 0);
+    assert_eq(vec_len(tr), 0, "fdtd negative receiver -> silent (empty) trace");
+
+    # nx * ny wrapped past MAX_GRID_CELLS: 4 * (2^62+1) == 4 (mod 2^64).
+    var big = fdtd_config_new(22050, _h_pct(5), f64_from(343), 4, 4611686018427387905, _h_pct(1));
+    var r4 = solve_fdtd_2d(big, fdtd_source_new(1, 1, _h_sig1()), vec_new());
+    assert_eq(FdtdResult_time_steps(r4), 0, "fdtd nx*ny overflow -> empty result");
+
+    # A valid solve still works (the guards must not over-reject).
+    var ok = solve_fdtd_2d(cfg, fdtd_source_new(20, 20, _h_sig1()), vec_new());
+    assert_gt(FdtdResult_time_steps(ok), 0, "fdtd valid config still solves");
+    return 0;
+}
+
+# ================================================================
+# dwm -- negative receiver indices and the 3-way cap overflow.
+# ================================================================
+fn _h_dwm() {
+    test_group("dwm: negative indices and cap overflow are rejected");
+
+    var dx = f64_mul(f64_div(f64_from(343), f64_from(22050)), DWM_SQRT_3);
+    var cfg = dwm_config_new(22050, dx, f64_from(343), 6, 6, 6, _h_pct(1), wall_materials_rigid());
+    var src = dwm_source_gaussian_pulse(1, 1, 1, 4, f64_from(2), F64_ONE);
+
+    var recv = vec_new();
+    vec_push(recv, dwm_receiver_new(0 - 100000000, 1, 1));
+    var r1 = solve_dwm_3d(cfg, src, recv);
+    var tr = vec_get(DwmResult_receiver_signals(r1), 0);
+    assert_eq(vec_len(tr), 0, "dwm negative receiver -> silent (empty) trace");
+
+    # Negative source index.
+    var r2 = solve_dwm_3d(cfg, dwm_source_gaussian_pulse(0 - 5, 1, 1, 4, f64_from(2), F64_ONE), vec_new());
+    assert_eq(DwmResult_time_steps(r2), 0, "dwm negative source -> empty result");
+
+    # nx*ny*nz wrapped: 4 * 4 * (2^60+1) == 16 (mod 2^64).
+    var big = dwm_config_new(22050, dx, f64_from(343), 4, 4, 1152921504606846977,
+      _h_pct(1), wall_materials_rigid());
+    var r3 = solve_dwm_3d(big, dwm_source_gaussian_pulse(1, 1, 1, 4, f64_from(2), F64_ONE), vec_new());
+    assert_eq(DwmResult_time_steps(r3), 0, "dwm nx*ny*nz overflow -> empty result");
+    return 0;
+}
+
+# ================================================================
+# material -- Rust rejects NaN via !(0.0..=1.0).contains(); the port's
+# two one-sided rejections accepted it.
+# ================================================================
+fn _h_material() {
+    test_group("material: NaN coefficients are rejected");
+
+    var bands = alloc(NUM_BANDS * 8);
+    var i = 0;
+    while (i < NUM_BANDS) {
+        store64(bands + i * 8, _h_pct(10));
+        i = i + 1;
+    }
+    var good = acoustic_material_new("ok", bands, F64_HALF);
+    assert_neq(good, 0, "valid material still accepted");
+
+    store64(bands + 3 * 8, _h_nan());
+    assert_eq(acoustic_material_new("nanabs", bands, F64_HALF), 0,
+      "NaN absorption band rejected");
+
+    store64(bands + 3 * 8, _h_pct(10));
+    assert_eq(acoustic_material_new("nanscat", bands, _h_nan()), 0,
+      "NaN scattering rejected");
+
+    # The existing range rejections must still hold.
+    assert_eq(acoustic_material_new("hiscat", bands, f64_from(2)), 0,
+      "scattering > 1 still rejected");
+    return 0;
+}
+
+# ================================================================
+# metamaterial -- an odd-length flattened (freq, abs) vec read index 1
+# out of bounds and aborted the process.
+# ================================================================
+fn _h_metamaterial() {
+    test_group("metamaterial: odd-length lookup rows do not abort");
+
+    var rows = mm_rows_new();
+    vec_push(rows, f64_from(500));
+    var m = metamaterial_lookup_table(rows);
+    assert_eq(metamaterial_absorption_at(m, f64_from(500)), 0,
+      "odd-length lookup rows -> 0, no abort");
+
+    var ok = mm_rows_new();
+    mm_rows_push(ok, f64_from(500), F64_HALF);
+    var m2 = metamaterial_lookup_table(ok);
+    assert_eq(metamaterial_absorption_at(m2, f64_from(500)), F64_HALF,
+      "well-formed single row still looks up");
+    return 0;
+}
+
+# ================================================================
+# analysis -- a negative sample_rate produced a negative vec index and
+# killed the host process inside vec_get.
+# ================================================================
+fn _h_analysis() {
+    test_group("analysis: negative sample_rate does not abort");
+
+    var samples = vec_new();
+    var i = 0;
+    while (i < 1000) {
+        vec_push(samples, F64_ONE);
+        i = i + 1;
+    }
+    var ir = impulse_response_new(samples, 0 - 48000, F64_ONE);
+    assert_eq(clarity_c50(ir), 0, "clarity_c50 with negative rate -> 0");
+    assert_eq(clarity_c80(ir), 0, "clarity_c80 with negative rate -> 0");
+    return 0;
+}
+
+# ================================================================
+# propagation -- f64_to does not saturate, so an infinite/huge
+# max_distance made max_iter INT64_MIN and returned a 1-point path.
+# ================================================================
+fn _h_propagation() {
+    test_group("propagation: non-finite max_distance saturates like Rust");
+
+    # wind/temp are profile handles, not raw values.
+    var wcalm = wind_profile_new(hvec3_unit_x(), 0, 0);
+    var tflat = temperature_profile_new(f64_from(20), 0);
+    var src = hvec3_new(0, f64_from(10), 0);
+
+    # Rust: `(max_distance / step.max(0.001)) as u32` saturates to u32::MAX, then
+    # .min(1_000_000). 2.0.1 returned a 1-point path instead (INT64_MIN max_iter).
+    var p1 = trace_ray_atmospheric(src, hvec3_unit_x(), wcalm, tflat, _h_inf(), F64_ONE);
+    assert_eq(vec_len(p1), 1000001, "+inf max_distance -> 1000001 points, not 1");
+
+    # 1e19 (> i64::MAX, so f64_to alone yields INT64_MIN).
+    var huge = f64_mul(f64_from(1000000000), f64_from(10000000000));
+    var p2 = trace_ray_atmospheric(src, hvec3_unit_x(), wcalm, tflat, huge, F64_ONE);
+    assert_eq(vec_len(p2), 1000001, "1e19 max_distance -> 1000001 points, not 1");
+
+    # NaN must match Rust's `NaN as u32 == 0`: no steps.
+    var p3 = trace_ray_atmospheric(src, hvec3_unit_x(), wcalm, tflat, _h_nan(), F64_ONE);
+    assert_eq(vec_len(p3), 1, "NaN max_distance -> source-only path (Rust parity)");
+
+    # A normal trace is unaffected.
+    var p4 = trace_ray_atmospheric(src, hvec3_unit_x(), wcalm, tflat, f64_from(100), F64_ONE);
+    assert_gt(vec_len(p4), 1, "ordinary trace still works");
+    return 0;
+}
+
+# ================================================================
+# ambisonics / radiosity -- negative caller-supplied indices aborted
+# the process inside vec_set / vec_get.
+# ================================================================
+fn _h_index_guards() {
+    test_group("ambisonics/radiosity: negative indices do not abort");
+
+    var bf = new_bformat_ir(64, 48000);
+    assert_eq(encode_bformat(F64_ONE, hvec3_unit_x(), 0 - 5, bf), 0,
+      "encode_bformat negative delay -> no-op");
+
+    var hoa = new_hoa_ir(1, 64, 48000);
+    assert_eq(encode_hoa(F64_ONE, hvec3_unit_x(), 0 - 5, hoa), 0,
+      "encode_hoa negative delay -> no-op");
+
+    var mat = acoustic_material_concrete();
+    var geom = room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3), mat);
+    var patches = create_patches(RoomGeometry_walls(geom), f64_from(2));
+    var energy = alloc(NUM_BANDS * 8);
+    var b = 0;
+    while (b < NUM_BANDS) {
+        store64(energy + b * 8, F64_ONE);
+        b = b + 1;
+    }
+    var res = solve_radiosity(patches, 0 - 1, energy, 10, _h_pct(1));
+    assert_eq(RadiosityResult_iterations(res), 0,
+      "solve_radiosity negative source_patch -> 0 iterations, no abort");
+    return 0;
+}
+
+alloc_init();
+_h_fdtd();
+_h_dwm();
+_h_material();
+_h_metamaterial();
+_h_analysis();
+_h_propagation();
+_h_index_guards();
+
+var rc = assert_summary();
+syscall(60, rc);

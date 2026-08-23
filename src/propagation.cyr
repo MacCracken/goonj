@@ -326,8 +326,14 @@ fn trace_ray_atmospheric(source, direction, wind, temp, max_distance, step_size)
 
     # max_iterations = min((max_distance / max(step_size, 0.001)) as u32, 1_000_000)
     var step_floor = f64_max(step_size, f64_div(F64_ONE, f64_from(1000)));
-    var max_iter = f64_to(f64_div(max_distance, step_floor));
-    if (max_iter > 1000000) { max_iter = 1000000; }
+    # Rust: `((max_distance / step_size.max(0.001)) as u32).min(1_000_000)` —
+    # the `as` cast saturates (rust-old/src/propagation.rs:302). f64_to does not:
+    # it yields INT64_MIN for NaN/Inf/out-of-range, which slipped the `> 1000000`
+    # clamp and made the very first `iteration >= max_iter` true, returning a
+    # 1-point path where Rust traced a million steps. Clamp in f64 first.
+    var iter_f = f64_max(f64_div(max_distance, step_floor), 0);
+    var max_iter = 1000000;
+    if (f64_lt(iter_f, f64_from(1000000)) == 1) { max_iter = f64_to(iter_f); }
 
     vec_push(path, pos);
     var total_distance = 0;

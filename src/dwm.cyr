@@ -320,9 +320,23 @@ fn solve_dwm_3d(config, source, receivers) {
     if (nz < 3) { return _dwm_empty_result(); }
     if (f64_le(DwmConfig_duration_seconds(config), 0) == 1) { return _dwm_empty_result(); }
 
-    var n = nx * ny * nz;
-    if (n == 0) { return _dwm_empty_result(); }
+    # Rust chained saturating_mul (rust-old/src/dwm.rs:343-347). Stage the
+    # product and bound each intermediate so no multiply can wrap past the cap
+    # (nx=4, ny=4, nz=2^60+1 wrapped to 16 and slipped both guards).
+    if (nx > DWM_MAX_GRID_CELLS) { return _dwm_empty_result(); }
+    if (ny > DWM_MAX_GRID_CELLS) { return _dwm_empty_result(); }
+    if (nz > DWM_MAX_GRID_CELLS) { return _dwm_empty_result(); }
+    var nxy = nx * ny;
+    if (nxy > DWM_MAX_GRID_CELLS) { return _dwm_empty_result(); }
+    var n = nxy * nz;
+    if (n <= 0) { return _dwm_empty_result(); }
     if (n > DWM_MAX_GRID_CELLS) { return _dwm_empty_result(); }
+    # DwmSource.ix/iy/iz were `usize` in Rust (rust-old/src/dwm.rs:251-255);
+    # signed i64 loses the lower bound, and _dwm_idx would address before the
+    # node buffers.
+    if (DwmSource_ix(source) < 0) { return _dwm_empty_result(); }
+    if (DwmSource_iy(source) < 0) { return _dwm_empty_result(); }
+    if (DwmSource_iz(source) < 0) { return _dwm_empty_result(); }
     if (DwmSource_ix(source) >= nx) { return _dwm_empty_result(); }
     if (DwmSource_iy(source) >= ny) { return _dwm_empty_result(); }
     if (DwmSource_iz(source) >= nz) { return _dwm_empty_result(); }
@@ -466,13 +480,21 @@ fn solve_dwm_3d(config, source, receivers) {
         # Sample receivers.
         for (var rj = 0; rj < vec_len(receivers); rj = rj + 1) {
             var rx = vec_get(receivers, rj);
-            if (DwmReceiver_ix(rx) < nx) {
-                if (DwmReceiver_iy(rx) < ny) {
-                    if (DwmReceiver_iz(rx) < nz) {
-                        var pidx = _dwm_idx(DwmReceiver_ix(rx), DwmReceiver_iy(rx), DwmReceiver_iz(rx), nx, ny);
-                        vec_push(vec_get(receiver_signals, rj), load64(pressure + pidx * 8));
-                    }
-                }
+            # DwmReceiver.ix/iy/iz were `usize` in Rust (rust-old/src/dwm.rs:289-293);
+            # a negative index passed the `<` half and read outside the field.
+            var rix = DwmReceiver_ix(rx);
+            var riy = DwmReceiver_iy(rx);
+            var riz = DwmReceiver_iz(rx);
+            var in_range = 1;
+            if (rix < 0) { in_range = 0; }
+            if (riy < 0) { in_range = 0; }
+            if (riz < 0) { in_range = 0; }
+            if (rix >= nx) { in_range = 0; }
+            if (riy >= ny) { in_range = 0; }
+            if (riz >= nz) { in_range = 0; }
+            if (in_range == 1) {
+                var pidx = _dwm_idx(rix, riy, riz, nx, ny);
+                vec_push(vec_get(receiver_signals, rj), load64(pressure + pidx * 8));
             }
         }
 

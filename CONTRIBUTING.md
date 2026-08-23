@@ -1,6 +1,6 @@
 # Contributing to Goonj
 
-Goonj is a [Cyrius](https://github.com/MacCracken/cyrius) library (v2.0.1),
+Goonj is a [Cyrius](https://github.com/MacCracken/cyrius) library (v2.0.2),
 compiled by `cycc` (toolchain pinned in `cyrius.cyml`). There is no cargo/Rust
 toolchain — the Rust source at `rust-old/` is a frozen parity oracle only.
 
@@ -11,7 +11,9 @@ toolchain — the Rust source at `rust-old/` is a frozen parity oracle only.
 3. Make changes following the development process in CLAUDE.md
 4. `cyrius deps` to resolve dependencies, then run the affected suites:
    `cyrius test tests/<suite>.tcyr` (one `.tcyr` per module; 36 suites, 3,585
-   parity assertions, all green)
+   parity assertions, all green). Security-relevant changes should also keep
+   `cyrius test tests/hardening.tcyr` green — it pins the 2.0.2 P-1 fixes
+   (negative indices, overflow caps, NaN validation) against the shipped bundle.
 5. Add tests (`tests/<module>.tcyr`) and, for hot paths, benchmarks
    (`tests/<module>.bcyr`) for new code; cross-check behavior against `rust-old/`
 6. Submit PR (the maintainer handles all git — commit, push, tag)

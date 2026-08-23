@@ -53,6 +53,9 @@ fn _zeros_vec(n) {
 # W receives the amplitude directly; X/Y/Z receive amplitude scaled by
 # the direction cosines (SN3D/ACN AmbiX: W = 1.0, X/Y/Z = cosines).
 fn encode_bformat(amplitude, direction, delay_samples, ir) {
+    # delay_samples indexes the channel vecs; a negative value passed the
+    # upper-bound test and aborted the process in vec_set.
+    if (delay_samples < 0) { return 0; }
     if (delay_samples >= vec_len(BFormatIr_w(ir))) { return 0; }
     if (f64_lt(f64_abs(amplitude), GOONJ_EPSILON) == 1) { return 0; }
 
@@ -79,6 +82,7 @@ fn encode_hoa(amplitude, direction, delay_samples, ir) {
 
     var first_len = 0;
     if (vec_len(channels) > 0) { first_len = vec_len(vec_get(channels, 0)); }
+    if (delay_samples < 0) { return 0; }
     if (delay_samples >= first_len) { return 0; }
     if (f64_lt(f64_abs(amplitude), GOONJ_EPSILON) == 1) { return 0; }
     if (vec_len(channels) < num_channels) { return 0; }

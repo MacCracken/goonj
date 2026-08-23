@@ -184,6 +184,9 @@ fn _radiosity_result(patches, iterations, converged) {
 fn solve_radiosity(patches, source_patch, source_energy, max_iterations, tolerance) {
     var n = vec_len(patches);
     if (n == 0) { return _radiosity_result(patches, 0, 1); }
+    # source_patch indexes `patches`; a negative one passed this half-guard and
+    # aborted the host process inside vec_get rather than returning a result.
+    if (source_patch < 0) { return _radiosity_result(patches, 0, 1); }
     if (source_patch >= n) { return _radiosity_result(patches, 0, 1); }
 
     # Initialise source patch energy.

@@ -2,7 +2,84 @@
 
 ## [Unreleased]
 
-### Fixed
+_Nothing yet._
+
+## [2.0.2] - 2026-08-23
+
+**Security / hardening release.** A P-1 audit of all 37 modules against the
+frozen Rust oracle found **11 reachable defects** — four crash the process
+(SIGSEGV), three abort it — all reachable through the public API with no unsafe
+usage on the caller's part. Every one is fixed and pinned by a new regression
+suite. No behavioural change for valid input: all 3585 parity assertions are
+unchanged and green.
+
+### The root cause
+
+Nine of the eleven are one systematic port hazard. The Rust original typed every
+grid extent, array index and sample rate as `usize`/`u32`, and relies on `as`
+casts that **saturate** (`NaN` -> 0, overflow -> `MAX`). The Cyrius port carries
+all of them as signed `i64`, and `f64_to` does **not** saturate — it yields
+`INT64_MIN` for `NaN`, `+/-Inf` and anything outside `i64`. So every guard Rust
+wrote as a single upper-bound test (`ix >= nx`, `idx < len`) silently lost its
+lower half, and negative indices reached raw `load64`/`store64`.
+
+### Fixed — memory safety (out-of-bounds access, SIGSEGV)
+- **`fdtd`** — a negative `FdtdSource.ix/iy` passed the `>= nx` guard and
+  **stored out of bounds** into the pressure grid; a negative `FdtdReceiver.ix/iy`
+  passed the `< nx` test and **read out of bounds**, leaking heap into the
+  returned trace. (`rust-old/src/fdtd.rs:77-79,112-114` — both `usize`.)
+- **`dwm`** — the identical defect on `DwmSource`/`DwmReceiver` `ix/iy/iz`.
+- **`fdtd` / `dwm` cell caps** — `nx * ny` (and `nx * ny * nz`) were plain signed
+  multiplies where Rust used `saturating_mul`. `nx=4, ny=2^62+1` wraps to `4`,
+  slips `MAX_GRID_CELLS`, and the solver then sweeps the true dimensions over a
+  tiny allocation. Each extent is now bounded before the product is formed.
+
+### Fixed — process aborts on valid-looking input
+- **`analysis`** — `clarity_c50`/`c80` with a negative `sample_rate` computed a
+  negative vec index and killed the host process. Guard widened to `rate <= 0`.
+- **`metamaterial`** — `_mm_lookup_absorption` read row index 1 before checking
+  the pair count, so an odd-length lookup table aborted. It now guards the pair
+  count, matching `piecewise_db_value` in `dark_velvet_noise`.
+- **`ambisonics` / `radiosity`** — negative `delay_samples` / `source_patch`
+  passed upper-bound-only guards and aborted inside `vec_set`/`vec_get`.
+
+### Fixed — silently wrong results
+- **`material`** — `acoustic_material_new` **accepted NaN** absorption and
+  scattering coefficients. Rust rejects via `!(0.0..=1.0).contains(&a)`, which is
+  true for NaN; negating that into two one-sided rejections inverted it, since
+  `f64_lt`/`f64_gt` are both false for NaN. Now uses the NaN-correct
+  `f64_ge`/`f64_le`. This was the one validation gate the metamaterial pipeline
+  relies on.
+- **`propagation`** — `trace_ray_atmospheric` with a huge or infinite
+  `max_distance` produced `max_iter = INT64_MIN`, which slipped the `> 1000000`
+  clamp and made the **first** loop test fail, returning a one-point path where
+  Rust traced 1,000,000 steps. It now clamps in f64 before converting; `NaN`
+  still yields a source-only path, matching Rust's `NaN as u32 == 0`.
+- **`impulse` / `binaural`** — the early-reflection and diffuse-contribution
+  sample indices came from an unsaturated `f64_to` behind an upper-bound-only
+  test, so a non-finite delay aborted IR generation.
+
+### Added
+- **`tests/hardening.tcyr`** — 23 assertions, one per defect above, written
+  against the shipped `dist/goonj.cyr` bundle so it also proves the repairs
+  reached the artifact consumers actually get. Verified to **fail against
+  2.0.1**: SIGSEGV for the `fdtd` and `dwm` groups, `vec:` aborts for
+  `analysis`, `metamaterial` and `ambisonics`/`radiosity`, assertion failures
+  for `material` and `propagation`.
+
+### Changed
+- `alloc()` failure is now checked in `write_wav_mono`/`write_wav_stereo` —
+  it returns 0 on failure, and the header emitters would have stored through
+  the null page.
+
+### Not changed (examined, found correct)
+The wav 32-bit header guard is unreachable (`VEC_CAP_MAX` caps a vec at 268M
+entries, so `data_size` cannot reach 2^32); `portal`'s degenerate-aperture guard
+and `room_geometry_volume_shoebox`'s NaN handling are exact parity with the
+oracle; `diffraction`'s `f64_round` mode cannot change any result. These are
+recorded so the next audit does not re-litigate them.
+
+### Fixed — tooling
 - **`scripts/bench-history.sh` rewritten as a Cyrius bench recorder.** It still
   ran `cargo bench --bench benchmarks`, so it had been broken since the
   Rust→Cyrius port — there is no root `Cargo.toml` (the Rust tree is frozen at

@@ -86,7 +86,11 @@ fn _analysis_clarity(ir, boundary_seconds) {
     var n = vec_len(samples);
     var rate = ImpulseResponse_sample_rate(ir);
     if (n == 0) { return 0; }
-    if (rate == 0) { return 0; }
+    # Rust's ImpulseResponse.sample_rate is u32; the port stores it as i64 and
+    # impulse_response_new does not validate it. A negative rate made `bs`
+    # negative, and the `bs > n` clamp only bounds from above, so vec_get was
+    # reached with a negative index and killed the process.
+    if (rate <= 0) { return 0; }
     var bs = f64_to(f64_mul(boundary_seconds, f64_from(rate)));
     if (bs > n) { bs = n; }
     var early = 0;

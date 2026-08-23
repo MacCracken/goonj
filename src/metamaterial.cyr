@@ -190,9 +190,12 @@ fn _mm_impedance_absorption(k_re, k_im, rho_re, rho_im) {
 # Outside the range the endpoint absorption is held.
 #must_use
 fn _mm_lookup_absorption(rows, frequency_hz) {
-    var len = vec_len(rows);
-    if (len == 0) { return 0; }
-    var nrows = len / 2;
+    # Rust held Vec<(f32,f32)>, so an unpaired row was unrepresentable. The port
+    # flattens to (freq, abs, freq, abs, ...), so an odd length reached
+    # vec_get(rows, 1) out of bounds and killed the process. Guard the PAIR
+    # count, matching piecewise_db_value in src/dark_velvet_noise.cyr:143-145.
+    var nrows = vec_len(rows) / 2;
+    if (nrows == 0) { return 0; }
     var f0 = vec_get(rows, 0);
     var a0 = vec_get(rows, 1);
     if (nrows == 1) { return f64_clamp(a0, 0, F64_ONE); }
