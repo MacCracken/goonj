@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [2.0.5] - 2026-09-11
+
+### Changed
+
+- **Toolchain `6.5.35` → `6.6.2`**, and hisab `2.11.2` → `2.22.1`. No source change:
+  goonj constructs no `Result` / `Option` / `Either`, and its error convention is
+  raw negative i64 codes (`ERR_NONE=0` … `ERR_COMPUTATION=-5`) tested with `< 0` on
+  functions returning a plain i64 — those were never Result tags, so the value form
+  does not reach them. **3667 assertions** pass unchanged.
+
+
 ### Documentation
 Documentation-only sweep — no source or test changes. Every doc was cross-checked
 against the measured repo state at 2.0.4.
