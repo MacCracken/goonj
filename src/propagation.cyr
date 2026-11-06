@@ -149,16 +149,20 @@ fn pressure_to_db_spl(pressure_pa) {
 #derive(accessors)
 struct GroundImpedance { flow_resistivity; }
 
+# Ground from its flow resistivity.
 #must_use
 fn ground_impedance_new(flow_resistivity) {
     var g = alloc(sizeof(GroundImpedance));
     GroundImpedance_set_flow_resistivity(g, flow_resistivity);
     return g;
 }
+# Grass ground.
 #must_use
 fn ground_impedance_grass()     { return ground_impedance_new(f64_from(200000)); }
+# Hard soil.
 #must_use
 fn ground_impedance_hard_soil() { return ground_impedance_new(f64_from(2000000)); }
+# Asphalt or concrete.
 #must_use
 fn ground_impedance_asphalt()   { return ground_impedance_new(f64_from(20000000)); }
 
@@ -201,6 +205,7 @@ struct WindProfile { direction; speed_ground; gradient; }
 #derive(accessors)
 struct TemperatureProfile { ground_temp_celsius; lapse_rate; }
 
+# Wind along `direction`: speed at ground level in m/s plus its height gradient.
 #must_use
 fn wind_profile_new(direction, speed_ground, gradient) {
     var w = alloc(sizeof(WindProfile));
@@ -210,6 +215,7 @@ fn wind_profile_new(direction, speed_ground, gradient) {
     return w;
 }
 
+# Ground temperature in °C plus lapse rate in °C/m (negative = inversion).
 #must_use
 fn temperature_profile_new(ground_temp_celsius, lapse_rate) {
     var t = alloc(sizeof(TemperatureProfile));

@@ -29,6 +29,7 @@ struct DiffusionConfig {
     max_time;
 }
 
+# Build a DiffusionConfig for an nx x ny grid with spacing dx and time step dt.
 #must_use
 fn diffusion_config_new(dx, dt, nx, ny, speed_of_sound, mean_free_path, max_time) {
     var c = alloc(sizeof(DiffusionConfig));

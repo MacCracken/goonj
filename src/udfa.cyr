@@ -38,8 +38,10 @@ fn _udfa_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
 # ================================================================
 #must_use
 fn df_delay_seconds(f) { return load64(f + DF_DELAY); }
+# Quality of filter `f`; higher means a sharper transition.
 #must_use
 fn df_quality(f) { return load64(f + DF_QUAL); }
+# Attenuation of filter `f` in frequency band `band`, in dB.
 #must_use
 fn df_attenuation_band(f, band) { return load64(f + DF_ATTEN + band * 8); }
 fn _df_set_band(f, band, v) { store64(f + DF_ATTEN + band * 8, v); return 0; }

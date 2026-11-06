@@ -11,6 +11,7 @@ var TOL_1E1 = 0x3FB999999999999A;   # 0.1
 var V_343_42 = 0x407576B851EB851F;  # 343.42
 var V_34_3   = 0x4041266666666666;  # 34.3
 
+# 1 if `a` and `b` differ by less than `tol`.
 fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
     return 0;

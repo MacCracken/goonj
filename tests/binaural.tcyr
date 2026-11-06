@@ -49,7 +49,9 @@ fn simple_hrtf() {
 fn bt_room() {
     return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
 }
+# Source position shared by this suite.
 fn bt_src() { return hvec3_new(f64_from(3), tenths(15), f64_from(4)); }
+# Listener position shared by this suite.
 fn bt_lis() { return hvec3_new(f64_from(7), tenths(15), f64_from(4)); }
 
 # IrConfig with max_time 0.1 s, zero diffuse rays, rest at defaults.

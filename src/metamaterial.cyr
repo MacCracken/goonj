@@ -53,6 +53,7 @@ struct LorentzianResonance { center_hz; plasma_hz; damping_hz; background_value;
 #derive(accessors)
 struct MmComplex { re; im; }
 
+# Lorentzian resonance from centre, plasma and damping frequencies in Hz, plus background.
 #must_use
 fn lorentzian_resonance_new(center_hz, plasma_hz, damping_hz, background_value) {
     var r = alloc(sizeof(LorentzianResonance));
@@ -121,6 +122,7 @@ fn metamaterial_negative_stiffness(k_eff, rho) {
     return m;
 }
 
+# Negative-density metamaterial: an effective density resonance plus a bulk modulus.
 #must_use
 fn metamaterial_negative_density(rho_eff, k_modulus) {
     var m = alloc(MM_SIZE);
@@ -130,6 +132,7 @@ fn metamaterial_negative_density(rho_eff, k_modulus) {
     return m;
 }
 
+# Doubly-negative metamaterial: effective modulus and density resonances.
 #must_use
 fn metamaterial_doubly_negative(k_eff, rho_eff) {
     var m = alloc(MM_SIZE);
@@ -139,6 +142,7 @@ fn metamaterial_doubly_negative(k_eff, rho_eff) {
     return m;
 }
 
+# Metamaterial read from `rows`, a table built with mm_rows_new and mm_rows_push.
 #must_use
 fn metamaterial_lookup_table(rows) {
     var m = alloc(MM_SIZE);
@@ -151,6 +155,7 @@ fn metamaterial_lookup_table(rows) {
 # New (freq, absorption) lookup-row vec, and a paired-push helper.
 #must_use
 fn mm_rows_new() { return vec_new(); }
+# Append one (frequency, absorption) row to `rows`.
 fn mm_rows_push(rows, frequency_hz, absorption) {
     vec_push(rows, frequency_hz);
     vec_push(rows, absorption);

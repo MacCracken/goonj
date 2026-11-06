@@ -5,6 +5,7 @@
 include "lib/sakshi.cyr"
 include "src/logging.cyr"
 
+# 1 if the integer `a` is greater than `b`.
 fn gt(a, b) {
     if (a > b) { return 1; }
     return 0;

@@ -17,12 +17,15 @@ include "src/impulse.cyr"
 var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
 var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
 
+# 1 if `a` and `b` differ by less than `tol`.
 fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
     return 0;
 }
+# n/10 as f64.
 fn tenths(n) { return f64_div(f64_from(n), f64_from(10)); }
 
+# 1 if `x` is +Inf.
 fn is_inf(x) {
     if (x == 0x7FF0000000000000) { return 1; }
     return 0;
@@ -33,7 +36,9 @@ fn is_inf(x) {
 fn concrete_room() {
     return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
 }
+# Source position shared by this suite.
 fn imp_src() { return hvec3_new(f64_from(3), tenths(15), f64_from(4)); }
+# Listener position shared by this suite.
 fn imp_lis() { return hvec3_new(f64_from(7), tenths(15), f64_from(4)); }
 
 # Small IR config: default sample_rate/order/bounces/seed, small rays/time.

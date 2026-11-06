@@ -74,7 +74,8 @@ assert(f64_lt(a1k, f64_div(f64_from(2), f64_from(100))), "1kHz absorption < 0.02
 assert(f64_gt(a8k, f64_mul(a1k, f64_from(5))), "8kHz >> 1kHz");
 # Guards: zero humidity / negative frequency → 0.
 assert_eq(f64_to(atmospheric_absorption(f64_from(1000), 0, f64_from(20), F64_ONE)), 0, "zero humidity -> 0");
-assert_eq(f64_to(atmospheric_absorption(f64_neg(f64_from(100)), f64_from(50), f64_from(20), F64_ONE)), 0, "neg freq -> 0");
+assert_eq(f64_to(atmospheric_absorption(f64_neg(f64_from(100)), f64_from(50), f64_from(20), F64_ONE)), 0,
+  "neg freq -> 0");
 
 # ================================================================
 test_group("doppler_shift");
@@ -86,7 +87,8 @@ assert(f64_lt(doppler_shift(f64_from(440), f64_from(30), 0, c20), f64_from(440))
 # Stationary → no shift.
 assert(approx(doppler_shift(f64_from(440), 0, 0, c20), f64_from(440), TOL_1E2), "stationary no shift");
 # Denominator ≈ 0 → returns source frequency.
-assert(approx(doppler_shift(f64_from(440), f64_neg(c20), 0, c20), f64_from(440), TOL_1E2), "near-zero denom returns source");
+assert(approx(doppler_shift(f64_from(440), f64_neg(c20), 0, c20), f64_from(440), TOL_1E2),
+  "near-zero denom returns source");
 
 # ================================================================
 test_group("db_spl <-> pressure");
@@ -111,7 +113,8 @@ var r_asphalt = ground_reflection_coefficient(f64_from(1000), ang30, asphalt);
 assert(f64_gt(r_asphalt, r_grass), "asphalt > grass");
 # Zero frequency / zero resistivity → R = 1.
 assert(approx(ground_reflection_coefficient(0, f64_div(F64_ONE, F64_TWO), soil), F64_ONE, TOL_1E3), "zero freq -> R=1");
-assert(approx(ground_reflection_coefficient(f64_from(1000), f64_div(F64_ONE, F64_TWO), ground_impedance_new(0)), F64_ONE, TOL_1E3), "zero resistivity -> R=1");
+assert(approx(ground_reflection_coefficient(f64_from(1000), f64_div(F64_ONE, F64_TWO), ground_impedance_new(0)),
+    F64_ONE, TOL_1E3), "zero resistivity -> R=1");
 # In-range sweep stays within [0, 1].
 var r_soil = ground_reflection_coefficient(f64_from(500), F64_ONE, soil);
 assert(f64_ge(r_soil, 0), "R >= 0");
@@ -136,7 +139,8 @@ assert(f64_gt(eff_hi, eff_lo), "gradient raises speed with height");
 var prof = temperature_profile_new(f64_from(20), LAPSE_STD);
 assert(f64_gt(speed_at_height(prof, 0), speed_at_height(prof, f64_from(1000))), "normal lapse decreases with height");
 var prof_inv = temperature_profile_new(f64_from(10), TOL_1E2);
-assert(f64_lt(speed_at_height(prof_inv, 0), speed_at_height(prof_inv, f64_from(100))), "inversion increases with height");
+assert(f64_lt(speed_at_height(prof_inv, 0), speed_at_height(prof_inv, f64_from(100))),
+  "inversion increases with height");
 # Zero height → ground speed.
 assert(approx(speed_at_height(prof, 0), speed_of_sound(f64_from(20)), TOL_1E3), "zero height -> ground speed");
 
@@ -148,20 +152,24 @@ var d099 = f64_div(f64_from(99), f64_from(100));
 var d001 = f64_div(f64_from(1), f64_from(100));
 
 # Lapse gradient bends the ray but keeps |dir| ≈ 1.
-var rs1 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(d06, f64_neg(d08), 0), &_spd_lapse, 0, f64_from(10));
+var rs1 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(d06, f64_neg(d08), 0), &_spd_lapse, 0,
+  f64_from(10));
 assert(approx(hvec3_length(RayStep_direction(rs1)), F64_ONE, TOL_1E2), "refract keeps |dir| ~1");
 
 # Vertical ray: no refraction; advances straight down to y = 90.
-var rs2 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(0, f64_neg(F64_ONE), 0), &_spd_343, 0, f64_from(10));
+var rs2 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(0, f64_neg(F64_ONE), 0), &_spd_343, 0,
+  f64_from(10));
 assert(approx(HVec3_y(RayStep_direction(rs2)), f64_neg(F64_ONE), TOL_1E2), "vertical stays vertical");
 assert(approx(HVec3_y(RayStep_origin(rs2)), f64_from(90), TOL_1E1), "advanced to y=90");
 
 # Zero local speed → original direction retained (still unit length).
-var rs3 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(d06, f64_neg(d08), 0), &_spd_zero, 0, f64_from(10));
+var rs3 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(d06, f64_neg(d08), 0), &_spd_zero, 0,
+  f64_from(10));
 assert(f64_gt(hvec3_length(RayStep_direction(rs3)), F64_HALF), "zero speed keeps valid dir");
 
 # Extreme speed ratio still yields a valid direction.
-var rs4 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(d099, f64_neg(d001), 0), &_spd_step1000, 0, f64_from(10));
+var rs4 = refract_ray_step(hvec3_new(0, f64_from(100), 0), hvec3_new(d099, f64_neg(d001), 0), &_spd_step1000, 0,
+  f64_from(10));
 assert(f64_gt(hvec3_length(RayStep_direction(rs4)), F64_HALF), "extreme ratio valid dir");
 
 # Trace: flat atmosphere, horizontal ray → multi-point path.

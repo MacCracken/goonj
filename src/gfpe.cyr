@@ -35,6 +35,7 @@ fn _gfpe_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
 #derive(accessors)
 struct GfpeAtmosphere { gradient_per_m; reference_speed; }
 
+# Atmosphere with sound speed c(z) = reference_speed + gradient_per_m * z.
 #must_use
 fn gfpe_atmosphere_new(gradient_per_m, reference_speed) {
     var a = alloc(sizeof(GfpeAtmosphere));
@@ -53,6 +54,7 @@ fn gfpe_atmosphere_default() { return gfpe_atmosphere_new(0, f64_from(343)); }
 #derive(accessors)
 struct GfpeTerrain { ranges_m; heights_m; }
 
+# Terrain profile from parallel vecs of ranges and heights, both in metres.
 #must_use
 fn gfpe_terrain_new(ranges_m, heights_m) {
     var t = alloc(sizeof(GfpeTerrain));
@@ -121,6 +123,7 @@ struct GfpeConfig {
     atmosphere;
 }
 
+# Build a GfpeConfig; frequency in Hz, heights, ranges and steps in metres.
 #must_use
 fn gfpe_config_new(frequency_hz, source_height_m, max_range_m, max_height_m,
   range_step_m, height_step_m, ground_impedance, atmosphere) {
@@ -142,6 +145,7 @@ fn gfpe_config_new(frequency_hz, source_height_m, max_range_m, max_height_m,
 #derive(accessors)
 struct GfpeResult { ranges_m; heights_m; excess_attenuation_db; }
 
+# Build a GfpeResult from its range and height axes and its attenuation grid.
 #must_use
 fn gfpe_result_new(ranges_m, heights_m, excess_attenuation_db) {
     var r = alloc(sizeof(GfpeResult));
@@ -151,8 +155,10 @@ fn gfpe_result_new(ranges_m, heights_m, excess_attenuation_db) {
     return r;
 }
 
+# Number of range samples in result `r`.
 #must_use
 fn gfpe_result_num_ranges(r) { return vec_len(GfpeResult_ranges_m(r)); }
+# Number of height samples in result `r`.
 #must_use
 fn gfpe_result_num_heights(r) { return vec_len(GfpeResult_heights_m(r)); }
 

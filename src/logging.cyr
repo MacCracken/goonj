@@ -72,14 +72,20 @@ fn logging_set_level(level) {
     sakshi_set_level(level);
     return 0;
 }
+# Get the runtime log threshold (LOG_FATAL to LOG_TRACE).
 fn logging_get_level() {
     return sakshi_get_level();
 }
 
 # Level-gated log calls. `msg` is a cstring literal; length via strlen.
 fn goonj_log_fatal(msg) { sakshi_fatal(msg, strlen(msg)); return 0; }
+# Log the cstring `msg` at error level.
 fn goonj_log_error(msg) { sakshi_error(msg, strlen(msg)); return 0; }
+# Log the cstring `msg` at warn level.
 fn goonj_log_warn(msg)  { sakshi_warn(msg, strlen(msg)); return 0; }
+# Log the cstring `msg` at info level.
 fn goonj_log_info(msg)  { sakshi_info(msg, strlen(msg)); return 0; }
+# Log the cstring `msg` at debug level.
 fn goonj_log_debug(msg) { sakshi_debug(msg, strlen(msg)); return 0; }
+# Log the cstring `msg` at trace level.
 fn goonj_log_trace(msg) { sakshi_trace(msg, strlen(msg)); return 0; }

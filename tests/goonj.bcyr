@@ -6,8 +6,10 @@
 # (~240 ns per start/stop pair on x86_64 Linux). See lib/bench.cyr header for
 # the full overhead-vs-batching guidance.
 
+# Empty benchmark body, for measuring the harness's own overhead.
 fn bench_noop(): i64 { return 0; }
 
+# Time bench_noop in a batch to show the harness's own overhead.
 fn main(): i64 {
     alloc_init();
     var b = bench_new("noop");

@@ -6,6 +6,7 @@ include "src/error.cyr"
 include "src/propagation.cyr"
 include "src/gfpe.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -20,6 +21,7 @@ var _config = 0;
 # Full GFPE solve over a 100 m x 30 m vertical slice at 500 Hz on grass.
 fn b_solve_gfpe() { return solve_gfpe(_terrain, _config); }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
     _terrain = gfpe_terrain_flat(f64_from(100));

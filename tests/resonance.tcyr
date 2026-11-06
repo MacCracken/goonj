@@ -7,6 +7,7 @@ var TOL_1E1 = 0x3FB999999999999A;   # 0.1
 var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
 var V_34_3  = 0x4041266666666666;   # 34.3 (first mode of a 5 m room at 343 m/s)
 
+# 1 if `a` and `b` differ by less than `tol`.
 fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
     return 0;

@@ -12,6 +12,7 @@ include "src/diffuse.cyr"
 include "src/impulse.cyr"
 include "src/wav.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -25,6 +26,7 @@ var _samples = 0;
 # Export the fixed 96000-sample mono buffer at 48 kHz.
 fn b_wav_export() { return write_wav_mono(_samples, 48000); }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
     # samples[i] = exp(-0.005 * i / 48.0) * 0.5   for i in 0..96000.

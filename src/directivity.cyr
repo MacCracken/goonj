@@ -42,7 +42,9 @@ fn _dir_pct(n) { return f64_div(f64_from(n), f64_from(100)); }
 # DirectivityBalloon — measured per-band gain table
 # ================================================================
 fn directivity_balloon_azimuths(b)   { return load64(b + DB_AZ); }
+# Elevation angles of balloon `b`, as a vec.
 fn directivity_balloon_elevations(b) { return load64(b + DB_EL); }
+# Gain table of balloon `b` for frequency band `band`, as a vec.
 fn directivity_balloon_gain_band(b, band) { return load64(b + DB_GAINS + band * 8); }
 
 # Build a balloon from an azimuths vec, an elevations vec, and `gains`
@@ -142,6 +144,7 @@ fn _dir_interpolate_broadband(balloon, direction, front) {
 #derive(accessors)
 struct DirectivityPattern { kind; balloon; }
 
+# Omnidirectional pattern: equal gain in every direction.
 #must_use
 fn directivity_omnidirectional() {
     var p = alloc(sizeof(DirectivityPattern));
@@ -149,6 +152,7 @@ fn directivity_omnidirectional() {
     DirectivityPattern_set_balloon(p, 0);
     return p;
 }
+# Cardioid pattern.
 #must_use
 fn directivity_cardioid() {
     var p = alloc(sizeof(DirectivityPattern));
@@ -156,6 +160,7 @@ fn directivity_cardioid() {
     DirectivityPattern_set_balloon(p, 0);
     return p;
 }
+# Subcardioid pattern.
 #must_use
 fn directivity_subcardioid() {
     var p = alloc(sizeof(DirectivityPattern));
@@ -163,6 +168,7 @@ fn directivity_subcardioid() {
     DirectivityPattern_set_balloon(p, 0);
     return p;
 }
+# Supercardioid pattern.
 #must_use
 fn directivity_supercardioid() {
     var p = alloc(sizeof(DirectivityPattern));
@@ -170,6 +176,7 @@ fn directivity_supercardioid() {
     DirectivityPattern_set_balloon(p, 0);
     return p;
 }
+# Figure-8 pattern.
 #must_use
 fn directivity_figure8() {
     var p = alloc(sizeof(DirectivityPattern));
@@ -177,6 +184,7 @@ fn directivity_figure8() {
     DirectivityPattern_set_balloon(p, 0);
     return p;
 }
+# Pattern read from the measured gain table `balloon`.
 #must_use
 fn directivity_tabulated(balloon) {
     var p = alloc(sizeof(DirectivityPattern));

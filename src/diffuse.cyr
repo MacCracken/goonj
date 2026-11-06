@@ -46,6 +46,7 @@ struct DiffuseRainConfig {
     seed;
 }
 
+# Build a DiffuseRainConfig: rays, bounces, time limit, collection radius, sound speed, seed.
 #must_use
 fn diffuse_rain_config_new(num_rays, max_bounces, max_time_seconds, collection_radius, speed_of_sound, seed) {
     var c = alloc(sizeof(DiffuseRainConfig));
@@ -63,8 +64,10 @@ fn diffuse_rain_config_new(num_rays, max_bounces, max_time_seconds, collection_r
 # ================================================================
 #must_use
 fn lrc_time(c) { return load64(c + LRC_TIME); }
+# Direction of late-reverb contribution `c` (HVec3).
 #must_use
 fn lrc_direction(c) { return load64(c + LRC_DIR); }
+# Energy of late-reverb contribution `c` in frequency band `i`.
 #must_use
 fn lrc_energy_band(c, i) { return load64(c + LRC_ENERGY + i * 8); }
 

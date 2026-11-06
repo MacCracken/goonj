@@ -37,6 +37,7 @@ fn _vib_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
 #derive(accessors)
 struct VibratingSurface { position; normal; area; velocity; frequency; }
 
+# Vibrating surface element from its position, normal, area, velocity and frequency.
 #must_use
 fn vibrating_surface_new(position, normal, area, velocity, frequency) {
     var s = alloc(sizeof(VibratingSurface));
@@ -55,6 +56,7 @@ fn vibrating_surface_new(position, normal, area, velocity, frequency) {
 #derive(accessors)
 struct VibrationMode { frequency; damping; mode_shape; }
 
+# Structural mode: frequency, damping and per-element amplitudes `mode_shape`.
 #must_use
 fn vibration_mode_new(frequency, damping, mode_shape) {
     var m = alloc(sizeof(VibrationMode));
@@ -69,8 +71,10 @@ fn vibration_mode_new(frequency, damping, mode_shape) {
 # ================================================================
 #must_use
 fn radiation_result_sound_power_watts(r)    { return load64(r + RR_WATTS); }
+# Sound power level of `r`, in dB.
 #must_use
 fn radiation_result_sound_power_level_db(r) { return load64(r + RR_DB); }
+# Radiated power of `r` in frequency band `band`.
 #must_use
 fn radiation_result_power_per_band(r, band) { return load64(r + RR_BANDS + band * 8); }
 

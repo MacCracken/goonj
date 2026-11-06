@@ -45,10 +45,15 @@ enum BeamPathLayout {
 # AcousticBeam accessors (manual inline layout)
 # ================================================================
 fn beam_apex(b)             { return load64(b + BEAM_APEX); }
+# Direction of beam `b` (HVec3).
 fn beam_direction(b)        { return load64(b + BEAM_DIR); }
+# Half-angle of beam `b`, in radians.
 fn beam_half_angle(b)       { return load64(b + BEAM_HALF); }
+# Energy of beam `b` in frequency band `i`.
 fn beam_energy_band(b, i)   { return load64(b + BEAM_ENERGY + i * 8); }
+# Distance beam `b` has travelled so far.
 fn beam_path_length(b)      { return load64(b + BEAM_PATH); }
+# Reflection order of beam `b`.
 fn beam_order(b)            { return load64(b + BEAM_ORDER); }
 
 # A beam with all-1.0 per-band energy, zero path length, order 0.
@@ -91,6 +96,7 @@ fn _beam_clone(src) {
 #derive(accessors)
 struct BeamWallHit { centre; distance; wall_index; coverage; }
 
+# Build a BeamWallHit from its centre, distance, wall index and coverage.
 #must_use
 fn beam_wall_hit_new(centre, distance, wall_index, coverage) {
     var h = alloc(sizeof(BeamWallHit));
@@ -105,8 +111,11 @@ fn beam_wall_hit_new(centre, distance, wall_index, coverage) {
 # BeamPath accessors (manual inline layout)
 # ================================================================
 fn beam_path_hits(p)           { return load64(p + BP_HITS); }
+# Final energy of beam path `p` in frequency band `i`.
 fn beam_path_final_energy(p, i) { return load64(p + BP_FINAL + i * 8); }
+# Total distance travelled along beam path `p`.
 fn beam_path_total_distance(p) { return load64(p + BP_TOTAL); }
+# Reflection order reached by beam path `p`.
 fn beam_path_order(p)          { return load64(p + BP_ORDER); }
 
 # ================================================================

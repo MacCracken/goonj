@@ -22,6 +22,7 @@ fn approx(a, b, tol) {
 
 # +inf bit-pattern checks for excess attenuation (blocked / out of range).
 fn is_inf(x)    { if (x == GFPE_POS_INF) { return 1; } return 0; }
+# 0 if `x` is +Inf, else 1.
 fn is_finite(x) { if (x == GFPE_POS_INF) { return 0; } return 1; }
 
 # small_config() from the Rust tests: 500 Hz, src 5 m, 100x30 m grid,
@@ -41,6 +42,7 @@ fn mk_terrain2(r0, r1, h0, h1) {
     vec_push(h, h1);
     return gfpe_terrain_new(r, h);
 }
+# Terrain from three range and height points.
 fn mk_terrain3(r0, r1, r2, h0, h1, h2) {
     var r = vec_new();
     vec_push(r, r0);
@@ -52,6 +54,7 @@ fn mk_terrain3(r0, r1, r2, h0, h1, h2) {
     vec_push(h, h2);
     return gfpe_terrain_new(r, h);
 }
+# Terrain from five range and height points.
 fn mk_terrain5(r0, r1, r2, r3, r4, h0, h1, h2, h3, h4) {
     var r = vec_new();
     vec_push(r, r0);

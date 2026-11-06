@@ -24,11 +24,13 @@ var V_0_7   = 0x3FE6666666666666;   # 0.7
 var V_1E6   = 0x412E848000000000;   # 1e6
 var V_1E12  = 0x426D1A94A2000000;   # 1e12
 
+# 1 if `a` and `b` differ by less than `tol`.
 fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
     return 0;
 }
 
+# The suite's 30 x 25 x 20 grid at 22.05 kHz.
 fn small_config() {
     return dwm_config_new(22050, required_dx(22050, f64_from(343)), f64_from(343),
       30, 25, 20, DWM_DUR_DEFAULT, wall_materials_rigid());

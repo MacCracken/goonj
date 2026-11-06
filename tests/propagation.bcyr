@@ -5,6 +5,7 @@ include "lib/hisab.cyr"
 include "src/error.cyr"
 include "src/propagation.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -45,6 +46,7 @@ fn b_ground_reflection() {
     return ground_reflection_coefficient(_freq, _angle, _impedance);
 }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
 

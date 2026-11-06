@@ -15,8 +15,10 @@ include "src/diffuse.cyr"
 include "src/impulse.cyr"
 include "src/dhvani.cyr"
 
+# n/10 as f64.
 fn tenths(n) { return f64_div(f64_from(n), f64_from(10)); }
 
+# 1 if `x` is +Inf.
 fn is_inf(x) {
     if (x == 0x7FF0000000000000) { return 1; }
     return 0;

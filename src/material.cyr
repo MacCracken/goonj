@@ -29,6 +29,7 @@ var PERM_FOAM = 0x3E29C511DC3A41DF;   # 3.0e-9   open-cell-foam thermal permeabi
 # n/100 and n/1000 as f64 — keeps absorption tables and loss factors
 # readable (every value in material.rs is an exact hundredth/thousandth).
 fn pct(n)   { return f64_div(f64_from(n), f64_from(100)); }
+# n/1000 as f64.
 fn milli(n) { return f64_div(f64_from(n), f64_from(1000)); }
 
 # log10(x) = ln(x) / ln(10)
@@ -52,7 +53,9 @@ fn frequency_band(i) {
 # AcousticMaterial
 # ================================================================
 fn am_name(m)              { return load64(m + AM_NAME); }
+# Scattering coefficient of material `m`.
 fn am_scattering(m)        { return load64(m + AM_SCAT); }
+# Absorption coefficient of material `m` in frequency band `band`.
 fn am_absorption_band(m, band) { return load64(m + AM_ABS + band * 8); }
 fn _am_set_band(m, band, v)    { store64(m + AM_ABS + band * 8, v); return 0; }
 
@@ -78,26 +81,32 @@ fn _am_make(name, a0, a1, a2, a3, a4, a5, a6, a7, scattering) {
 fn acoustic_material_concrete() {
     return _am_make("concrete", pct(1), pct(1), pct(1), pct(2), pct(2), pct(2), pct(3), pct(4), pct(10));
 }
+# Carpet: soft, highly absorptive at high frequencies.
 #must_use
 fn acoustic_material_carpet() {
     return _am_make("carpet", pct(2), pct(8), pct(24), pct(57), pct(69), pct(71), pct(73), pct(73), pct(40));
 }
+# Glass: reflective at low frequencies, less at high.
 #must_use
 fn acoustic_material_glass() {
     return _am_make("glass", pct(35), pct(35), pct(25), pct(18), pct(12), pct(7), pct(4), pct(2), pct(5));
 }
+# Wood paneling.
 #must_use
 fn acoustic_material_wood() {
     return _am_make("wood", pct(15), pct(15), pct(11), pct(10), pct(7), pct(6), pct(7), pct(7), pct(15));
 }
+# Heavy curtain or drape.
 #must_use
 fn acoustic_material_curtain() {
     return _am_make("curtain", pct(3), pct(7), pct(31), pct(49), pct(75), pct(70), pct(65), pct(65), pct(50));
 }
+# Drywall or gypsum board.
 #must_use
 fn acoustic_material_drywall() {
     return _am_make("drywall", pct(29), pct(29), pct(10), pct(5), pct(4), pct(7), pct(9), pct(9), pct(10));
 }
+# Ceramic tile.
 #must_use
 fn acoustic_material_tile() {
     return _am_make("tile", pct(1), pct(1), pct(1), pct(1), pct(1), pct(2), pct(2), pct(2), pct(5));
@@ -159,6 +168,7 @@ fn absorption_at_band(m, band) {
 #derive(accessors)
 struct WallConstruction { surface_density; critical_frequency; loss_factor; }
 
+# Wall from surface density (kg/m²), critical frequency (Hz) and loss factor.
 #must_use
 fn wall_construction_new(surface_density, critical_frequency, loss_factor) {
     var w = alloc(sizeof(WallConstruction));
@@ -168,12 +178,16 @@ fn wall_construction_new(surface_density, critical_frequency, loss_factor) {
     return w;
 }
 
+# Single-leaf drywall (12.5 mm gypsum board).
 #must_use
 fn wall_drywall_single() { return wall_construction_new(f64_from(10), f64_from(2500), milli(14)); }
+# Double-leaf drywall (2 x 12.5 mm with air gap).
 #must_use
 fn wall_drywall_double() { return wall_construction_new(f64_from(20), f64_from(2500), milli(20)); }
+# 150 mm concrete wall.
 #must_use
 fn wall_concrete_150mm() { return wall_construction_new(f64_from(350), f64_from(130), milli(10)); }
+# 6 mm glass pane.
 #must_use
 fn wall_glass_6mm()      { return wall_construction_new(f64_from(15), f64_from(2000), milli(20)); }
 
@@ -231,6 +245,7 @@ struct JcalMaterial {
     thermal_permeability;
 }
 
+# JCAL porous material; flow resistivity in Pa·s/m², lengths in metres, permeability in m².
 #must_use
 fn jcal_material_new(flow_resistivity, porosity, tortuosity, viscous_length, thermal_length, thermal_permeability) {
     var j = alloc(sizeof(JcalMaterial));
@@ -246,10 +261,12 @@ fn jcal_material_new(flow_resistivity, porosity, tortuosity, viscous_length, the
 # Microns → meters: n·1e-6.
 fn _microns(n) { return f64_div(f64_from(n), f64_from(1000000)); }
 
+# Standard fibrous absorber, such as mineral wool.
 #must_use
 fn jcal_mineral_wool() {
     return jcal_material_new(f64_from(30000), pct(97), pct(106), _microns(100), _microns(200), PERM_MW);
 }
+# Open-cell foam.
 #must_use
 fn jcal_open_cell_foam() {
     return jcal_material_new(f64_from(10000), pct(98), pct(102), _microns(150), _microns(300), PERM_FOAM);

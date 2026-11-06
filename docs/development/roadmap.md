@@ -1,104 +1,114 @@
 # goonj — Roadmap
 
-> **Forward plan.** The 2.0.0 Rust → Cyrius port is complete; its milestone
-> detail is compressed into [Shipped](#shipped) at the bottom rather than
-> deleted. Live state lives in [`state.md`](state.md); per-module parity in
-> [`port-audit.md`](port-audit.md); release detail in
-> [`../../CHANGELOG.md`](../../CHANGELOG.md).
+> **Forward plan only.** Shipped work leaves this file: release history is in
+> [`../../CHANGELOG.md`](../../CHANGELOG.md), live state in [`state.md`](state.md),
+> per-module parity in [`port-audit.md`](port-audit.md), and the reasons behind
+> decisions in [`../adr/`](../adr/).
 >
-> This file is the sequencing — what ships next, in what order, against what
-> dependency gates.
+> This file is the sequencing: what ships next, in what order, and what each step
+> waits on.
 
-## Open gates
+## 2.1.3 — P(-1) audit, hardening and optimization sweep
 
-- [ ] **Consumer-green** — at least one downstream consumer compiles and passes
-      against `dist/goonj.cyr`. The bundle itself has shipped since 2.0.0
-      (validated by `tests/bundle.tcyr`, gated in CI by `cyrius distlib --check`);
-      what is missing is a checked consumer. **Gate: dhvani / shruti / kiran
-      being ported to Cyrius** — goonj is being worked up the stack, so this is
-      not goonj's to close alone. Six repos already declare `[deps.goonj]` at
-      2.0.4 or 2.0.5 (see [`state.md`](state.md#consumers)); nobody has yet
-      confirmed that any of them compiles and passes against it. Reaching 2.1.x
-      needs each of them on cyrius ≥ 6.7.2 first.
-- [ ] **Retire `rust-old/`** — the frozen oracle is cleared for deletion
-      (verified: build, all suites and the bundle check pass with it removed).
-      Its benchmark baseline is already archived to
-      [`../benchmarks/rust-bench-history.csv`](../benchmarks/rust-bench-history.csv)
-      and its only runnable demo ported to [`../../examples/basic.cyr`](../../examples/basic.cyr).
-      Deleting it also drops ~3.3 GB of untracked `target/`.
-- [ ] **55 undocumented public fns** — the one non-green `cyrius audit` gate,
-      and the sole reason `audit` exits 1. It did so at 2.0.0 too, so this is a
-      standing debt rather than a regression, but it is closable.
+**Next release.** Audit the whole library, repair what the audit finds, then take
+the optimizations that change no result. It is the last sweep with `rust-old/` in
+the tree, so it should lean on the oracle while it can.
 
-## Post-2.0.0 backlog
+A full sweep is justified by the record: 2.0.2 and 2.0.4 found 18 defects between
+them, and 2.0.6 found two more with every assertion green. A passing suite has
+repeatedly proved little here.
 
-- **Review optimizing for various number types.** The port is f64-throughout and
-  otherwise unoptimized (naive per-call `alloc`, no arena/pooling, no SIMD). The
-  Rust→Cyrius benchmark comparison ([`../benchmarks-rust-vs-cyrius.md`](../benchmarks-rust-vs-cyrius.md))
-  is deliberately an honest first pass so it points at exactly this. Cyrius is
-  adding **more diverse float/integer types + related SIMD** (driven by model
-  training/inference use); once those land, revisit goonj's hot paths (dwm solver,
-  ray traversal, wall intersection) to pick appropriate widths (f32 where hisab
-  allows, narrower ints for grid indices) and vectorize the inner loops. Expected
-  to close much of the current codegen/precision gap. **Gate: Cyrius number-type +
-  SIMD support shipping.**
-- An arena/pool allocator (or out-param returns) for the alloc-heavy tiny ops
-  (`wall_intersection`, per-ray/per-reflection temporaries) — independent of the
-  above and doable sooner. Note the alloc-heavy band already improved from
-  ~22–130× to ~11–44× between 2.0.0 and 2.0.1, but that came from the Cyrius
-  stdlib allocator's single-threaded fast path and a bench-harness rewrite, not
-  from goonj changing its allocation strategy. This item is still fully open.
+### Audit
+
+| Area | What to check | Surface |
+|------|---------------|---------|
+| Hostile input | Call every public fn with NaN, ±Inf, ±0, subnormal, negative, huge, empty and 0-handle arguments. Each must give a correct or documented degenerate result, per `SECURITY.md`. | Every public fn |
+| ADR-0002 rules | Both bounds at every index guard, every `f64_to` bounded in f64, every allocation-gating product bounded, NaN rejected explicitly. Start with raw memory access, which fails silently. | 342 lines of `load64` / `store64` |
+| Allocation refusal | goonj does not check `alloc`. Since hisab 3.4.0 its `hvec3_*`, `geo_*` and `bvh_*` return 0 on refusal, and `ray.cyr` passes a 0 from `bvh_query_ray` to `vec_len`. Choose a policy, record it in an ADR, apply it. | 141 lines of `alloc` |
+| NaN parity | `f64_max(NaN, 1)` is 1 but `f64_max(1, NaN)` is NaN, and `f64_min` matches it. Rust's `max` and `min` ignore NaN either way. 2.0.6 fixed room bounds only, so check each site against the oracle. | 119 `f64_min` / `f64_max` / `f64_clamp` sites |
+| Fuzzing | `tests/goonj.fcyr` is a scaffold stub, so `cyrius fuzz` passes without running any goonj code. Write real targets and run them with `--poison`. | 0 real targets today |
+
+### Known repairs
+
+- **`fdn_new` on a non-finite or overflowing room dimension** still takes about 8 s
+  and 9.3 GiB, and aborts where that memory is unavailable
+  ([ADR-0003](../adr/0003-f64-to-saturates-keep-bounding-in-f64.md)). Removes the
+  known limit in `SECURITY.md` if it can be closed without moving the cap.
+- **`bvh_query_ray` returning 0**, under the allocation-refusal policy above.
+
+### Optimization
+
+Take only changes that keep results bit-identical. Allocation strategy waits for
+2.2.x.
+
+- **Refresh the baselines first.** `bench-history.csv` and
+  [`../benchmarks/results.md`](../benchmarks/results.md) were last recorded on
+  cyrius 6.5.35.
+- **Explain the slower rows from 2.0.6:** `propagation/ground_reflection` (186 → 262
+  ns), `dvn/synthesize_2s_2khz_density` (+15%) and `gfpe/solve_100m_30m_500hz` (+11%).
+- **Binary size.** The smoke binary grew from 1.30 to 2.14 MB across 2.0.6–2.1.1, and
+  the compiler reports about 86% of it unreachable. Evaluate `CYRIUS_DCE=1`.
+- **`fdn_new`'s zero-fill `vec_push` loops**, which also bear on the first repair.
+
+### Done when
+
+- Every finding is fixed and pinned in `tests/hardening.tcyr`, or listed here with a
+  repro.
+- Anything that moves a result has an ADR.
+- `cyrius audit` still exits 0, and CI gates it.
+- `SECURITY.md` reflects the outcome.
+
+## 2.2.x — Retire the oracle, then allocation
+
+### 2.2.0 — Retire `rust-old/`
+
+Waits for 2.1.3, which is its last planned use. Deleting the tree removes 49 tracked
+files and 3.5 GB of untracked `target/`. `CLAUDE.md`, `CONTRIBUTING.md` and the README
+all name it as the parity oracle, so those rules change in the same release. Re-verify
+first that build, suites and the bundle check pass without it.
+
+Its benchmark baseline is already archived to
+[`../benchmarks/rust-bench-history.csv`](../benchmarks/rust-bench-history.csv), and its
+only runnable demo is ported to [`../../examples/basic.cyr`](../../examples/basic.cyr).
+The source stays readable from git tags.
+
+### Allocation strategy
+
+Out-param returns or an arena/pool allocator for the alloc-heavy tiny ops:
+`wall_intersection` and per-ray and per-reflection temporaries. This is the 11–44×
+band in the [Rust comparison](../benchmarks-rust-vs-cyrius.md). Its earlier improvement
+came from the stdlib allocator and the bench harness, not from goonj, so this work is
+still fully open. hisab 3.4.0's stack-based `hvec3_distance` is a pattern to follow.
+
+## 2.3.x — Number types and SIMD
+
+The port is f64 throughout, with no SIMD. The original gate was Cyrius shipping these
+features, and that has mostly cleared: `lib/simd.cyr` ships at 6.7.18, and hisab
+already uses `f64v_*` inside `HVec3`.
+
+- **SIMD on f64 inner loops:** the dwm solver, ray traversal and wall intersection.
+  No gate.
+- **Narrower integers** for grid indices, if measurement supports it. No gate.
+- **f32 on hot paths.** **Gate: hisab's `HVec3` is f64-only**, so this needs hisab to
+  move first.
+- **Refresh [`../benchmarks-rust-vs-cyrius.md`](../benchmarks-rust-vs-cyrius.md)**
+  once these land. It describes goonj's unoptimized first pass.
+
+## 2.x.x — Unscheduled
+
+### Consumer-green
+
+At least one downstream consumer compiles and passes against `dist/goonj.cyr`. This is
+not goonj's to close alone. Six repos declare `[deps.goonj]` at 2.0.4 or 2.0.5 (see
+[`state.md`](state.md#consumers)), and nobody has confirmed that any of them compiles
+and passes. Reaching 2.1.x needs each of them on cyrius ≥ 6.7.2 first. **Gate: dhvani,
+shruti and kiran being ported to Cyrius.**
+
+### New acoustics features
+
+None scoped. Anything beyond the Rust surface waits for the sweeps above.
 
 ## Out of scope
 
-- New acoustics features beyond the Rust surface (defer to 2.1+).
-- Re-architecting module boundaries — parity first; refactor only when the
-  ported code demands it (third-instance rule).
-
-## Shipped
-
-### 2.0.x maintenance line
-
-| Release | Date | What |
-|---------|------|------|
-| **2.1.1** | 2026-11-06 | Toolchain 6.7.9 → 6.7.18, hisab 3.4.0 → 3.4.1, sakshi 2.5.8 → 2.5.10, each the newest tag; no source or result change |
-| **2.1.0** | 2026-11-06 | Toolchain 6.6.20 → 6.7.9, hisab 3.3.7 → 3.4.0, sakshi 2.5.7 → 2.5.8; no source or result change, but consumers now need cyrius ≥ 6.7.2 |
-| **2.0.6** | 2026-11-06 | Toolchain 6.6.2 → 6.6.20, hisab 2.22.1 → 3.3.7, sakshi 2.5.1 → 2.5.7; fixed the memory exhaustion that `f64_to` saturating at 6.6.8 opened in the gaussian pulses and bounded it in the FDN ([ADR-0003](../adr/0003-f64-to-saturates-keep-bounding-in-f64.md)) |
-| **2.0.5** | 2026-09-11 | Toolchain 6.5.35 → 6.6.2, hisab 2.11.2 → 2.22.1; documentation sweep |
-| **2.0.4** | 2026-08-23 | `rust-old/` parity close-out: 7 behavioural divergences fixed (DVN unsigned modulo, radiosity result aliasing, saturating step counts, gfpe cap + negative index, `GOONJ_LOG`), 6 vacuous tests made falsifiable, `error` given a suite |
-| **2.0.3** | 2026-08-23 | Fixed a 2.0.2 regression in `generate_ir` (a negative/NaN `max_time_seconds` allocated ~7.4 GB where Rust yields an empty IR) |
-| **2.0.2** | 2026-08-23 | Security/hardening: 11 reachable P-1 defects (4 SIGSEGV, 3 process aborts, 4 silently-wrong results), pinned by `tests/hardening.tcyr` |
-| **2.0.1** | 2026-08-22 | Toolchain pin 6.3.14 → 6.5.35, hisab 2.6.7 → 2.11.2, stdlib re-vendored, tree re-canonicalised |
-| **2.0.0** | 2026-06-30 | The port itself — all 37 modules, tagged |
-
-### 2.0.0 — the port (M0–M6, complete)
-
-All six release criteria were met except the consumer gate, which is still open
-above. Ported bottom-up through the `use crate::X` dependency graph — L0 leaves
-(error, propagation, resonance, ambisonics, dark_velvet_noise, scattering,
-logging) → L1 `material` (the spine) → L2 geometric/wave (14) → L3 acceleration
-and sources (ray, radiosity, image_source, dwm) → L4 energy and metrics
-(diffuse, diffraction, analysis, beam) → L5 impulse, coupled → L6 wav, binaural
-and the dhvani/kiran/soorat integration APIs. Six parallel worktree-isolated
-workflows landed 30 of the 37 modules (the 13-agent L2 batch alone contributed
-291 assertions); `ray` and `dwm` were ported solo as the hot paths. Every batch
-was re-verified in main — that integration gate, not the agents' self-checks,
-is what caught the drift each time.
-
-Close-out: the `dist/goonj.cyr` distlib bundle with a flat-namespace collision
-audit (2 clashes de-collided, zero remaining), the two Rust `tracing::warn!`
-sites threaded to `goonj_log_warn`, `cyrius vet` clean, and the full 34-benchmark
-suite ported to `.bcyr` with a Rust→Cyrius comparison. Per-module detail:
-[`port-audit.md`](port-audit.md). Conventions:
-[`../adr/0001-rust-to-cyrius-port-conventions.md`](../adr/0001-rust-to-cyrius-port-conventions.md).
-
-### Port challenges, all resolved
-
-Closures → fn-pointer + context (`fncall2` + `TraceCtx`, in `propagation`);
-`Vec<T>` → stdlib `vec` (in `resonance`); fixed arrays and String struct fields →
-manual `alloc` + offset layout (in `material`); f32 → f64 widening forced by
-hisab; `serde` dropped with no consumer needing it; String-payload errors →
-integer codes. The signed-integer and float-conversion hazards this port
-inherited from Rust's `usize`/`as` semantics — which caused most of the 2.0.2
-and 2.0.4 defects — are recorded in
-[`../adr/0002-signed-index-and-float-conversion-hazards.md`](../adr/0002-signed-index-and-float-conversion-hazards.md).
+- Re-architecting module boundaries. Refactor only when the code demands it
+  (third-instance rule).

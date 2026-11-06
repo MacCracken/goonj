@@ -5,6 +5,10 @@
 
 ## Version
 
+**2.1.2** — `cyrius audit` exits 0 for the first time: 217 public fns documented and
+29 long lines wrapped, with no code change. The roadmap is rewritten forward, and
+2.1.3 is scheduled as a P(-1) sweep.
+
 **2.1.1** — toolchain 6.7.9 → **6.7.18**, hisab 3.4.0 → **3.4.1**, sakshi 2.5.8 →
 **2.5.10**, each its project's newest tag. No source or API change, and no result
 moved at value level. The consumer floor stays cyrius 6.7.2.
@@ -103,13 +107,15 @@ port's audit trail and still resolve against that tag.
 | Gate | Status |
 |------|--------|
 | fmt   | ✅ clean (was FAIL / 23 files before the 2.0.1 re-canonicalisation) |
-| lint  | ⚠ **29 line-length warnings**, all in `tests/` — pre-existing, identical on 2.0.5 |
-| docs  | ⚠ **217 undocumented public fns**: 135 in `src/`, the rest in `tests/`. Was 55 in `src/` on 6.6.2; that rise is 6.6.20's stricter `cyrdoc`, which also reports 135 on the unchanged 2.0.5 source |
+| lint  | ✅ clean (was 29 line-length warnings in `tests/` before 2.1.2) |
+| docs  | ✅ complete (was 217 undocumented before 2.1.2) |
 | tests | ✅ 41 suites green (37 parity + hardening + dwm_modal + 2 smoke) |
 | bench | ✅ 16 suites green |
 
-`cyrius audit` **exits 1**, and did so at 2.0.0 as well. Don't read the exit
-status as a regression signal; read the gate list. (Note the exit code is easy to lose: `cyrius audit > log; echo $?`
+`cyrius audit` **exits 0** as of 2.1.2, for the first time. It fails on any lint
+warning or undocumented public fn, so a non-zero exit is now a real signal. Note
+that `tests/goonj.fcyr` counts toward the docs gate, so a glob over `.tcyr` and
+`.bcyr` alone misses it. (Note the exit code is easy to lose: `cyrius audit > log; echo $?`
 in a compound command reports the `echo`, not the audit.)
 
 ## Source
@@ -159,6 +165,9 @@ Four suites sit outside that per-module set, bringing the totals to
   (first axial mode dominates). Split out because it runs ~15 s.
 - **`bundle.tcyr`**, **`goonj.tcyr`** — cross-layer and smoke.
 
+⚠ **`tests/goonj.fcyr` is a scaffold stub.** `cyrius fuzz` passes without running any
+goonj code. Real harnesses are in the 2.1.3 scope.
+
 Six parallel workflows landed 30 of the 37 modules; the rest were ported solo.
 Each batch was independently re-verified in main (tests + canonical-fmt diff +
 lint) — that integration gate is the real one, not the agents' self-checks.
@@ -206,32 +215,13 @@ of 2026-11-06):
 ⚠ **dhvani builds 2.0.5 on cyrius ≥ 6.6.8**, so the memory exhaustion fixed in 2.0.6
 is live there until it bumps. A from-scratch consumer builds and runs on 2.1.1, but
 whether these six repos' own code does has not been checked from here; see
-[`roadmap.md`](roadmap.md#open-gates). aethersafha does not declare it, and
+[`roadmap.md`](roadmap.md#consumer-green). aethersafha does not declare it, and
 shruti and kiran/joshua have no `cyrius.cyml` alongside these repos.
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). **All 37 modules ported + release close-out
-mostly done:**
-- ✅ Cross-module collision audit (2 clashes de-collided; zero remaining).
-- ✅ `dist/goonj.cyr` distlib bundle (`[lib]` in `cyrius.cyml`; `tests/bundle.tcyr`
-  cross-layer smoke, 11 green).
-- ✅ Diagnostics: the 2 `tracing::warn!` sites (dwm) → `goonj_log_warn` + sakshi
-  verbose mode.
-- ✅ `cyrius vet` clean; benchmarks captured (ray + dwm).
-- ✅ **2.0.0 released** — tagged 2026-06-30.
-- ✅ **2.0.1** — toolchain pin 6.3.14 → **6.5.35**, hisab 2.6.7 → **2.11.2**,
-  transitive sakshi 2.4.2 → **2.4.11**, stdlib re-vendored, tree re-canonicalised
-  to the 6.5.35 formatter (23 `src/` + 28 `tests/` files, whitespace only). All
-  3585 parity assertions stay green; `dist/goonj.cyr` is byte-identical apart
-  from the version stamp and the fmt whitespace.
-- ✅ **2.0.2** — P-1 hardening sweep: 11 reachable defects fixed across `fdtd`,
-  `dwm`, `material`, `metamaterial`, `analysis`, `propagation`, `impulse`,
-  `binaural`, `ambisonics`, `radiosity`, `wav`; `tests/hardening.tcyr` added.
-  Rust-era `scripts/{version-bump,bench-history}.sh` ported to Cyrius; CI now
-  gates `cyrius distlib --check`.
-- ⏳ **Consumer-green** — deferred until a downstream consumer (dhvani/shruti/
-  kiran) is itself ported (working up the stack).
+See [`roadmap.md`](roadmap.md). 2.1.3 is the P(-1) audit, hardening and optimization
+sweep.
 
 **Every language pattern is now proven** (f32→f64, hex literals, integer errors,
 HVec3, manual layout, `Vec`, closures→fnptr+ctx, tuple→struct, bit-ops/xorshift,

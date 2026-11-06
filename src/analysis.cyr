@@ -489,6 +489,7 @@ fn iacc(left, right, sample_rate) {
 #derive(accessors)
 struct AbsorptionSuggestion { wall_index; rt60_sensitivity; current_absorption; }
 
+# Build one wall's treatment suggestion; the fields are on the struct above.
 #must_use
 fn absorption_suggestion_new(wall_index, rt60_sensitivity, current_absorption) {
     var a = alloc(sizeof(AbsorptionSuggestion));

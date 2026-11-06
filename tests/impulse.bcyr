@@ -11,6 +11,7 @@ include "src/image_source.cyr"
 include "src/diffuse.cyr"
 include "src/impulse.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -53,6 +54,7 @@ fn b_edc() { return impulse_response_energy_decay_curve(_edc_ir); }
 # Full per-band IR: image-source early + diffuse-rain late (1000 rays, 0.5 s).
 fn b_generate_ir() { return generate_ir(_source, _listener, _room, _config); }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
 

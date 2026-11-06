@@ -5,6 +5,7 @@
 include "src/error.cyr"
 include "src/dark_velvet_noise.cyr"
 
+# 1 if `a` and `b` differ by less than `tol`.
 fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
     return 0;
@@ -20,6 +21,7 @@ fn config_seed(seed) {
     return dvn_config_new(48000, f64_from(2000), f64_from(2), decay, f64_from(16000), f64_from(800), seed);
 }
 
+# The suite's 2 s config with seed 42.
 fn config_2s() { return config_seed(42); }
 
 alloc_init();

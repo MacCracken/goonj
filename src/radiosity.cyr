@@ -34,9 +34,13 @@ enum PatchLayout {
 # Patch
 # ================================================================
 fn patch_centre(p) { return load64(p + PA_CENTRE); }
+# Normal of patch `p` (HVec3).
 fn patch_normal(p) { return load64(p + PA_NORMAL); }
+# Area of patch `p`.
 fn patch_area(p) { return load64(p + PA_AREA); }
+# Reflectance of patch `p` in frequency band `band`.
 fn patch_reflectance_band(p, band) { return load64(p + PA_REFL + band * 8); }
+# Radiosity energy of patch `p` in frequency band `band`.
 fn patch_energy_band(p, band) { return load64(p + PA_ENERGY + band * 8); }
 
 fn _patch_set_centre(p, v) { store64(p + PA_CENTRE, v); return 0; }

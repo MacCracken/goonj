@@ -18,7 +18,9 @@ fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
     return 0;
 }
+# 1 if pointer `p` is non-null.
 fn nz(p) { if (p == 0) { return 0; } return 1; }   # pointer non-null (Ok)
+# 1 if pointer `p` is null.
 fn iz(p) { if (p == 0) { return 1; } return 0; }   # pointer null (Err)
 
 # Test fixtures (mirror the Rust helper fns).
@@ -26,6 +28,7 @@ fn neg_stiffness_500() {
     var k = lorentzian_resonance_new(f64_from(500), f64_from(800), f64_from(50), AIR_BULK_MODULUS);
     return metamaterial_negative_stiffness(k, AIR_DENSITY);
 }
+# Negative-density metamaterial resonant at 400 Hz.
 fn neg_density_400() {
     var r = lorentzian_resonance_new(f64_from(400), f64_from(600), f64_from(40), AIR_DENSITY);
     return metamaterial_negative_density(r, AIR_BULK_MODULUS);

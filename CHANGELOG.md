@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-11-06
+
+Clears the quick roadmap items and schedules the 2.1.3 sweep. **`cyrius audit` exits
+0 for the first time.** Comments and formatting only: with comments and whitespace
+stripped, every source and test file and the bundle are identical to 2.1.1.
+**41 suites / 3685 assertions**, all green.
+
+### Changed
+
+- **`cyrius audit` passes.** It has failed at every release since 2.0.0, on any lint
+  warning or undocumented public fn, so a non-zero exit is now a real signal.
+  - **217 public fns documented**: 135 in `src/`, 80 in the suites and benches, and 2
+    in `tests/goonj.fcyr`. Wording comes from the Rust `///` docs and the struct
+    comments wherever those exist.
+  - **29 line-length warnings wrapped**, in `tests/ray.tcyr` and
+    `tests/propagation.tcyr`.
+- **Roadmap rewritten as a forward plan.** Shipped work is gone, and the remaining
+  work is sequenced into 2.1.3, 2.2.x, 2.3.x and 2.x.x.
+  - **2.1.3 is scheduled as a P(-1) audit, hardening and optimization sweep**, with
+    audit surfaces, known repairs and exit criteria.
+  - **Retiring `rust-old/` moves to 2.2.0.** It was marked ready, but the sweep still
+    needs the oracle, and it settled a NaN question as recently as 2.0.6.
+  - **The number-type and SIMD gate is restated.** `lib/simd.cyr` ships and hisab
+    uses `f64v_*`, so only f32 work stays gated, on hisab's f64-only `HVec3`.
+
+### Found
+
+- **`tests/goonj.fcyr` is a scaffold stub.** `cyrius fuzz` passes without running any
+  goonj code. Now said plainly in the file and in `state.md`, and real harnesses are
+  in the 2.1.3 scope.
+
+### Documentation
+
+- `state.md`: the gates table and the audit note, and its `Next` section no longer
+  repeats release history.
+- Links into removed roadmap sections repointed, in `state.md` and
+  `docs/benchmarks-rust-vs-cyrius.md`.
+
 ## [2.1.1] - 2026-11-06
 
 Moves to the newest cyrius and dependency releases. **No goonj source or public API

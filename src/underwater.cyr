@@ -65,6 +65,7 @@ fn _uw_log10(x) { return f64_div(f64_ln(x), F64_LN10); }
 #derive(accessors)
 struct OceanProfile { temperature_celsius; salinity_ppt; depth_m; }
 
+# Ocean profile from temperature (°C), salinity (ppt) and depth (m).
 #must_use
 fn ocean_profile_new(temperature_celsius, salinity_ppt, depth_m) {
     var p = alloc(sizeof(OceanProfile));
@@ -187,6 +188,7 @@ fn ocean_absorption_bands(profile) {
 #derive(accessors)
 struct SeabedSediment { speed; density; attenuation_db_per_wavelength; }
 
+# Sediment from wave speed (m/s), density (kg/m³) and attenuation (dB/wavelength).
 #must_use
 fn seabed_sediment_new(speed, density, attenuation_db_per_wavelength) {
     var sed = alloc(sizeof(SeabedSediment));
@@ -199,10 +201,13 @@ fn seabed_sediment_new(speed, density, attenuation_db_per_wavelength) {
 # Hamilton (1980) presets.
 #must_use
 fn seabed_sand() { return seabed_sediment_new(f64_from(1749), f64_from(1941), SAND_ATTEN); }
+# Silt (Hamilton 1980).
 #must_use
 fn seabed_silt() { return seabed_sediment_new(f64_from(1575), f64_from(1740), SILT_ATTEN); }
+# Clay (Hamilton 1980).
 #must_use
 fn seabed_clay() { return seabed_sediment_new(f64_from(1500), f64_from(1500), CLAY_ATTEN); }
+# Rock or basalt.
 #must_use
 fn seabed_rock() { return seabed_sediment_new(f64_from(5250), f64_from(2700), ROCK_ATTEN); }
 

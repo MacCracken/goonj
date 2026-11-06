@@ -16,7 +16,7 @@ Cyrius `.bcyr` benchmark replicates the *same operation, same inputs* as the Rus
 >
 > Cyrius is adding **more diverse float/integer types + related SIMD** (for model
 > training/inference); once those land, goonj's hot paths pick appropriate widths
-> and vectorize — see the [post-2.0.0 backlog](development/roadmap.md#post-200-backlog).
+> and vectorize — see the [roadmap](development/roadmap.md#23x--number-types-and-simd).
 
 - **Rust** — [`benchmarks/rust-bench-history.csv`](benchmarks/rust-bench-history.csv),
   final pre-port run (ns/iter, f32). Frozen. See *Provenance* below.
@@ -192,7 +192,7 @@ The port traded raw speed for **sovereignty, parity, and a single toolchain**
 - **The real gap is ~6–17×, and it's the honest number.** Every benchmark that
   measures sustained arithmetic sits there, and it did not move across a
   five-minor toolchain bump. It is the direct target of the
-  [post-2.0.0 backlog](development/roadmap.md#post-200-backlog): when Cyrius ships
+  [2.3.x roadmap work](development/roadmap.md#23x--number-types-and-simd): when Cyrius ships
   diverse number types + SIMD, these loops pick widths and vectorize.
 - **The alloc-heavy band is ~11–44×, down from ~22–130×** — part real (the
   stdlib allocator's single-threaded fast path), part instrument (the harness now

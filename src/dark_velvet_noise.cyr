@@ -82,6 +82,7 @@ struct DvnConfig {
     seed;
 }
 
+# Build a DvnConfig; the fields are described on the struct above.
 #must_use
 fn dvn_config_new(sample_rate, pulse_density_hz, duration_seconds, decay, init_cutoff, final_cutoff, seed) {
     var c = alloc(sizeof(DvnConfig));
@@ -110,6 +111,7 @@ fn dvn_config_default() {
 #derive(accessors)
 struct Xorshift64 { state; }
 
+# New xorshift64 generator. A zero state never advances, so seed 0 maps to a fixed non-zero one.
 #must_use
 fn xorshift64_new(seed) {
     var r = alloc(sizeof(Xorshift64));

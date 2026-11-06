@@ -40,6 +40,7 @@ struct FdtdConfig {
     duration_seconds;
 }
 
+# Build an FdtdConfig for an nx x ny grid with cell size dx.
 #must_use
 fn fdtd_config_new(sample_rate, dx, speed_of_sound, nx, ny, duration_seconds) {
     var c = alloc(sizeof(FdtdConfig));
@@ -69,6 +70,7 @@ struct FdtdSource {
     signal;
 }
 
+# Source at grid cell (ix, iy) playing `signal`, a vec of f64 samples.
 #must_use
 fn fdtd_source_new(ix, iy, signal) {
     var s = alloc(sizeof(FdtdSource));
@@ -118,6 +120,7 @@ struct FdtdReceiver {
     iy;
 }
 
+# Receiver at grid cell (ix, iy).
 #must_use
 fn fdtd_receiver_new(ix, iy) {
     var r = alloc(sizeof(FdtdReceiver));

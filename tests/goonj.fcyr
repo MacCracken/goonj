@@ -1,10 +1,12 @@
 # goonj fuzz harness
 
+# Scaffold stub: it feeds nothing to goonj, so this harness exercises no goonj code yet.
 fn fuzz_main(data, len) {
     if (len == 0) { return 0; }
     return 0;
 }
 
+# Run the stub once and report.
 fn main() {
     alloc_init();
     fuzz_main("test", 4);

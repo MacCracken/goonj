@@ -3,6 +3,7 @@
 
 include "src/resonance.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -33,6 +34,7 @@ fn b_all_axial_modes() {
     return all_axial_modes(_am_len, _am_w, _am_h, _am_maxf, _am_c);
 }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
 

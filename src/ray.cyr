@@ -39,20 +39,33 @@ enum RbLayout { RB_POINT = 0, RB_NORMAL = 8, RB_WIDX = 16, RB_DIST = 24, RB_ENER
 # RayPath: bounces (vec) | total_distance | final_energy[8].
 enum RpLayout { RP_BOUNCES = 0, RP_TOTAL = 8, RP_FINAL = 16, RP_SIZE = 80 }
 
+# Origin of multiband ray `r` (HVec3).
 fn mbr_origin(r)            { return load64(r + MBR_ORIGIN); }
+# Direction of multiband ray `r` (HVec3).
 fn mbr_direction(r)         { return load64(r + MBR_DIR); }
+# Energy of multiband ray `r` in frequency band `i`.
 fn mbr_energy_band(r, i)    { return load64(r + MBR_ENERGY + i * 8); }
+# Set the energy of multiband ray `r` in frequency band `i` to `v`.
 fn mbr_set_energy_band(r, i, v) { store64(r + MBR_ENERGY + i * 8, v); return 0; }
+# Distance travelled by multiband ray `r`.
 fn mbr_distance(r)          { return load64(r + MBR_DIST); }
 
+# Bounces of path `p`, as a vec of RayBounce.
 fn ray_path_bounces(p)      { return load64(p + RP_BOUNCES); }
+# Total distance travelled along path `p`.
 fn ray_path_total_distance(p) { return load64(p + RP_TOTAL); }
+# Final energy of path `p` in frequency band `i`.
 fn ray_path_final_energy(p, i) { return load64(p + RP_FINAL + i * 8); }
 
+# Hit point of bounce `b` (HVec3).
 fn ray_bounce_point(b)      { return load64(b + RB_POINT); }
+# Surface normal at bounce `b` (HVec3).
 fn ray_bounce_normal(b)     { return load64(b + RB_NORMAL); }
+# Index of the wall hit at bounce `b`.
 fn ray_bounce_wall_index(b) { return load64(b + RB_WIDX); }
+# Distance from the previous origin to bounce `b` (the ray source for the first).
 fn ray_bounce_distance(b)   { return load64(b + RB_DIST); }
+# Energy left in frequency band `i` after the absorption at bounce `b`.
 fn ray_bounce_energy_after(b, i) { return load64(b + RB_ENERGY + i * 8); }
 
 # ================================================================
@@ -66,6 +79,7 @@ fn _ray_norm_dir(direction) {
     return hvec3_unit_z();
 }
 
+# New ray with full energy at `frequency_hz`; a zero direction falls back to +Z.
 #must_use
 fn acoustic_ray_new(origin, direction, frequency_hz) {
     var r = alloc(sizeof(AcousticRay));
@@ -89,6 +103,7 @@ fn _acoustic_ray_raw(origin, direction) {
     return r;
 }
 
+# 1 while the ray's energy is above ENERGY_THRESHOLD, else 0.
 #must_use
 fn acoustic_ray_is_alive(r) {
     if (f64_gt(AcousticRay_energy(r), ENERGY_THRESHOLD) == 1) { return 1; }
@@ -127,6 +142,7 @@ fn _multiband_ray_clone(src) {
     return r;
 }
 
+# 1 while any band's energy is above ENERGY_THRESHOLD, else 0.
 #must_use
 fn multiband_ray_is_alive(r) {
     var i = 0;
@@ -137,6 +153,7 @@ fn multiband_ray_is_alive(r) {
     return 0;
 }
 
+# Largest energy across all frequency bands.
 #must_use
 fn multiband_ray_max_energy(r) {
     var m = 0;
@@ -207,6 +224,7 @@ fn _reflect_direction(d, n, scattering) {
     return specular;
 }
 
+# Reflect `ray` at `hit`: energy falls by `absorption`, `scattering` blends specular and diffuse.
 #must_use
 fn reflect_ray(ray, hit, absorption, scattering) {
     var dir = _reflect_direction(AcousticRay_direction(ray), RayHit_normal(hit), scattering);

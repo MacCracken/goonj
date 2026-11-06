@@ -69,6 +69,6 @@ cyrius distlib                           # regenerate dist/goonj.cyr (the bundle
 - [`docs/architecture/`](docs/architecture/) — Non-obvious constraints
 - [`docs/guides/`](docs/guides/) — Task-oriented how-tos
 - [`docs/development/state.md`](docs/development/state.md) — Live state
-- [`docs/development/roadmap.md`](docs/development/roadmap.md) — Milestones (2.0.0 Cyrius port)
+- [`docs/development/roadmap.md`](docs/development/roadmap.md) — Forward plan
 - [`docs/benchmarks-rust-vs-cyrius.md`](docs/benchmarks-rust-vs-cyrius.md) — Rust vs Cyrius performance
 

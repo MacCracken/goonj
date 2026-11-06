@@ -18,10 +18,12 @@ include "src/analysis.cyr"
 
 var TOL_1E3 = 0x3F50624DD2F1A9FC;   # 0.001
 
+# 1 if `a` and `b` differ by less than `tol`.
 fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
     return 0;
 }
+# 1 if `x` is +Inf.
 fn is_inf(x) {
     if (x == 0x7FF0000000000000) { return 1; }
     return 0;

@@ -20,6 +20,7 @@
 #derive(accessors)
 struct WavBytes { data; len; }
 
+# Wrap a byte buffer and its length as an in-memory WAV file.
 #must_use
 fn wav_bytes_new(data, len) {
     var w = alloc(sizeof(WavBytes));

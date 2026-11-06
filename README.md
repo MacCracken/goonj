@@ -4,7 +4,7 @@
 [AGNOS](https://github.com/MacCracken/agnosticos) ecosystem.
 
 Goonj is a **[Cyrius](https://github.com/MacCracken/cyrius) library** — the
-completed Rust → Cyrius port (**v2.1.1**) of the original ~14,630-line Rust engine
+completed Rust → Cyrius port (**v2.1.2**) of the original ~14,630-line Rust engine
 (frozen at `rust-old/` as a parity oracle). It is compiled by `cycc` (toolchain
 pinned `cyrius = "6.7.18"` in `cyrius.cyml`), built on
 [hisab](https://github.com/MacCracken/hisab) for math/geometry, and ships as a

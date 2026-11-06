@@ -7,6 +7,7 @@ include "src/material.cyr"
 include "src/hybrid.cyr"
 include "src/fdtd.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -22,6 +23,7 @@ var _receivers = 0;
 # Full 2D FDTD solve on a 40x40 rigid box (~1102 leapfrog steps).
 fn b_solve_40x40() { return solve_fdtd_2d(_config, _source, _receivers); }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
     # sample_rate 22050, dx 0.05, c 343, 40x40, 0.05 s.

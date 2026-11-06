@@ -9,6 +9,7 @@ include "src/fdtd.cyr"
 include "src/logging.cyr"
 include "src/dwm.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -27,6 +28,7 @@ var _no_recv = 0;      # pre-built empty receivers vec (Rust builds its list onc
 
 # Full solve on a rigid box (the triple-loop grid sweep is the hot path).
 fn b_solve_small() { return solve_dwm_3d(_cfg_small, _src, _no_recv); }
+# Benchmark body: solve the medium DWM grid.
 fn b_solve_med() { return solve_dwm_3d(_cfg_med, _src, _no_recv); }
 # Default config = 30x25x20 grid @ 50 ms. Matches the Rust
 # dwm/solve_30x25x20_50ms GRID and step count (15,000 cells, 1,102 steps).
@@ -39,6 +41,7 @@ fn b_solve_default() { return solve_dwm_3d(_cfg_default, _src_default, _no_recv)
 # per-iter apply, minus its fresh clone).
 fn b_dispersion() { return dispersion_correction_apply(_dc, _dsig); }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
     var dx = required_dx(22050, f64_from(343));

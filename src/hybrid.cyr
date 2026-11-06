@@ -24,6 +24,7 @@ fn _hybrid_log2(x) { return f64_div(f64_ln(x), F64_LN2); }
 #derive(accessors)
 struct CrossoverConfig { crossover_hz; transition_octaves; }
 
+# Crossover at `crossover_hz`, blended over `transition_octaves` octaves.
 #must_use
 fn crossover_config_new(crossover_hz, transition_octaves) {
     var c = alloc(sizeof(CrossoverConfig));

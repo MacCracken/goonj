@@ -9,6 +9,7 @@ include "src/room.cyr"
 include "src/ray.cyr"
 include "src/diffuse.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -27,6 +28,7 @@ fn b_diffuse_1000_rays() {
     return generate_diffuse_rain(_source, _listener, _room, _config);
 }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
     _room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());

@@ -8,11 +8,14 @@ include "src/material.cyr"
 var TOL_1E2 = 0x3F847AE147AE147B;        # 0.01
 var AVG_CONCRETE = 0x3F92BD3C36113405;   # 0.0183 (expected concrete average)
 
+# 1 if `a` and `b` differ by less than `tol`.
 fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
     return 0;
 }
+# 1 if pointer `p` is non-null.
 fn nz(p) { if (p == 0) { return 0; } return 1; }   # pointer is non-null
+# 1 if pointer `p` is null.
 fn iz(p) { if (p == 0) { return 1; } return 0; }   # pointer is null (error)
 
 # Fill an 8×f64 buffer with one value.

@@ -3,6 +3,7 @@
 
 # Stdlib auto-included via cyrius.cyml
 
+# Smoke entry point: starts the allocator and reports ready.
 fn main() {
     alloc_init();
     println("goonj ready");

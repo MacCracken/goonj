@@ -4,6 +4,7 @@
 include "src/error.cyr"
 include "src/dark_velvet_noise.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -19,6 +20,7 @@ var _config = 0;
 # Full 2 s Dark Velvet Noise IR synthesis (96000 samples at 48 kHz).
 fn b_synthesize() { return synthesize_dvn_ir(_config); }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
     _config = dvn_config_default();

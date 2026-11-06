@@ -119,6 +119,7 @@ fn binaural_ir_to_wav(bir) {
 #derive(accessors)
 struct BinauralAngles { azimuth; elevation; }
 
+# Build a BinauralAngles pair from an azimuth and an elevation.
 #must_use
 fn binaural_angles_new(azimuth, elevation) {
     var a = alloc(sizeof(BinauralAngles));

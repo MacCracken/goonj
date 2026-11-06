@@ -12,6 +12,7 @@ include "src/diffuse.cyr"
 include "src/impulse.cyr"
 include "src/analysis.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -45,6 +46,7 @@ fn b_d50() { return definition_d50(_ir); }
 # Rank walls by RT60 sensitivity when treated toward a 0.5 s target.
 fn b_suggest_absorption() { return suggest_absorption_placement(_room, F64_HALF); }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
     _ir = _build_ir();

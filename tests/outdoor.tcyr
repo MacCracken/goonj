@@ -16,6 +16,7 @@ fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
     return 0;
 }
+# 1 if pointer `p` is non-null.
 fn nz(p) { if (p == 0) { return 0; } return 1; }   # pointer is non-null
 
 # Sum of absolute values across an 8-band f64 buffer.

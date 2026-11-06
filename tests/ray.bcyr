@@ -9,6 +9,7 @@ include "src/propagation.cyr"
 include "src/room.cyr"
 include "src/ray.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -70,6 +71,7 @@ fn _many_wall_room() {
     return room;
 }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
     var half3 = f64_div(f64_from(3), F64_TWO);   # 1.5

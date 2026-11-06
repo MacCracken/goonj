@@ -18,6 +18,7 @@
 #derive(accessors)
 struct Portal { position; normal; width; height; }
 
+# Portal at `position` facing `normal`, with width and height in metres.
 #must_use
 fn portal_new(position, normal, width, height) {
     var p = alloc(sizeof(Portal));

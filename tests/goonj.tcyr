@@ -1,6 +1,7 @@
 # goonj test suite
 # Stdlib auto-included via cyrius.cyml
 
+# Smoke test: the allocator starts and basic assertions hold.
 fn main() {
     alloc_init();
     test_group("smoke");

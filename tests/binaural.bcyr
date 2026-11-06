@@ -13,6 +13,7 @@ include "src/impulse.cyr"
 include "src/wav.cyr"
 include "src/binaural.cyr"
 
+# Run `fp` for `n` iterations as benchmark `name`, then print its report.
 fn bench(name, fp, n) {
     var b = bench_new(name);
     bench_run(b, fp, n);
@@ -41,6 +42,7 @@ fn b_generate_ir() {
     return generate_binaural_ir(_source, _listener, _room, _hrtf, _config);
 }
 
+# Set up the fixtures and run this suite's benchmarks.
 fn main() {
     alloc_init();
     _room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3),

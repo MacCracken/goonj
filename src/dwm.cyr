@@ -33,6 +33,7 @@ var DWM_NEG_099        = 0xBFEFAE147AE147AE;   # -0.99
 #derive(accessors)
 struct WallMaterials { x_neg; x_pos; y_neg; y_pos; z_neg; z_pos; }
 
+# Per-wall materials for the six faces of a DWM room.
 #must_use
 fn wall_materials_new(x_neg, x_pos, y_neg, y_pos, z_neg, z_pos) {
     var w = alloc(sizeof(WallMaterials));
@@ -63,6 +64,7 @@ fn wall_materials_rigid() {
 #derive(accessors)
 struct DwmConfig { sample_rate; dx; speed_of_sound; nx; ny; nz; duration_seconds; wall_materials; }
 
+# Build a DwmConfig for an nx x ny x nz grid with cell size dx.
 #must_use
 fn dwm_config_new(sample_rate, dx, speed_of_sound, nx, ny, nz, duration_seconds, wall_materials) {
     var c = alloc(sizeof(DwmConfig));
@@ -90,6 +92,7 @@ fn dwm_config_with_acoustic_material(config, material) {
     DwmConfig_set_wall_materials(config, wall_materials_uniform(material));
     return config;
 }
+# Set `config`'s wall materials in place and return `config`.
 #must_use
 fn dwm_config_with_wall_materials(config, walls) {
     DwmConfig_set_wall_materials(config, walls);
@@ -103,6 +106,7 @@ fn dwm_config_with_wall_materials(config, walls) {
 #derive(accessors)
 struct BoundaryFilter { b0; a1; }
 
+# Fit a BoundaryFilter to the material's lowest and highest band absorption.
 #must_use
 fn boundary_filter_from_material(material) {
     var alpha_low = f64_clamp(am_absorption_band(material, 0), 0, F64_ONE);
@@ -167,6 +171,7 @@ fn dwm_source_gaussian_pulse(ix, iy, iz, peak_step, sigma_steps, amplitude) {
 #derive(accessors)
 struct DwmReceiver { ix; iy; iz; }
 
+# Receiver at grid cell (ix, iy, iz).
 #must_use
 fn dwm_receiver_new(ix, iy, iz) {
     var r = alloc(sizeof(DwmReceiver));
@@ -243,6 +248,7 @@ fn dispersion_factor(config, frequency_hz) {
 #derive(accessors)
 struct DispersionCorrection { b0; b1; }
 
+# Build the 2-tap FIR correction from coefficients b0 and b1.
 #must_use
 fn dispersion_correction_new(b0, b1) {
     var d = alloc(sizeof(DispersionCorrection));
@@ -251,6 +257,7 @@ fn dispersion_correction_new(b0, b1) {
     return d;
 }
 
+# Identity filter: leaves the signal unchanged.
 #must_use
 fn dispersion_correction_passthrough() {
     return dispersion_correction_new(F64_ONE, 0);
@@ -278,6 +285,7 @@ fn dispersion_correction_calibrated(config, boost) {
     return dispersion_correction_new(b0, f64_sub(F64_ONE, b0));
 }
 
+# Calibrate for `config` at the default boost, DWM_DEFAULT_BOOST.
 #must_use
 fn dispersion_correction_for_config(config) {
     return dispersion_correction_calibrated(config, DWM_DEFAULT_BOOST);

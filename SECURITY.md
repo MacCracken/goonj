@@ -4,7 +4,8 @@
 
 | Version | Supported | Notes |
 |---------|-----------|-------|
-| 2.1.1   | ✅ Yes    | Current. Carries the same known limit as 2.0.6. |
+| 2.1.2   | ✅ Yes    | Current. Carries the same known limit as 2.0.6. |
+| 2.1.1   | ✅ Yes    | Carries the same known limit as 2.0.6. |
 | 2.1.0   | ✅ Yes    | Carries the same known limit as 2.0.6. |
 | 2.0.6   | ✅ Yes    | **Known limit:** a non-finite or overflowing room dimension reaching `fdn_new` costs about 9.3 GiB and aborts where that is unavailable. Reject non-finite dimensions before calling it. |
 | 2.0.3–2.0.5 | ⚠️ Upgrade if built on cyrius ≥ 6.6.8 | `+Inf` or overflowing input to the FDTD/DWM gaussian pulses or the FDN exhausts memory without limit. Safe below 6.6.8. Fixed for the pulses and bounded for the FDN in 2.0.6. |

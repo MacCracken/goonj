@@ -14,20 +14,25 @@ include "src/diffuse.cyr"
 var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
 var TOL_1E4 = 0x3F1A36E2EB1C432D;   # ~1e-4 (stands in for f32::EPSILON checks)
 
+# 1 if `a` and `b` differ by less than `tol`.
 fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
     return 0;
 }
+# n/10 as f64.
 fn d10(n) { return f64_div(f64_from(n), f64_from(10)); }
 
 # Rooms + standard source/listener from the Rust test fixtures.
 fn concrete_room() {
     return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
 }
+# A 10 x 8 x 3 m shoebox room with carpet on every surface.
 fn carpet_room() {
     return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_carpet());
 }
+# Source position shared by this suite.
 fn src_default() { return hvec3_new(f64_from(3), d10(15), f64_from(4)); }
+# Listener position shared by this suite.
 fn lis_default() { return hvec3_new(f64_from(7), d10(15), f64_from(4)); }
 
 # num_rays=n, max_bounces=50, max_time=2s, radius=2m, c=speed_of_sound(20), seed=42.

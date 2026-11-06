@@ -64,7 +64,9 @@ fn _is_ipow(base, k) {
 # ImageSource accessors + constructor
 # ================================================================
 fn image_source_position(s)        { return load64(s + IS_POS); }
+# Reflection order of image source `s`.
 fn image_source_order(s)           { return load64(s + IS_ORDER); }
+# Attenuation of image source `s` in frequency band `band`.
 fn image_source_atten_band(s, band) { return load64(s + IS_ATTEN + band * 8); }
 
 # Allocate an image source at `position`/`order` with all-1.0 attenuation.
@@ -85,9 +87,13 @@ fn _image_source_new(position, order) {
 # EarlyReflection accessors + constructor
 # ================================================================
 fn early_reflection_delay_seconds(r)    { return load64(r + ER_DELAY); }
+# Amplitude of reflection `r` in frequency band `b`.
 fn early_reflection_amplitude_band(r, b) { return load64(r + ER_AMP + b * 8); }
+# Direction of arrival of reflection `r` at the listener, normalized (HVec3).
 fn early_reflection_direction(r)        { return load64(r + ER_DIR); }
+# Reflection order of `r`.
 fn early_reflection_order(r)            { return load64(r + ER_ORDER); }
+# Distance from the image source to the listener for reflection `r`.
 fn early_reflection_distance(r)         { return load64(r + ER_DIST); }
 
 # Allocate an early reflection; amplitude bands are filled by the caller.

@@ -15,10 +15,12 @@ include "src/beam.cyr"
 
 var TOL_1E2 = 0x3F847AE147AE147B;   # 0.01
 
+# 1 if `a` and `b` differ by less than `tol`.
 fn approx(a, b, tol) {
     if (f64_lt(f64_abs(f64_sub(a, b)), tol) == 1) { return 1; }
     return 0;
 }
+# a/b as f64.
 fn dfrac(a, b) { return f64_div(f64_from(a), f64_from(b)); }
 
 # Shoebox wall lists from the Rust test fixtures (length 10, width 8, height 3).
@@ -27,6 +29,7 @@ fn concrete_walls() {
       room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3),
         acoustic_material_concrete()));
 }
+# Walls of a 10 x 8 x 3 m shoebox with carpet on every surface.
 fn carpet_walls() {
     return RoomGeometry_walls(
       room_geometry_shoebox(f64_from(10), f64_from(8), f64_from(3),

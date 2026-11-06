@@ -73,6 +73,7 @@ fn estimate_rt60_shoebox(length, width, height, avg_absorption) {
 #derive(accessors)
 struct AxisAbsorption { alpha; area; }
 
+# Absorption and combined area for one axis pair (Fitzroy).
 #must_use
 fn axis_absorption_new(alpha, area) {
     var a = alloc(sizeof(AxisAbsorption));
@@ -128,6 +129,7 @@ fn kuttruff_correction(eyring_time, mean_alpha, alpha_variance) {
 #derive(accessors)
 struct ImpulseResponse { samples; sample_rate; rt60; }
 
+# Build an ImpulseResponse from its samples, sample rate and RT60.
 #must_use
 fn impulse_response_new(samples, sample_rate, rt60) {
     var ir = alloc(sizeof(ImpulseResponse));
@@ -188,6 +190,7 @@ struct IrConfig {
     seed;
 }
 
+# Build an IrConfig: sample rate, image order, diffuse rays, bounces, length, seed.
 #must_use
 fn ir_config_new(sample_rate, max_order, num_diffuse_rays, max_bounces, max_time_seconds, seed) {
     var c = alloc(sizeof(IrConfig));
@@ -211,8 +214,10 @@ fn ir_config_default() {
 # ================================================================
 #must_use
 fn multiband_ir_band(m, i) { return load64(m + MI_BANDS + i * 8); }
+# Sample rate of multiband IR `m`, in Hz.
 #must_use
 fn multiband_ir_sample_rate(m) { return load64(m + MI_RATE); }
+# RT60 of multiband IR `m`.
 #must_use
 fn multiband_ir_rt60(m) { return load64(m + MI_RT60); }
 
