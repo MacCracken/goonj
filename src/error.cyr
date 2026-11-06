@@ -1,4 +1,4 @@
-# error.cyr -- goonj error codes + shared tolerances
+# error.cyr -- goonj error codes, shared tolerances and shared helpers
 # Usage: included by build/test entry; do not `include` other src modules.
 #
 # Ports rust-old/src/error.rs (GoonjError enum). Rust carried a String
@@ -37,4 +37,147 @@ fn goonj_err_name(code) {
     if (code == ERR_PROPAGATION_FAILED) { return "propagation failed"; }
     if (code == ERR_COMPUTATION) { return "computation error"; }
     return "unknown error";
+}
+
+# ================================================================
+# Shared helpers
+# ================================================================
+# Rust's f32::min and f32::max ignore a NaN on either side. f64_min and f64_max
+# ignore one only in the first position: f64_max(1, NaN) is NaN. Anything that can
+# see NaN in the second position comes here (ADR-0002 rule 4). Without a NaN these
+# are the same bits as f64_min and f64_max.
+fn goonj_fmin(a, b) {
+    if (f64_eq(a, a) == 0) { return b; }
+    if (f64_eq(b, b) == 0) { return a; }
+    return f64_min(a, b);
+}
+
+# NaN-ignoring maximum. See goonj_fmin.
+fn goonj_fmax(a, b) {
+    if (f64_eq(a, a) == 0) { return b; }
+    if (f64_eq(b, b) == 0) { return a; }
+    return f64_max(a, b);
+}
+
+# End the process over a refused allocation, as Rust's alloc does (ADR-0004).
+fn goonj_alloc_refused() {
+    syscall(SYS_WRITE, 2, "goonj: allocation refused\n", 26);
+    syscall(SYS_EXIT, 1);
+    return 0;
+}
+
+# alloc for a size that depends on input. A 0 here must not reach a store: the
+# first write could land anywhere, not just in the null page (ADR-0004).
+#must_use
+fn goonj_alloc(size) {
+    var p = alloc(size);
+    if (p == 0) { goonj_alloc_refused(); }
+    return p;
+}
+
+# Shorter than this, insertion sort is faster and needs no scratch memory.
+var GOONJ_SORT_INSERTION_MAX = 32;
+
+fn _goonj_insertion_sort(v, keys, n) {
+    var i = 1;
+    while (i < n) {
+        var item = vec_get(v, i);
+        var k = load64(keys + i * 8);
+        var j = i - 1;
+        var go = 1;
+        while (go == 1) {
+            if (j < 0) { go = 0; }
+            if (go == 1) {
+                if (f64_gt(load64(keys + j * 8), k) == 1) {
+                    vec_set(v, j + 1, vec_get(v, j));
+                    store64(keys + (j + 1) * 8, load64(keys + j * 8));
+                    j = j - 1;
+                } else {
+                    go = 0;
+                }
+            }
+        }
+        vec_set(v, j + 1, item);
+        store64(keys + (j + 1) * 8, k);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Merge the sorted runs [lo, mid) and [mid, hi) of (src_k, src_v) into (dst_k, dst_v).
+# Ties take the left run, which is what makes the sort stable.
+fn _goonj_merge(src_k, src_v, dst_k, dst_v, lo, mid, hi) {
+    var a = lo;
+    var b = mid;
+    var out = lo;
+    while (out < hi) {
+        var from_left = 1;
+        if (a >= mid) {
+            from_left = 0;
+        } else {
+            if (b < hi) {
+                if (f64_gt(load64(src_k + a * 8), load64(src_k + b * 8)) == 1) { from_left = 0; }
+            }
+        }
+        if (from_left == 1) {
+            store64(dst_k + out * 8, load64(src_k + a * 8));
+            store64(dst_v + out * 8, load64(src_v + a * 8));
+            a = a + 1;
+        } else {
+            store64(dst_k + out * 8, load64(src_k + b * 8));
+            store64(dst_v + out * 8, load64(src_v + b * 8));
+            b = b + 1;
+        }
+        out = out + 1;
+    }
+    return 0;
+}
+
+# Stable ascending sort of vec `v` by the f64 `key_fn(item)`, as Rust's
+# sort_by(partial_cmp) is. Stable sorts of the same keys agree bit for bit, so this
+# replaced four quadratic insertion sorts without moving a result. O(n log n).
+fn goonj_sort_by_key(v, key_fn) {
+    var n = vec_len(v);
+    if (n < 2) { return 0; }
+    var keys = goonj_alloc(n * 8);
+    var i = 0;
+    while (i < n) {
+        store64(keys + i * 8, fncall1(key_fn, vec_get(v, i)));
+        i = i + 1;
+    }
+    if (n <= GOONJ_SORT_INSERTION_MAX) { return _goonj_insertion_sort(v, keys, n); }
+
+    var vals = goonj_alloc(n * 8);
+    i = 0;
+    while (i < n) {
+        store64(vals + i * 8, vec_get(v, i));
+        i = i + 1;
+    }
+    var tmp_k = goonj_alloc(n * 8);
+    var tmp_v = goonj_alloc(n * 8);
+    var width = 1;
+    while (width < n) {
+        var lo = 0;
+        while (lo < n) {
+            var mid = lo + width;
+            if (mid > n) { mid = n; }
+            var hi = mid + width;
+            if (hi > n) { hi = n; }
+            _goonj_merge(keys, vals, tmp_k, tmp_v, lo, mid, hi);
+            lo = hi;
+        }
+        var swap_k = keys;
+        keys = tmp_k;
+        tmp_k = swap_k;
+        var swap_v = vals;
+        vals = tmp_v;
+        tmp_v = swap_v;
+        width = width * 2;
+    }
+    i = 0;
+    while (i < n) {
+        vec_set(v, i, load64(vals + i * 8));
+        i = i + 1;
+    }
+    return 0;
 }

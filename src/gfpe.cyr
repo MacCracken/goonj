@@ -376,8 +376,8 @@ fn solve_gfpe(terrain, config) {
     # Initial field at r=0: Gaussian starter centred at source_height_m.
     var src_h = GfpeConfig_source_height_m(config);
     var sigma = f64_max(f64_div(f64_from(4), k0), dz);
-    var psi_re = alloc(nz * 8);
-    var psi_im = alloc(nz * 8);
+    var psi_re = goonj_alloc(nz * 8);
+    var psi_im = goonj_alloc(nz * 8);
     i = 0;
     while (i < nz) {
         var z = vec_get(heights, i);
@@ -407,8 +407,8 @@ fn solve_gfpe(terrain, config) {
     var r_im = GfpeCplx_im(rcplx);
 
     # Scratch buffers for the convolution output (ping-ponged with psi).
-    var out_re = alloc(nz * 8);
-    var out_im = alloc(nz * 8);
+    var out_re = goonj_alloc(nz * 8);
+    var out_im = goonj_alloc(nz * 8);
 
     var r_idx = 1;
     while (r_idx < num_ranges) {

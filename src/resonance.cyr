@@ -19,14 +19,21 @@ fn room_mode(dimension_length, mode_number, speed_of_sound) {
       f64_mul(F64_TWO, dimension_length));
 }
 
-# Push every axial mode of `dim` below `max_frequency` onto `dst`.
+# Modes per dimension. Rust has no ceiling: its u32 counter wraps after 2^32 pushes,
+# so a non-finite argument exhausts memory there. 1,000,000 modes is an 8.6 km
+# dimension at 20 kHz, so no room reaches it (ADR-0005).
+var AXIAL_MODES_MAX = 1000000;
+
+# Push every axial mode of `dim` below `max_frequency` onto `dst`. A NaN mode stops
+# the walk. Rust would keep pushing it.
 fn _append_axial_modes(dst, dim, max_frequency, speed_of_sound) {
     var n = 1;
     var go = 1;
     while (go == 1) {
         var f = room_mode(dim, n, speed_of_sound);
-        if (f64_gt(f, max_frequency) == 1) { go = 0; }
+        if (f64_le(f, max_frequency) == 0) { go = 0; }
         if (f64_le(f, 0) == 1) { go = 0; }
+        if (n > AXIAL_MODES_MAX) { go = 0; }
         if (go == 1) {
             vec_push(dst, f);
             n = n + 1;
@@ -43,30 +50,7 @@ fn axial_modes(dimension_length, max_frequency, speed_of_sound) {
     return modes;
 }
 
-# Ascending insertion sort of a vec by f64 value.
-fn _vec_sort_f64(v) {
-    var n = vec_len(v);
-    var i = 1;
-    while (i < n) {
-        var key = vec_get(v, i);
-        var j = i - 1;
-        var go = 1;
-        while (go == 1) {
-            if (j < 0) { go = 0; }
-            if (go == 1) {
-                if (f64_gt(vec_get(v, j), key) == 1) {
-                    vec_set(v, j + 1, vec_get(v, j));
-                    j = j - 1;
-                } else {
-                    go = 0;
-                }
-            }
-        }
-        vec_set(v, j + 1, key);
-        i = i + 1;
-    }
-    return 0;
-}
+fn _resonance_key(f) { return f; }
 
 # All axial modes for a shoebox (length, width, height) below
 # max_frequency, sorted ascending.
@@ -76,7 +60,7 @@ fn all_axial_modes(length, width, height, max_frequency, speed_of_sound) {
     _append_axial_modes(modes, length, max_frequency, speed_of_sound);
     _append_axial_modes(modes, width, max_frequency, speed_of_sound);
     _append_axial_modes(modes, height, max_frequency, speed_of_sound);
-    _vec_sort_f64(modes);
+    goonj_sort_by_key(modes, &_resonance_key);
     return modes;
 }
 

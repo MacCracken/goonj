@@ -126,7 +126,7 @@ fn definition_d50(ir) {
     var n = vec_len(samples);
     var rate = ImpulseResponse_sample_rate(ir);
     if (n == 0) { return 0; }
-    if (rate == 0) { return 0; }
+    if (rate <= 0) { return 0; }
     var bs = f64_to(f64_mul(milli(50), f64_from(rate)));
     if (bs > n) { bs = n; }
     var early = 0;
@@ -159,7 +159,7 @@ fn sti_estimate(ir) {
     var n = vec_len(samples);
     var rate = ImpulseResponse_sample_rate(ir);
     if (n == 0) { return 0; }
-    if (rate == 0) { return 0; }
+    if (rate <= 0) { return 0; }
     var total_energy = 0;
     var ei = 0;
     while (ei < n) {
@@ -230,7 +230,7 @@ fn early_decay_time(ir) {
     var n = vec_len(samples);
     var rate = ImpulseResponse_sample_rate(ir);
     if (n == 0) { return 0; }
-    if (rate == 0) { return 0; }
+    if (rate <= 0) { return 0; }
     var edc = impulse_response_energy_decay_curve(ir);
     var m = vec_len(edc);
     if (m == 0) { return 0; }
@@ -259,7 +259,7 @@ fn sound_strength_g(ir) {
     var n = vec_len(samples);
     var rate = ImpulseResponse_sample_rate(ir);
     if (n == 0) { return 0; }
-    if (rate == 0) { return 0; }
+    if (rate <= 0) { return 0; }
     var total_energy = 0;
     var i = 0;
     while (i < n) {
@@ -283,7 +283,7 @@ fn centre_time_ts(ir) {
     var n = vec_len(samples);
     var rate = ImpulseResponse_sample_rate(ir);
     if (n == 0) { return 0; }
-    if (rate == 0) { return 0; }
+    if (rate <= 0) { return 0; }
     var dt = f64_div(F64_ONE, f64_from(rate));
     var numerator = 0;
     var denominator = 0;
@@ -313,7 +313,7 @@ fn octave_band_filter(ir, centre_freq) {
     var n = vec_len(samples);
     var rate = ImpulseResponse_sample_rate(ir);
     if (n == 0) { return vec_new(); }
-    if (rate == 0) { return vec_new(); }
+    if (rate <= 0) { return vec_new(); }
     if (f64_le(centre_freq, 0) == 1) { return vec_new(); }
 
     var fs = f64_from(rate);
@@ -380,6 +380,8 @@ fn octave_band_filter(ir, centre_freq) {
     while (i < n) {
         var x = vec_get(samples, i);
         var y = f64_add(f64_mul(b0, x), f64_add(f64_mul(b2, x2), f64_mul(b4, x4)));
+        # b1 and b3 are 0 here, but Rust multiplies by them, and 0 * Inf is NaN.
+        y = f64_add(y, f64_add(f64_mul(0, x1), f64_mul(0, x3)));
         y = f64_sub(y, f64_mul(a1, y1));
         y = f64_sub(y, f64_mul(a2, y2));
         y = f64_sub(y, f64_mul(a3, y3));
@@ -410,7 +412,7 @@ fn lateral_fraction_lf(left, right, sample_rate) {
     var nr = vec_len(right);
     if (nl == 0) { return 0; }
     if (nr == 0) { return 0; }
-    if (sample_rate == 0) { return 0; }
+    if (sample_rate <= 0) { return 0; }
     var boundary = f64_to(f64_mul(milli(80), f64_from(sample_rate)));
     var n = nl;
     if (nr < n) { n = nr; }
@@ -440,7 +442,7 @@ fn iacc(left, right, sample_rate) {
     var nr = vec_len(right);
     if (nl == 0) { return 0; }
     if (nr == 0) { return 0; }
-    if (sample_rate == 0) { return 0; }
+    if (sample_rate <= 0) { return 0; }
     var boundary = f64_to(f64_mul(milli(80), f64_from(sample_rate)));
     var n = nl;
     if (nr < n) { n = nr; }
@@ -460,6 +462,9 @@ fn iacc(left, right, sample_rate) {
     if (f64_lt(norm, GOONJ_EPSILON) == 1) { return 0; }
     var max_lag = f64_to(f64_mul(milli(1), f64_from(sample_rate)));
     if (max_lag < 1) { max_lag = 1; }
+    # A lag past the shorter signal adds nothing, and Rust's u32 rate bounds its loop
+    # where an i64 rate does not.
+    if (max_lag > n) { max_lag = n; }
     var max_xcorr = 0;
     var lag = 0;
     while (lag <= max_lag) {
@@ -475,7 +480,7 @@ fn iacc(left, right, sample_rate) {
             }
             j = j + 1;
         }
-        max_xcorr = f64_max(max_xcorr, f64_max(f64_abs(xcorr_pos), f64_abs(xcorr_neg)));
+        max_xcorr = goonj_fmax(goonj_fmax(max_xcorr, f64_abs(xcorr_pos)), f64_abs(xcorr_neg));
         lag = lag + 1;
     }
     return f64_clamp(f64_div(max_xcorr, norm), 0, F64_ONE);
@@ -497,33 +502,6 @@ fn absorption_suggestion_new(wall_index, rt60_sensitivity, current_absorption) {
     AbsorptionSuggestion_set_rt60_sensitivity(a, rt60_sensitivity);
     AbsorptionSuggestion_set_current_absorption(a, current_absorption);
     return a;
-}
-
-# Ascending insertion sort of a suggestion vec by rt60_sensitivity
-# (mutates in place; stable, matching Rust's sort_by partial_cmp).
-fn _analysis_sort_suggestions(v) {
-    var n = vec_len(v);
-    var i = 1;
-    while (i < n) {
-        var key = vec_get(v, i);
-        var key_val = AbsorptionSuggestion_rt60_sensitivity(key);
-        var j = i - 1;
-        var go = 1;
-        while (go == 1) {
-            if (j < 0) { go = 0; }
-            if (go == 1) {
-                if (f64_gt(AbsorptionSuggestion_rt60_sensitivity(vec_get(v, j)), key_val) == 1) {
-                    vec_set(v, j + 1, vec_get(v, j));
-                    j = j - 1;
-                } else {
-                    go = 0;
-                }
-            }
-        }
-        vec_set(v, j + 1, key);
-        i = i + 1;
-    }
-    return 0;
 }
 
 # Suggest which walls most affect RT60 if treated. Bumps each wall's
@@ -560,6 +538,6 @@ fn suggest_absorption_placement(room, target_rt60) {
         vec_push(suggestions, absorption_suggestion_new(i, sensitivity, current_abs));
         i = i + 1;
     }
-    _analysis_sort_suggestions(suggestions);
+    goonj_sort_by_key(suggestions, &AbsorptionSuggestion_rt60_sensitivity);
     return suggestions;
 }

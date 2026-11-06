@@ -24,3 +24,5 @@ Decisions about goonj — what we chose, the context, and the consequences we ac
 | [0001](0001-rust-to-cyrius-port-conventions.md) | Rust → Cyrius port conventions | Accepted |
 | [0002](0002-signed-index-and-float-conversion-hazards.md) | Signed-index and float-conversion hazards inherited from the Rust port | Accepted |
 | [0003](0003-f64-to-saturates-keep-bounding-in-f64.md) | `f64_to` saturates from cyrius 6.6.8; keep bounding in f64, and cap where Rust had no ceiling | Accepted |
+| [0004](0004-allocation-refusal-ends-the-process.md) | A refused allocation ends the process | Accepted |
+| [0005](0005-hostile-input-parity-and-recorded-gaps.md) | What hostile input should do, and where the port stays different | Accepted |

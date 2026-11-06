@@ -56,7 +56,11 @@ fn am_name(m)              { return load64(m + AM_NAME); }
 # Scattering coefficient of material `m`.
 fn am_scattering(m)        { return load64(m + AM_SCAT); }
 # Absorption coefficient of material `m` in frequency band `band`.
-fn am_absorption_band(m, band) { return load64(m + AM_ABS + band * 8); }
+fn am_absorption_band(m, band) {
+    if (band < 0) { return 0; }
+    if (band >= NUM_BANDS) { return 0; }
+    return load64(m + AM_ABS + band * 8);
+}
 fn _am_set_band(m, band, v)    { store64(m + AM_ABS + band * 8, v); return 0; }
 
 # Build a material from a name, 8 absorption values, and scattering.

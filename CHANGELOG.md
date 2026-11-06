@@ -2,6 +2,113 @@
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-11-06
+
+The P(-1) audit, hardening and optimization sweep. **Upgrade if a consumer forwards
+indices or geometry from less-trusted input**: public accessors read and wrote out of
+bounds on a bad index, and have since 2.0.0. **41 suites / 3742 assertions**, all green,
+and `cyrius audit` exits 0.
+
+Results on valid input do not move: seven whole pipelines hash identically to 2.1.2.
+Results on NaN, `Inf` and out-of-range input do, toward Rust, and
+[ADR-0005](docs/adr/0005-hostile-input-parity-and-recorded-gaps.md) lists what stays
+different.
+
+### How it was audited
+
+- **Differential against `rust-old/`**: 172,076 hostile cases over 108 entry points,
+  run on both sides in forked children, comparing outcome class and value. What remains
+  is f32 versus f64 range and precision, and the gaps ADR-0005 records.
+- **Line-by-line read** of all 37 modules against their Rust files.
+- **Fuzzing**: `tests/goonj.fcyr` was a stub. It now drives the public API across 13
+  target groups, under `--poison`.
+- **Fault injection**: allocations across 16 pipelines refused, singly and persistently,
+  at up to about 430 sampled points per pipeline.
+- **All-zero sweep**: 350 public functions called with 0 for every argument. Each
+  returns or faults at the null page, with no hang.
+
+### Security
+
+- **21 public accessors read or wrote out of bounds.** `mbr_set_energy_band` was a wild
+  write. The others, including `am_absorption_band`, `multiband_ir_band`,
+  `soorat_pressure_map_dimension` and `kiran_occlusion_result_band`, leaked a pointer or
+  faulted. An out-of-range index now reads 0 and writes nothing, as
+  `absorption_at_band` always did.
+- **`fdn_new`'s 9.3 GiB limit is closed to an address-space requirement.** `+Inf` through
+  it took about 8 s and 9.3 GiB resident. It now takes under 25 ms and 18 MiB resident,
+  with about 5.5 GiB of address space, because a delay line is zeroed memory that costs
+  nothing until it is used. Under a tighter limit it stops with
+  `goonj: allocation refused`. Hand-built configs get the same cap.
+
+### Fixed
+
+- **A refused BVH build silently removed every wall.** hisab's 0 means both "empty" and
+  "refused", so every ray escaped, with no error
+  ([ADR-0004](docs/adr/0004-allocation-refusal-ends-the-process.md)).
+- **Process aborts on hostile input:**
+  - `axial_modes` and `all_axial_modes` on any NaN or `+Inf` argument, and on a finite
+    argument past 2²⁸ modes. Now capped at 1,000,000 per dimension, and NaN gives none.
+  - `compute_image_sources_general` on a wall with no vertices.
+- **`iacc` ran about 1e12 lags at a 1e15 rate.** It now stops at the signal length.
+- **`f64_min` and `f64_max` kept a NaN in the second position**, which Rust ignores, at
+  eight sites. Normalizing `[5, NaN, 1]` lost its peak and divided by 1. New
+  `goonj_fmin` and `goonj_fmax` replace room.cyr's private pair.
+- **Ten guards sent NaN the wrong way**, by negating Rust's comparison: nearest-wall
+  search, `trace_beam`, early reflections, radiosity form factors, binaural amplitude,
+  `trace_ray_atmospheric`, `refract_ray_step`, `ocean_speed_at_depth` and the scattering
+  basis. A NaN direction traced 100 NaN points where Rust returns the source.
+- **Rust's `u32` floor, lost on rates and counts:** a negative rate gave plausible results
+  from `band_energies`, `required_dx` and `dispersion_factor`. Negative `num_rays` and
+  `max_iterations` were echoed back. A negative `peak_step` gave a silent source, and a
+  negative HOA order built 16 silent channels. A negative delay in a hand-built FDN
+  config gave a gain of 1000.
+- **The WAV writers accepted any rate.** -48000 wrote 4294919296 Hz, and 2³² + 48000
+  wrote a clean-looking 48 kHz header. Both now return `ERR_COMPUTATION`.
+- **`find_nearest_wall_bvh` rejected directions too late.** It used |d| < 1.19e-7 where
+  hisab's `Ray::new` uses len² < 1e-7, so a direction of 1e-5 hit a wall at 1e5 times the
+  distance.
+- **`octave_band_filter` dropped the `b1` and `b3` terms**, which are 0 but turn `Inf` into
+  NaN in Rust.
+
+### Changed
+
+- **A refused allocation ends the process** (ADR-0004). Sizes that depend on input go
+  through the new `goonj_alloc`, which stops with `goonj: allocation refused`.
+- **`apply_axis_attenuation` is now `_apply_axis_attenuation`.** It is private in Rust, and
+  its indices and exponent were unchecked.
+- **`Fdn_delay_lines` holds raw buffers**, with lengths in the new `Fdn_delay_lens`. Rust's
+  fields are private, and nothing in the repo reads this one.
+- **`dist/goonj.deps` lists `syscalls`**, which `goonj_alloc_refused` needs.
+
+### Performance
+
+Every change here keeps results bit-identical on valid input.
+
+- **New `goonj_sort_by_key`, a stable merge sort,** replaces four quadratic insertion
+  sorts. `image_source/shoebox_order_5` goes from 438 to 161 µs, and a long
+  `generate_diffuse_rain` or `all_axial_modes` no longer goes quadratic.
+- **`fdn_process_sample` and the FDTD and DWM grids** use `alloc`'s zeroed memory directly.
+- **`[build] dce = true`:** the smoke binary goes from 2.14 MB to 306 KB.
+- **Baselines refreshed.** The three slower rows from 2.0.6 are stdlib accuracy, with
+  `f64_pow` doubled by its move to within 1 ulp. See
+  [`results.md`](docs/benchmarks/results.md).
+
+### Tests
+
+- **`tests/hardening.tcyr`: 44 → 101 assertions.** Each new group was run against 2.1.2,
+  where all of them fail, abort or fault.
+- **`tests/goonj.fcyr` is real:** 2,000 cases, 13 groups, about a minute under `--poison`.
+- **CI now gates `cyrius audit` and `cyrius fuzz --poison`.**
+
+### Documentation
+
+- New [ADR-0004](docs/adr/0004-allocation-refusal-ends-the-process.md) and
+  [ADR-0005](docs/adr/0005-hostile-input-parity-and-recorded-gaps.md). ADR-0002 and
+  ADR-0003 carry notes.
+- `SECURITY.md`: per-release rows, the allocation and 0-handle contracts, and a **Known
+  limits** section.
+- Roadmap: 2.1.3 removed, and `rust-old/` retirement is next.
+
 ## [2.1.2] - 2026-11-06
 
 Clears the quick roadmap items and schedules the 2.1.3 sweep. **`cyrius audit` exits

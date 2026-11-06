@@ -198,6 +198,7 @@ fn new_bformat_ir(num_samples, sample_rate) {
 # Empty HOA IR: (order+1)^2 zero channels of `num_samples`.
 #must_use
 fn new_hoa_ir(order, num_samples, sample_rate) {
+    if (order < 0) { order = 0; }   # u32 in Rust
     var num_channels = (order + 1) * (order + 1);
     var channels = vec_new();
     var i = 0;

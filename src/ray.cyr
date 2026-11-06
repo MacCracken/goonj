@@ -17,6 +17,7 @@
 
 var ENERGY_THRESHOLD = 0x3F50624DD2F1A9FC;   # 0.001 — dead below this
 var RAY_NONE         = 0xBFF0000000000000;   # -1.0 — "no intersection" sentinel
+var RAY_MIN_DIRECTION_SQ = 0x3E7AD7F29ABCAF48;   # 1e-7 — hisab's EPSILON_F32
 
 # ================================================================
 # Structs
@@ -44,9 +45,18 @@ fn mbr_origin(r)            { return load64(r + MBR_ORIGIN); }
 # Direction of multiband ray `r` (HVec3).
 fn mbr_direction(r)         { return load64(r + MBR_DIR); }
 # Energy of multiband ray `r` in frequency band `i`.
-fn mbr_energy_band(r, i)    { return load64(r + MBR_ENERGY + i * 8); }
+fn mbr_energy_band(r, i) {
+    if (i < 0) { return 0; }
+    if (i >= NUM_BANDS) { return 0; }
+    return load64(r + MBR_ENERGY + i * 8);
+}
 # Set the energy of multiband ray `r` in frequency band `i` to `v`.
-fn mbr_set_energy_band(r, i, v) { store64(r + MBR_ENERGY + i * 8, v); return 0; }
+fn mbr_set_energy_band(r, i, v) {
+    if (i < 0) { return 0; }
+    if (i >= NUM_BANDS) { return 0; }
+    store64(r + MBR_ENERGY + i * 8, v);
+    return 0;
+}
 # Distance travelled by multiband ray `r`.
 fn mbr_distance(r)          { return load64(r + MBR_DIST); }
 
@@ -55,7 +65,11 @@ fn ray_path_bounces(p)      { return load64(p + RP_BOUNCES); }
 # Total distance travelled along path `p`.
 fn ray_path_total_distance(p) { return load64(p + RP_TOTAL); }
 # Final energy of path `p` in frequency band `i`.
-fn ray_path_final_energy(p, i) { return load64(p + RP_FINAL + i * 8); }
+fn ray_path_final_energy(p, i) {
+    if (i < 0) { return 0; }
+    if (i >= NUM_BANDS) { return 0; }
+    return load64(p + RP_FINAL + i * 8);
+}
 
 # Hit point of bounce `b` (HVec3).
 fn ray_bounce_point(b)      { return load64(b + RB_POINT); }
@@ -66,7 +80,11 @@ fn ray_bounce_wall_index(b) { return load64(b + RB_WIDX); }
 # Distance from the previous origin to bounce `b` (the ray source for the first).
 fn ray_bounce_distance(b)   { return load64(b + RB_DIST); }
 # Energy left in frequency band `i` after the absorption at bounce `b`.
-fn ray_bounce_energy_after(b, i) { return load64(b + RB_ENERGY + i * 8); }
+fn ray_bounce_energy_after(b, i) {
+    if (i < 0) { return 0; }
+    if (i >= NUM_BANDS) { return 0; }
+    return load64(b + RB_ENERGY + i * 8);
+}
 
 # ================================================================
 # AcousticRay
@@ -159,7 +177,7 @@ fn multiband_ray_max_energy(r) {
     var m = 0;
     var i = 0;
     while (i < NUM_BANDS) {
-        m = f64_max(m, mbr_energy_band(r, i));
+        m = goonj_fmax(m, mbr_energy_band(r, i));
         i = i + 1;
     }
     return m;
@@ -274,7 +292,8 @@ fn find_nearest_wall(origin, direction, walls, skip_wall) {
     while (i < n) {
         if (i != skip_wall) {
             var t = ray_wall_intersection(probe, vec_get(walls, i));
-            if (f64_ge(t, 0) == 1) {
+            # RAY_NONE is Rust's None. A NaN t is Rust's Some(NaN), which is a hit.
+            if (f64_lt(t, 0) == 0) {
                 if (found == 0) {
                     found = 1; best_t = t; best_idx = i;
                 } else {
@@ -291,12 +310,18 @@ fn find_nearest_wall(origin, direction, walls, skip_wall) {
     return nw;
 }
 
-# BVH broadphase variant. Zero-direction -> None (matches Rust Ray::new Err).
+# BVH broadphase variant. A direction Rust's Ray::new rejects -> None. hisab's Rust
+# tests len_sq < 1e-7 (EPSILON_F32, geo/primitives.rs:30), a magnitude of 3.16e-4.
+# Both refusals below would otherwise read as "no wall hit", so they end the process
+# like any other (ADR-0004). hisab's BVH reports no leaf for a NaN slab, so a non-finite
+# ray hits nothing here, where the linear search returns Rust's NaN hits (ADR-0005).
 #must_use
 fn find_nearest_wall_bvh(origin, direction, walls, bvh, skip_wall) {
-    if (f64_lt(hvec3_length(direction), GOONJ_EPSILON) == 1) { return 0; }
+    if (f64_lt(hvec3_length_sq(direction), RAY_MIN_DIRECTION_SQ) == 1) { return 0; }
     var hray = geo_ray_new(origin, direction);
+    if (hray == 0) { goonj_alloc_refused(); }
     var candidates = bvh_query_ray(bvh, hray);
+    if (candidates == 0) { goonj_alloc_refused(); }
     var probe = _acoustic_ray_raw(origin, direction);
 
     var found = 0;
@@ -308,7 +333,7 @@ fn find_nearest_wall_bvh(origin, direction, walls, bvh, skip_wall) {
         var idx = vec_get(candidates, j);
         if (idx != skip_wall) {
             var t = ray_wall_intersection(probe, vec_get(walls, idx));
-            if (f64_ge(t, 0) == 1) {
+            if (f64_lt(t, 0) == 0) {
                 if (found == 0) {
                     found = 1; best_t = t; best_idx = idx;
                 } else {

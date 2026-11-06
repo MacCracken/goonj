@@ -4,10 +4,9 @@
 
 | Version | Supported | Notes |
 |---------|-----------|-------|
-| 2.1.2   | ✅ Yes    | Current. Carries the same known limit as 2.0.6. |
-| 2.1.1   | ✅ Yes    | Carries the same known limit as 2.0.6. |
-| 2.1.0   | ✅ Yes    | Carries the same known limit as 2.0.6. |
-| 2.0.6   | ✅ Yes    | **Known limit:** a non-finite or overflowing room dimension reaching `fdn_new` costs about 9.3 GiB and aborts where that is unavailable. Reject non-finite dimensions before calling it. |
+| 2.1.3   | ✅ Yes    | Current. Closes the 2.0.6 limit down to an address-space requirement. See **Known limits**. |
+| 2.1.0–2.1.2 | ⚠️ Upgrade | Public band accessors, including `mbr_set_energy_band`, read and write out of bounds on a bad index, and carry the 2.0.6 limit. Fixed in 2.1.3. |
+| 2.0.6   | ⚠️ Upgrade | A non-finite or overflowing room dimension reaching `fdn_new` costs about 9.3 GiB and aborts where that is unavailable. Carries the 2.1.3 band accessor defects too. |
 | 2.0.3–2.0.5 | ⚠️ Upgrade if built on cyrius ≥ 6.6.8 | `+Inf` or overflowing input to the FDTD/DWM gaussian pulses or the FDN exhausts memory without limit. Safe below 6.6.8. Fixed for the pulses and bounded for the FDN in 2.0.6. |
 | 2.0.2   | ⚠️ Upgrade | Fixed 11 P-1 defects but introduced a memory-exhaustion regression in `generate_ir` (a negative or NaN `max_time_seconds` allocates ~7.4 GB). Fixed in 2.0.3. |
 | 2.0.0–2.0.1 | ❌ No | Carry 11 defects reachable through the public API — 4 out-of-bounds accesses (SIGSEGV), 3 process aborts, and 4 silently-wrong results. Fixed in 2.0.2. |
@@ -51,6 +50,24 @@ What that means in practice, and what to expect from a report:
   [ADR-0002](docs/adr/0002-signed-index-and-float-conversion-hazards.md), and
   [ADR-0003](docs/adr/0003-f64-to-saturates-keep-bounding-in-f64.md) covers what
   changed at cyrius 6.6.8.
+- **A refused allocation ends the process**, as it does in Rust, by
+  `goonj: allocation refused` or a fault at the null page
+  ([ADR-0004](docs/adr/0004-allocation-refusal-ends-the-process.md)). It never gives a
+  partial result. Only the WAV writers report it, as `ERR_COMPUTATION`.
+- **A 0 handle faults at the null page.** Handles come from goonj's own constructors,
+  so this is a caller bug, not input. Two constructors do return 0 for rejected input,
+  `acoustic_material_new` and `metamaterial_to_acoustic_material`, and that 0 must be
+  checked before use.
+- **Where the port deliberately differs from Rust on hostile input** is listed in
+  [ADR-0005](docs/adr/0005-hostile-input-parity-and-recorded-gaps.md).
 - **Out of scope**: resource use on inputs a consumer legitimately chose (a large
   grid really does allocate a large grid), and the bump allocator never reclaiming
   within a run — both are documented behaviour, not vulnerabilities.
+
+## Known limits
+
+- **`fdn_new` on a non-finite or overflowing room dimension needs about 5.5 GiB of
+  address space**, and takes under 25 ms and 18 MiB of it resident, because a delay line
+  costs nothing until it is used. Under a tighter address-space limit it stops with
+  `goonj: allocation refused`. Reject non-finite dimensions first if a consumer forwards
+  them from untrusted input.

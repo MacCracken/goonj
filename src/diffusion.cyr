@@ -109,7 +109,7 @@ fn solve_diffusion_2d(config, absorption_field, absorption_len, source_field, so
 
     # Stability: dt < dx^2 / (4 D) for the 2D explicit scheme; use 0.9 of it.
     var dt_max = f64_div(dx2, f64_mul(f64_from(4), d_coeff));
-    var dt = f64_min(dt_cfg, f64_mul(dt_max, f64_div(f64_from(9), f64_from(10))));
+    var dt = goonj_fmin(dt_cfg, f64_mul(dt_max, f64_div(f64_from(9), f64_from(10))));
     # Rust: `(max_time / dt) as u32` then `.min(1_000_000)` — a saturating cast,
     # so a negative or NaN max_time yields 0 steps (and time_steps: 0 in the
     # result) while a huge one runs the cap. f64_to keeps the sign, so a negative

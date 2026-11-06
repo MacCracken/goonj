@@ -213,7 +213,11 @@ fn ir_config_default() {
 # MultibandIr -- one IR buffer per octave band (manual inline layout).
 # ================================================================
 #must_use
-fn multiband_ir_band(m, i) { return load64(m + MI_BANDS + i * 8); }
+fn multiband_ir_band(m, i) {
+    if (i < 0) { return 0; }
+    if (i >= NUM_BANDS) { return 0; }
+    return load64(m + MI_BANDS + i * 8);
+}
 # Sample rate of multiband IR `m`, in Hz.
 #must_use
 fn multiband_ir_sample_rate(m) { return load64(m + MI_RATE); }
@@ -262,7 +266,7 @@ fn multiband_ir_to_broadband(m) {
     var max_abs = 0;
     var mi = 0;
     while (mi < len) {
-        max_abs = f64_max(max_abs, f64_abs(vec_get(samples, mi)));
+        max_abs = goonj_fmax(max_abs, f64_abs(vec_get(samples, mi)));
         mi = mi + 1;
     }
     if (f64_gt(max_abs, GOONJ_EPSILON) == 1) {

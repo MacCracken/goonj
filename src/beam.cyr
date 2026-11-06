@@ -50,7 +50,11 @@ fn beam_direction(b)        { return load64(b + BEAM_DIR); }
 # Half-angle of beam `b`, in radians.
 fn beam_half_angle(b)       { return load64(b + BEAM_HALF); }
 # Energy of beam `b` in frequency band `i`.
-fn beam_energy_band(b, i)   { return load64(b + BEAM_ENERGY + i * 8); }
+fn beam_energy_band(b, i) {
+    if (i < 0) { return 0; }
+    if (i >= NUM_BANDS) { return 0; }
+    return load64(b + BEAM_ENERGY + i * 8);
+}
 # Distance beam `b` has travelled so far.
 fn beam_path_length(b)      { return load64(b + BEAM_PATH); }
 # Reflection order of beam `b`.
@@ -112,7 +116,11 @@ fn beam_wall_hit_new(centre, distance, wall_index, coverage) {
 # ================================================================
 fn beam_path_hits(p)           { return load64(p + BP_HITS); }
 # Final energy of beam path `p` in frequency band `i`.
-fn beam_path_final_energy(p, i) { return load64(p + BP_FINAL + i * 8); }
+fn beam_path_final_energy(p, i) {
+    if (i < 0) { return 0; }
+    if (i >= NUM_BANDS) { return 0; }
+    return load64(p + BP_FINAL + i * 8);
+}
 # Total distance travelled along beam path `p`.
 fn beam_path_total_distance(p) { return load64(p + BP_TOTAL); }
 # Reflection order reached by beam path `p`.
@@ -167,7 +175,7 @@ fn trace_beam(beam, walls, max_order) {
                 if (last_wall == i) { skip = 1; }
                 if (skip == 0) {
                     var t = _beam_wall_distance(current, vec_get(walls, i));
-                    if (f64_ge(t, 0) == 1) {
+                    if (f64_lt(t, 0) == 0) {
                         if (found == 0) {
                             found = 1;
                             best_t = t;
@@ -225,7 +233,7 @@ fn trace_beam(beam, walls, max_order) {
                     var ne = f64_mul(beam_energy_band(current, band),
                       f64_sub(F64_ONE, am_absorption_band(mat, band)));
                     store64(next + BEAM_ENERGY + band * 8, ne);
-                    max_e = f64_max(max_e, ne);
+                    max_e = goonj_fmax(max_e, ne);
                     band = band + 1;
                 }
 

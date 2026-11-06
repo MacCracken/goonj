@@ -3,6 +3,13 @@
 **Status**: Accepted
 **Date**: 2026-11-06
 
+> **Note, 2.1.3.** The cap and the decision stand, but the cost below is out of date.
+> `fdn_new` now takes each line from `alloc`, whose bytes are zero, instead of filling a
+> vec. `+Inf` through it takes under 25 ms, 18 MiB resident and about 5.5 GiB of address
+> space, which is what Rust's `vec![0.0; n]` does with calloc. A process limited below
+> that stops with `goonj: allocation refused`
+> ([ADR-0004](0004-allocation-refusal-ends-the-process.md)).
+
 ## Context
 
 [ADR-0002](0002-signed-index-and-float-conversion-hazards.md) was written against

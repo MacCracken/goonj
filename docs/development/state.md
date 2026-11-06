@@ -5,9 +5,16 @@
 
 ## Version
 
+**2.1.3** — the P(-1) sweep: 172,076 hostile cases differenced against `rust-old/`, all
+37 modules read against it, real fuzz targets, allocation fault injection. Fixes 21
+out-of-bounds public accessors, a refused BVH build that silently removed every wall,
+process aborts on non-finite input, and NaN and negative-count parity. `fdn_new`'s
+9.3 GiB limit is down to an address-space requirement. Results on valid input do not
+move. See [ADR-0004](../adr/0004-allocation-refusal-ends-the-process.md) and
+[ADR-0005](../adr/0005-hostile-input-parity-and-recorded-gaps.md).
+
 **2.1.2** — `cyrius audit` exits 0 for the first time: 217 public fns documented and
-29 long lines wrapped, with no code change. The roadmap is rewritten forward, and
-2.1.3 is scheduled as a P(-1) sweep.
+29 long lines wrapped, with no code change. The roadmap is rewritten forward.
 
 **2.1.1** — toolchain 6.7.9 → **6.7.18**, hisab 3.4.0 → **3.4.1**, sakshi 2.5.8 →
 **2.5.10**, each its project's newest tag. No source or API change, and no result
@@ -23,7 +30,7 @@ consumers now need **cyrius ≥ 6.7.2**.
 opened in the FDTD/DWM gaussian pulses and bounds it in the FDN, with every
 assertion green throughout
 ([ADR-0003](../adr/0003-f64-to-saturates-keep-bounding-in-f64.md)). A non-finite room
-dimension through `fdn_new` still costs about 9.3 GiB; the 11.52M alternative is
+dimension through `fdn_new` cost about 9.3 GiB until 2.1.3; the 11.52M alternative is
 measured there.
 
 **2.0.5** — toolchain 6.5.35 → 6.6.2, hisab 2.11.2 → 2.22.1; documentation sweep.
@@ -157,16 +164,19 @@ one with `cyrius test tests/<module>.tcyr`.
 Four suites sit outside that per-module set, bringing the totals to
 **41 suites / 3685 assertions**:
 
-- **`hardening.tcyr`** (44) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
-  sample-count contract, and the 2.0.6 `f64_to` and NaN-vertex cases. Runs against the shipped `dist/goonj.cyr`, so
-  it also proves each repair reached the bundle. A real regression suite: it
-  SIGSEGVs or aborts against 2.0.1.
+- **`hardening.tcyr`** (101) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
+  sample-count contract, the 2.0.6 `f64_to` and NaN-vertex cases, and the 2.1.3 sweep.
+  Runs against the shipped `dist/goonj.cyr`, so it also proves each repair reached the
+  bundle. A real regression suite: it SIGSEGVs or aborts against 2.0.1 and 2.1.2.
 - **`dwm_modal.tcyr`** (4) — the DWM solver's only physics-correctness check
   (first axial mode dominates). Split out because it runs ~15 s.
 - **`bundle.tcyr`**, **`goonj.tcyr`** — cross-layer and smoke.
 
-⚠ **`tests/goonj.fcyr` is a scaffold stub.** `cyrius fuzz` passes without running any
-goonj code. Real harnesses are in the 2.1.3 scope.
+- **`tests/goonj.fcyr`** — 2,000 hostile cases across 13 target groups, with a fixed seed.
+  It checks survival, not results. Run it with `--poison`, as CI does: about a minute.
+
+The differential and fault-injection harnesses from 2.1.3 needed the Rust oracle and a
+patched `alloc`, so they were not kept. ADR-0004 and ADR-0005 record what they found.
 
 Six parallel workflows landed 30 of the 37 modules; the rest were ported solo.
 Each batch was independently re-verified in main (tests + canonical-fmt diff +
@@ -220,8 +230,7 @@ shruti and kiran/joshua have no `cyrius.cyml` alongside these repos.
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). 2.1.3 is the P(-1) audit, hardening and optimization
-sweep.
+See [`roadmap.md`](roadmap.md). 2.2.0 retires `rust-old/`.
 
 **Every language pattern is now proven** (f32→f64, hex literals, integer errors,
 HVec3, manual layout, `Vec`, closures→fnptr+ctx, tuple→struct, bit-ops/xorshift,

@@ -10,6 +10,8 @@ cyrius = "6.7.18"
 [build]
 entry = "src/main.cyr"
 output = "goonj"
+# The smoke binary reaches about 14% of what it links. Tests and benches are unaffected.
+dce = true
 
 # `[lib]` declares the distlib bundle layout that `cyrius distlib` writes
 # into `dist/goonj.cyr` — all 37 acoustics modules concatenated in

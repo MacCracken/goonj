@@ -45,7 +45,11 @@ fn directivity_balloon_azimuths(b)   { return load64(b + DB_AZ); }
 # Elevation angles of balloon `b`, as a vec.
 fn directivity_balloon_elevations(b) { return load64(b + DB_EL); }
 # Gain table of balloon `b` for frequency band `band`, as a vec.
-fn directivity_balloon_gain_band(b, band) { return load64(b + DB_GAINS + band * 8); }
+fn directivity_balloon_gain_band(b, band) {
+    if (band < 0) { return 0; }
+    if (band >= NUM_BANDS) { return 0; }
+    return load64(b + DB_GAINS + band * 8);
+}
 
 # Build a balloon from an azimuths vec, an elevations vec, and `gains`
 # (a pointer to NUM_BANDS vec handles, one per octave band).

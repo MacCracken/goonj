@@ -54,7 +54,11 @@ fn dhvani_ir_room_volume(d) { return load64(d + DH_VOLUME); }
 
 # Per-band RT60 estimate (seconds) at band index 0..NUM_BANDS-1.
 #must_use
-fn dhvani_ir_rt60_band(d, band) { return load64(d + DH_RT60 + band * 8); }
+fn dhvani_ir_rt60_band(d, band) {
+    if (band < 0) { return 0; }
+    if (band >= NUM_BANDS) { return 0; }
+    return load64(d + DH_RT60 + band * 8);
+}
 
 # ================================================================
 # generate_dhvani_ir

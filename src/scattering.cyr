@@ -34,7 +34,8 @@ fn _basis_make(tangent, bitangent) {
 fn orthonormal_basis(n) {
     # Choose a helper vector not parallel to n.
     var helper = hvec3_unit_x();
-    if (f64_ge(f64_abs(HVec3_x(n)), SCAT_HELPER_THRESHOLD) == 1) { helper = hvec3_unit_y(); }
+    # Rust takes X on `|x| < 0.9`, so a NaN x takes Y.
+    if (f64_lt(f64_abs(HVec3_x(n)), SCAT_HELPER_THRESHOLD) == 0) { helper = hvec3_unit_y(); }
     var tangent = hvec3_cross(n, helper);
     var len = hvec3_length(tangent);
     if (f64_gt(len, GOONJ_EPSILON) == 1) {

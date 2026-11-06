@@ -195,7 +195,7 @@ fn synthesize_dvn_ir(config) {
     var pulse_density_hz = DvnConfig_pulse_density_hz(config);
     var duration_seconds = DvnConfig_duration_seconds(config);
 
-    if (sample_rate == 0) { return vec_new(); }
+    if (sample_rate <= 0) { return vec_new(); }
     if (f64_le(duration_seconds, 0) == 1) { return vec_new(); }
     if (f64_le(pulse_density_hz, 0) == 1) { return vec_new(); }
 

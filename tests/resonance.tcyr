@@ -1,6 +1,7 @@
 # resonance.tcyr -- parity tests for src/resonance.cyr
 # Ported from the #[test] blocks in rust-old/src/resonance.rs.
 
+include "src/error.cyr"
 include "src/resonance.cyr"
 
 var TOL_1E1 = 0x3FB999999999999A;   # 0.1

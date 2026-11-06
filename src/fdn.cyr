@@ -31,7 +31,7 @@ struct FdnConfig { num_delays; delay_lengths; feedback_gains; sample_rate; targe
 #   sample_rate     : u32 Hz (retained; unused in processing, as in Rust)
 # ================================================================
 #derive(accessors)
-struct Fdn { delay_lines; write_positions; feedback_gains; scratch; sample_rate; }
+struct Fdn { delay_lines; delay_lens; write_positions; feedback_gains; scratch; sample_rate; }
 
 # ================================================================
 # fdn_config_for_room -- 8-line FDN config from room dimensions.
@@ -70,7 +70,7 @@ fn fdn_config_for_room(length, width, height, rt60, sample_rate) {
     var d4 = f64_mul(f64_add(length, height), F64_HALF);
     var d5 = f64_mul(f64_add(width, height), F64_HALF);
     var d6 = f64_div(f64_add(f64_add(length, width), height), f64_from(3));
-    var d7 = f64_max(f64_max(length, width), height);
+    var d7 = goonj_fmax(goonj_fmax(length, width), height);
 
     var delay_lengths = vec_new();
     vec_push(delay_lengths, _delay_samples(d0, c, sample_rate));
@@ -107,19 +107,19 @@ fn fdn_new(config) {
     var take = n;
     if (dl_len < take) { take = dl_len; }
 
-    # delay_lines: vec![0.0; len.max(1)] per taken delay length.
+    # delay_lines: vec![0.0; len.max(1)] per taken delay length. Rust's vec! of zeros
+    # takes untouched pages from calloc. alloc's bytes are zero too, so a line costs
+    # address space until it is used (ADR-0003). A vec_push fill cost 2.3x the memory
+    # and touched all of it. A hand-built config gets the same cap as a room's.
     var delay_lines = vec_new();
+    var delay_lens = vec_new();
     var i = 0;
     while (i < take) {
         var len = vec_get(delay_lengths, i);
         if (len < 1) { len = 1; }
-        var line = vec_new();
-        var j = 0;
-        while (j < len) {
-            vec_push(line, 0);
-            j = j + 1;
-        }
-        vec_push(delay_lines, line);
+        if (len > FDN_MAX_DELAY_SAMPLES) { len = FDN_MAX_DELAY_SAMPLES; }
+        vec_push(delay_lines, goonj_alloc(len * 8));
+        vec_push(delay_lens, len);
         i = i + 1;
     }
 
@@ -138,6 +138,7 @@ fn fdn_new(config) {
         var g = 0;
         while (g < take) {
             var glen = vec_get(delay_lengths, g);
+            if (glen < 0) { glen = 0; }   # u32 in Rust
             var delay_time = f64_div(f64_from(glen), f64_from(sr));
             var gain = 0;
             if (f64_gt(target_rt60, 0) == 1) {
@@ -161,6 +162,7 @@ fn fdn_new(config) {
 
     var fdn = alloc(sizeof(Fdn));
     Fdn_set_delay_lines(fdn, delay_lines);
+    Fdn_set_delay_lens(fdn, delay_lens);
     Fdn_set_write_positions(fdn, write_positions);
     Fdn_set_feedback_gains(fdn, feedback_gains);
     Fdn_set_scratch(fdn, scratch);
@@ -176,6 +178,7 @@ fn fdn_new(config) {
 # ================================================================
 fn fdn_process_sample(fdn, input) {
     var delay_lines = Fdn_delay_lines(fdn);
+    var delay_lens = Fdn_delay_lens(fdn);
     var n = vec_len(delay_lines);
     if (n == 0) { return input; }
 
@@ -188,9 +191,9 @@ fn fdn_process_sample(fdn, input) {
     var i = 0;
     while (i < n) {
         var line = vec_get(delay_lines, i);
-        var len = vec_len(line);
+        var len = vec_get(delay_lens, i);
         var read_pos = (vec_get(write_positions, i) + 1) % len;
-        var s = vec_get(line, read_pos);
+        var s = load64(line + read_pos * 8);
         vec_set(scratch, i, s);
         output_sum = f64_add(output_sum, s);
         i = i + 1;
@@ -205,10 +208,10 @@ fn fdn_process_sample(fdn, input) {
     while (i < n) {
         var fb = f64_sub(vec_get(scratch, i), correction);
         var line = vec_get(delay_lines, i);
-        var len = vec_len(line);
+        var len = vec_get(delay_lens, i);
         var wp = vec_get(write_positions, i);
         var written = f64_add(input_per_line, f64_mul(fb, vec_get(feedback_gains, i)));
-        vec_set(line, wp, written);
+        store64(line + wp * 8, written);
         vec_set(write_positions, i, (wp + 1) % len);
         i = i + 1;
     }
@@ -237,14 +240,15 @@ fn fdn_process_buffer(fdn, input) {
 # ================================================================
 fn fdn_reset(fdn) {
     var delay_lines = Fdn_delay_lines(fdn);
+    var delay_lens = Fdn_delay_lens(fdn);
     var n = vec_len(delay_lines);
     var i = 0;
     while (i < n) {
         var line = vec_get(delay_lines, i);
-        var len = vec_len(line);
+        var len = vec_get(delay_lens, i);
         var j = 0;
         while (j < len) {
-            vec_set(line, j, 0);
+            store64(line + j * 8, 0);
             j = j + 1;
         }
         i = i + 1;

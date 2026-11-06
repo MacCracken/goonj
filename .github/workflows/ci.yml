@@ -73,3 +73,15 @@ jobs:
             echo "::error::dist/ is stale — run 'cyrius distlib', then commit dist/goonj.cyr and dist/goonj.deps"
             exit 1
           }
+
+      - name: Audit
+        # fmt, lint, docs, tests and benches. It fails on any lint warning or
+        # undocumented public fn, so a non-zero exit is a real signal. It re-runs
+        # the suites above: that is the price of one command that matches what a
+        # release has to pass.
+        run: cyrius audit
+
+      - name: Fuzz
+        # tests/goonj.fcyr drives the public API with hostile values. --poison
+        # adds allocator redzones, so a heap overrun fails the run too.
+        run: cyrius fuzz --poison tests/goonj.fcyr

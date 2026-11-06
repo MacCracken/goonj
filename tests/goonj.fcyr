@@ -1,18 +1,630 @@
-# goonj fuzz harness
+# goonj.fcyr -- fuzz harness for the public API.
+#
+# Run: cyrius fuzz --poison tests/goonj.fcyr
+#
+# `cyrius fuzz` compiles this file and runs it, so the harness generates its own
+# input. Each case is a block of pseudo-random bytes, decoded into hostile values
+# for one target group. A target checks nothing but survival: a crash, an abort, a
+# hang past the runner's deadline or a heap overrun (under --poison) fails the run.
+# What the results should BE is pinned in hardening.tcyr and the module suites.
+#
+# Cases run in batches inside forked children. The bump allocator never frees, so
+# that returns the memory, and a failure names the batch to replay. The seed is
+# fixed, so a failure reproduces.
+#
+# Sizes that a caller legitimately chooses stay small here: a large grid or a long
+# duration really does take that long, which SECURITY.md accepts. Everything else
+# gets the full hostile range.
+include "lib/hisab.cyr"
+include "lib/sakshi.cyr"
+include "dist/goonj.cyr"
 
-# Scaffold stub: it feeds nothing to goonj, so this harness exercises no goonj code yet.
-fn fuzz_main(data, len) {
-    if (len == 0) { return 0; }
+var FZ_CASES = 2000;
+var FZ_BATCH = 200;
+var FZ_DATA_LEN = 2048;
+var FZ_GROUPS = 13;
+
+var _fz_ptr = 0;
+var _fz_len = 0;
+var _fz_at = 0;
+var _fz_floats = 0;
+var _fz_ints = 0;
+
+# Next 64-bit word of the case, or 0 once it runs out.
+fn _fz_word() {
+    if (_fz_at + 8 > _fz_len) { return 0; }
+    var w = load64(_fz_ptr + _fz_at);
+    _fz_at = _fz_at + 8;
+    return w;
+}
+
+# A hostile float: usually one of the table, otherwise raw bits.
+fn _fz_f() {
+    var w = _fz_word();
+    var pick = (w >> 56) & 31;
+    if (pick < 16) { return load64(_fz_floats + pick * 8); }
+    return w;
+}
+
+# A hostile integer, for indices and rates.
+fn _fz_i() {
+    var w = _fz_word();
+    var pick = (w >> 56) & 15;
+    return load64(_fz_ints + pick * 8);
+}
+
+# A small signed count, negatives included: for sizes the caller chooses.
+fn _fz_n(hi) {
+    var w = _fz_word();
+    return ((w >> 40) & 0xFFFF) % (hi + 3) - 2;
+}
+
+# A positive count that never reaches a cap.
+fn _fz_rate() { return 100 + (_fz_word() >> 48) % 900; }
+
+# A duration: hostile, but never long enough to run a solver to its cap.
+fn _fz_dur() {
+    var w = (_fz_word() >> 56) & 7;
+    if (w == 0) { return load64(_fz_floats + 13 * 8); }
+    if (w == 1) { return load64(_fz_floats + 15 * 8); }
+    if (w == 2) { return f64_neg(F64_ONE); }
+    if (w == 3) { return 0; }
+    if (w == 4) { return f64_div(F64_ONE, f64_from(1000)); }
+    return f64_div(F64_ONE, f64_from(50));
+}
+
+fn _fz_v3() {
+    var x = _fz_f();
+    var y = _fz_f();
+    return hvec3_new(x, y, _fz_f());
+}
+
+fn _fz_vec(max_len) {
+    var n = _fz_word();
+    n = (n >> 44) & 0xFF;
+    n = n % (max_len + 1);
+    var v = vec_new();
+    var i = 0;
+    while (i < n) {
+        vec_push(v, _fz_f());
+        i = i + 1;
+    }
+    return v;
+}
+
+# An 8-band buffer of hostile floats.
+fn _fz_bands() {
+    var b = alloc(NUM_BANDS * 8);
+    var i = 0;
+    while (i < NUM_BANDS) {
+        store64(b + i * 8, _fz_f());
+        i = i + 1;
+    }
+    return b;
+}
+
+# A material, valid or with every coefficient hostile.
+fn _fz_material() {
+    var m = acoustic_material_new("fz", _fz_bands(), _fz_f());
+    if (m == 0) { return acoustic_material_concrete(); }
+    return m;
+}
+
+# A shoebox with hostile dimensions.
+fn _fz_room() {
+    var l = _fz_f();
+    var w = _fz_f();
+    return acoustic_room_shoebox(l, w, _fz_f(), _fz_material());
+}
+
+fn _fz_walls(room) { return RoomGeometry_walls(AcousticRoom_geometry(room)); }
+
+fn _fz_ir() {
+    return impulse_response_new(_fz_vec(64), _fz_i(), _fz_f());
+}
+
+# Take a result the fuzz has no use for.
+fn _fz_keep(x) { return x; }
+
+fn _fz_group_propagation() {
+    var f = _fz_f();
+    var g = _fz_f();
+    var h = _fz_f();
+    var k = _fz_f();
+    _fz_keep(speed_of_sound(f));
+    _fz_keep(inverse_square_law(f, g));
+    _fz_keep(spl_drop_with_distance(f, g));
+    _fz_keep(atmospheric_absorption(f, g, h, k));
+    _fz_keep(doppler_shift(f, g, h, k));
+    _fz_keep(db_spl_to_pressure(f));
+    _fz_keep(pressure_to_db_spl(f));
+    _fz_keep(ground_reflection_coefficient(f, g, ground_impedance_new(h)));
+    _fz_keep(refracted_speed(f, wind_profile_new(_fz_v3(), g, h), _fz_v3(), k));
+    _fz_keep(speed_at_height(temperature_profile_new(f, g), h));
+    _fz_keep(trace_ray_atmospheric(_fz_v3(), _fz_v3(), wind_profile_new(_fz_v3(), f, g),
+        temperature_profile_new(h, k), f64_from(_fz_n(40)), f64_div(F64_ONE, f64_from(2))));
+    _fz_keep(wind_attenuation_factor(f));
+    _fz_keep(doppler_ratio_from_mach(f, 1));
+    _fz_keep(effective_speed_of_sound(f, g));
+    _fz_keep(air_absorption_from_weather(f, g));
+    _fz_keep(speed_of_sound_from_temperature(f));
+    _fz_keep(pressure_to_atm(f));
+    _fz_keep(absorption_temperature_scale(f));
+    _fz_keep(sound_speed_gradient(f));
+    _fz_keep(em_resonance_coupling(f, g, h));
+    _fz_keep(piezo_acoustic_power(f, g, h, k));
+    _fz_keep(room_mode(f, _fz_i(), g));
+    _fz_keep(schroeder_frequency(f, g));
+    _fz_keep(modal_density(f, g, h));
     return 0;
 }
 
-# Run the stub once and report.
+fn _fz_group_outdoor() {
+    var f = _fz_f();
+    var g = _fz_f();
+    var h = _fz_f();
+    var k = _fz_f();
+    _fz_keep(barrier_insertion_loss(f, g, h));
+    _fz_keep(barrier_insertion_loss_bands(f, g));
+    _fz_keep(foliage_attenuation(f, g));
+    _fz_keep(meteorological_correction(f, g, h));
+    _fz_keep(ground_attenuation(f, g, h, k));
+    _fz_keep(edge_diffraction_loss(f, g, h));
+    _fz_keep(utd_wedge_diffraction(f, g, h, k, _fz_f(), _fz_f(), _fz_f()));
+    _fz_keep(diffraction_path_extra(_fz_v3(), _fz_v3(), _fz_v3()));
+    var filters = vec_new();
+    vec_push(filters, compute_diffraction_filter(f, g, h));
+    vec_push(filters, compute_diffraction_filter(g, h, k));
+    _fz_keep(chain_diffraction_filters(filters));
+    _fz_keep(chain_diffraction_filters(vec_new()));
+    var profile = ocean_profile_new(f, g, h);
+    _fz_keep(ocean_sound_speed(profile));
+    _fz_keep(ocean_speed_at_depth(profile, f, g, h));
+    _fz_keep(ocean_absorption_db_per_km(k, profile));
+    _fz_keep(ocean_absorption_bands(profile));
+    _fz_keep(bottom_reflection_coefficient(f, g, h, seabed_sediment_new(f, g, h)));
+    _fz_keep(surface_scattering_loss(f, g, h, k));
+    return 0;
+}
+
+fn _fz_group_material() {
+    var f = _fz_f();
+    var g = _fz_f();
+    var h = _fz_f();
+    var m = _fz_material();
+    _fz_keep(average_absorption(m));
+    _fz_keep(absorption_at_band(m, _fz_i()));
+    var w = wall_construction_new(f, g, h);
+    _fz_keep(transmission_loss_db(w, _fz_f()));
+    _fz_keep(transmission_coefficient(w, _fz_f()));
+    var j = jcal_material_new(f, g, h, _fz_f(), _fz_f(), _fz_f());
+    _fz_keep(jcal_surface_impedance_magnitude(j, _fz_f(), _fz_f()));
+    _fz_keep(jcal_absorption_coefficient(j, _fz_f(), _fz_f()));
+    var r = lorentzian_resonance_new(f, g, h, _fz_f());
+    _fz_keep(lorentzian_real_part(r, _fz_f()));
+    _fz_keep(lorentzian_evaluate(r, _fz_f()));
+    var d = lorentzian_with_dc_value(f, g, h, _fz_f());
+    _fz_keep(lorentzian_real_part(d, _fz_f()));
+    var meta = metamaterial_negative_stiffness(r, _fz_f());
+    _fz_keep(metamaterial_absorption_at(meta, _fz_f()));
+    _fz_keep(metamaterial_absorption_bands(meta));
+    _fz_keep(metamaterial_to_acoustic_material(meta, "fz", _fz_f()));
+    var dens = metamaterial_negative_density(r, _fz_f());
+    _fz_keep(metamaterial_absorption_bands(dens));
+    var dbl = metamaterial_doubly_negative(r, d);
+    _fz_keep(metamaterial_absorption_at(dbl, _fz_f()));
+    var rows = mm_rows_new();
+    var n = _fz_n(6);
+    var i = 0;
+    while (i < n) {
+        mm_rows_push(rows, _fz_f(), _fz_f());
+        i = i + 1;
+    }
+    var table = metamaterial_lookup_table(rows);
+    _fz_keep(metamaterial_absorption_at(table, _fz_f()));
+    _fz_keep(metamaterial_absorption_bands(table));
+    return 0;
+}
+
+fn _fz_group_analysis() {
+    var ir = _fz_ir();
+    _fz_keep(clarity_c50(ir));
+    _fz_keep(clarity_c80(ir));
+    _fz_keep(definition_d50(ir));
+    _fz_keep(sti_estimate(ir));
+    _fz_keep(early_decay_time(ir));
+    _fz_keep(sound_strength_g(ir));
+    _fz_keep(centre_time_ts(ir));
+    _fz_keep(octave_band_filter(ir, _fz_f()));
+    _fz_keep(impulse_response_energy_decay_curve(ir));
+    _fz_keep(impulse_response_duration_seconds(ir));
+    var rate = _fz_i();
+    _fz_keep(lateral_fraction_lf(_fz_vec(32), _fz_vec(32), rate));
+    _fz_keep(iacc(_fz_vec(32), _fz_vec(32), _fz_rate()));
+    _fz_keep(band_energies(_fz_vec(32), rate));
+    _fz_keep(dwm_band_energies(_fz_vec(32), rate));
+    var f = _fz_f();
+    var g = _fz_f();
+    var h = _fz_f();
+    _fz_keep(sabine_rt60(f, g));
+    _fz_keep(eyring_rt60(f, g, h));
+    _fz_keep(estimate_rt60_shoebox(f, g, h, _fz_f()));
+    _fz_keep(kuttruff_correction(f, g, h));
+    return 0;
+}
+
+fn _fz_group_ray() {
+    var room = _fz_room();
+    var walls = _fz_walls(room);
+    var bounces = _fz_n(8);
+    var ray = multiband_ray_new(_fz_v3(), _fz_v3());
+    _fz_keep(multiband_ray_is_alive(ray));
+    _fz_keep(multiband_ray_max_energy(ray));
+    _fz_keep(mbr_energy_band(ray, _fz_i()));
+    mbr_set_energy_band(ray, _fz_i(), _fz_f());
+    var path = trace_ray(ray, walls, bounces);
+    _fz_keep(ray_path_final_energy(path, _fz_i()));
+    _fz_keep(trace_ray_bvh(ray, accelerated_room_new(room), bounces));
+    var single = acoustic_ray_new(_fz_v3(), _fz_v3(), _fz_f());
+    _fz_keep(acoustic_ray_is_alive(single));
+    _fz_keep(ray_wall_intersection(single, vec_get(walls, 0)));
+    _fz_keep(find_nearest_wall(_fz_v3(), _fz_v3(), walls, _fz_i()));
+    _fz_keep(is_occluded(_fz_v3(), _fz_v3(), walls));
+    _fz_keep(room_geometry_surface_area(AcousticRoom_geometry(room)));
+    _fz_keep(room_geometry_total_absorption(AcousticRoom_geometry(room)));
+    _fz_keep(room_geometry_volume_shoebox(AcousticRoom_geometry(room)));
+    var beam = acoustic_beam_new(_fz_v3(), _fz_v3(), _fz_f());
+    _fz_keep(beam_energy_band(beam, _fz_i()));
+    var bp = trace_beam(beam, walls, _fz_n(4));
+    _fz_keep(beam_path_final_energy(bp, _fz_i()));
+    _fz_keep(generate_beam_set(_fz_v3(), _fz_n(1)));
+    _fz_keep(cosine_hemisphere_sample(_fz_v3(), _fz_f(), _fz_f()));
+    _fz_keep(scatter_direction(_fz_v3(), _fz_v3(), _fz_f(), _fz_f(), _fz_f()));
+    return 0;
+}
+
+fn _fz_group_image() {
+    var room = _fz_room();
+    var walls = _fz_walls(room);
+    var mats = alloc(48);
+    var i = 0;
+    while (i < 6) {
+        store64(mats + i * 8, _fz_material());
+        i = i + 1;
+    }
+    _fz_keep(compute_image_sources_shoebox(_fz_v3(), _fz_f(), _fz_f(), _fz_f(), mats, _fz_n(3)));
+    _fz_keep(compute_image_sources_general(_fz_v3(), walls, _fz_n(2)));
+    var er = compute_early_reflections(_fz_v3(), _fz_v3(), room, _fz_n(2), _fz_f());
+    if (vec_len(er) > 0) {
+        _fz_keep(early_reflection_amplitude_band(vec_get(er, 0), _fz_i()));
+    }
+    var patches = create_patches(walls, _fz_n(2));
+    _fz_keep(solve_radiosity(patches, _fz_i(), _fz_bands(), _fz_n(8), _fz_f()));
+    if (vec_len(patches) > 0) {
+        _fz_keep(patch_energy_band(vec_get(patches, 0), _fz_i()));
+    }
+    _fz_keep(suggest_absorption_placement(room, _fz_f()));
+    var portal = portal_new(_fz_v3(), _fz_v3(), _fz_f(), _fz_f());
+    _fz_keep(portal_area(portal));
+    _fz_keep(portal_transmission_factor(portal, _fz_f()));
+    _fz_keep(portal_energy_transfer(_fz_v3(), portal, _fz_v3(), _fz_f()));
+    return 0;
+}
+
+fn _fz_group_ir() {
+    var room = _fz_room();
+    var cfg = ir_config_new(_fz_rate(), _fz_n(2), _fz_n(8), _fz_n(4), _fz_dur(), _fz_word());
+    var src = _fz_v3();
+    var lis = _fz_v3();
+    var ir = generate_ir(src, lis, room, cfg);
+    _fz_keep(multiband_ir_band(ir, _fz_i()));
+    var bb = multiband_ir_to_broadband(ir);
+    _fz_keep(impulse_response_to_wav(bb));
+    var dh = generate_dhvani_ir(src, lis, room, cfg);
+    _fz_keep(dhvani_ir_rt60_band(dh, _fz_i()));
+    var rain = diffuse_rain_config_new(_fz_n(8), _fz_n(4), _fz_dur(), _fz_f(), _fz_f(), _fz_word());
+    _fz_keep(generate_diffuse_rain(src, lis, room, rain));
+    _fz_keep(fibonacci_sphere(_fz_n(16)));
+    _fz_keep(auto_collection_radius(_fz_f(), _fz_i()));
+    var pairs = vec_new();
+    vec_push(pairs, hrtf_pair_new(_fz_f(), _fz_f(), _fz_vec(4), _fz_vec(4)));
+    var data = hrtf_dataset_from_pairs(pairs, _fz_rate());
+    _fz_keep(hrtf_dataset_nearest(data, _fz_f(), _fz_f()));
+    _fz_keep(generate_binaural_ir(src, lis, room, data, cfg));
+    _fz_keep(binaural_direction_to_angles(_fz_v3()));
+    return 0;
+}
+
+fn _fz_group_grids() {
+    var c = f64_from(343);
+    var fc = fdtd_config_new(_fz_i(), _fz_f(), _fz_f(), _fz_n(8), _fz_n(8), _fz_dur());
+    var fr = vec_new();
+    vec_push(fr, fdtd_receiver_new(_fz_i(), _fz_i()));
+    _fz_keep(solve_fdtd_2d(fc, fdtd_source_new(_fz_i(), _fz_i(), _fz_vec(8)), fr));
+    var fok = fdtd_config_new(_fz_rate(), f64_from(100), c, 4, 4, _fz_dur());
+    _fz_keep(solve_fdtd_2d(fok, fdtd_source_gaussian_pulse(_fz_n(6), _fz_n(6), _fz_n(8), _fz_f(), _fz_f()), fr));
+    var walls = wall_materials_uniform(_fz_material());
+    var dc = dwm_config_new(_fz_i(), _fz_f(), _fz_f(), _fz_n(5), _fz_n(5), _fz_n(5), _fz_dur(), walls);
+    var dr = vec_new();
+    vec_push(dr, dwm_receiver_new(_fz_i(), _fz_i(), _fz_i()));
+    _fz_keep(solve_dwm_3d(dc, dwm_source_gaussian_pulse(_fz_i(), _fz_i(), _fz_i(), _fz_n(8), _fz_f(), _fz_f()), dr));
+    _fz_keep(mesh_frequency(dc));
+    _fz_keep(dispersion_factor(dc, _fz_f()));
+    var dcorr = dispersion_correction_calibrated(dc, _fz_f());
+    dispersion_correction_apply(dcorr, _fz_vec(16));
+    dispersion_correction_apply(dispersion_correction_for_config(dc), _fz_vec(16));
+    _fz_keep(required_dx(_fz_i(), _fz_f()));
+    var cross = crossover_config_new(_fz_f(), _fz_f());
+    _fz_keep(blend_weights(cross));
+    _fz_keep(blend_results(_fz_bands(), _fz_bands(), cross));
+    return 0;
+}
+
+fn _fz_group_gfpe() {
+    var gc = gfpe_config_new(_fz_f(), _fz_f(), f64_from(_fz_n(20)), f64_from(_fz_n(20)),
+      f64_from(_fz_n(6)), f64_from(_fz_n(6)), ground_impedance_new(_fz_f()),
+      gfpe_atmosphere_new(_fz_f(), _fz_f()));
+    _fz_keep(solve_gfpe(gfpe_terrain_flat(_fz_f()), gc));
+    var t = gfpe_terrain_new(_fz_vec(6), _fz_vec(6));
+    _fz_keep(gfpe_terrain_height_at(t, _fz_f()));
+    _fz_keep(solve_gfpe(t, gc));
+    var r = gfpe_result_new(_fz_vec(4), _fz_vec(4), _fz_vec(16));
+    _fz_keep(gfpe_result_at(r, _fz_i(), _fz_i()));
+    var nx = _fz_n(10);
+    var ny = _fz_n(10);
+    var abs_len = _fz_n(20);
+    var src_len = _fz_n(20);
+    if (abs_len < 0) { abs_len = 0; }
+    if (src_len < 0) { src_len = 0; }
+    var ab = alloc(abs_len * 8 + 8);
+    var sr = alloc(src_len * 8 + 8);
+    var cfg = diffusion_config_new(_fz_f(), _fz_f(), nx, ny, _fz_f(), _fz_f(), _fz_dur());
+    _fz_keep(solve_diffusion_2d(cfg, ab, abs_len, sr, src_len));
+    return 0;
+}
+
+fn _fz_group_audio() {
+    var bf = new_bformat_ir(_fz_n(32), _fz_i());
+    encode_bformat(_fz_f(), _fz_v3(), _fz_i(), bf);
+    var hoa = new_hoa_ir(_fz_n(5), _fz_n(32), _fz_i());
+    encode_hoa(_fz_f(), _fz_v3(), _fz_i(), hoa);
+    _fz_keep(spherical_harmonics(_fz_n(5), _fz_f(), _fz_f()));
+    _fz_keep(write_wav_mono(_fz_vec(32), _fz_i()));
+    _fz_keep(write_wav_stereo(_fz_vec(32), _fz_vec(32), _fz_i()));
+    var fdn = fdn_new(fdn_config_for_room(f64_from(_fz_n(3)), _fz_f(), F64_ONE, _fz_f(), _fz_rate()));
+    fdn_process_sample(fdn, _fz_f());
+    _fz_keep(fdn_process_buffer(fdn, _fz_vec(16)));
+    fdn_reset(fdn);
+    var bins = vec_new();
+    vec_push(bins, _fz_f());
+    vec_push(bins, _fz_f());
+    var dvn = dvn_config_new(_fz_rate(), _fz_f(), _fz_dur(), decay_exponential(_fz_f()), _fz_f(), _fz_f(), _fz_word());
+    _fz_keep(synthesize_dvn_ir(dvn));
+    var pw = dvn_config_new(_fz_rate(), _fz_f(), _fz_dur(), decay_piecewise_db(bins), _fz_f(), _fz_f(), _fz_word());
+    _fz_keep(synthesize_dvn_ir(pw));
+    _fz_keep(piecewise_db_value(bins, _fz_f()));
+    _fz_keep(envelope_value(decay_exponential(_fz_f()), _fz_f()));
+    return 0;
+}
+
+fn _fz_group_directivity() {
+    var f = _fz_v3();
+    var d = _fz_v3();
+    _fz_keep(directivity_gain(directivity_cardioid(), d, f));
+    _fz_keep(directivity_gain(directivity_subcardioid(), d, f));
+    _fz_keep(directivity_gain(directivity_supercardioid(), d, f));
+    _fz_keep(directivity_gain(directivity_figure8(), d, f));
+    _fz_keep(directivity_gain_per_band(directivity_omnidirectional(), d, f));
+    var gains = alloc(NUM_BANDS * 8);
+    var i = 0;
+    while (i < NUM_BANDS) {
+        store64(gains + i * 8, _fz_vec(16));
+        i = i + 1;
+    }
+    var balloon = directivity_balloon_new(_fz_vec(5), _fz_vec(5), gains);
+    _fz_keep(directivity_balloon_gain_band(balloon, _fz_i()));
+    var pat = directivity_tabulated(balloon);
+    _fz_keep(directivity_gain(pat, d, f));
+    _fz_keep(directivity_gain_per_band(pat, d, f));
+    var surfaces = vec_new();
+    vec_push(surfaces, vibrating_surface_new(_fz_v3(), _fz_v3(), _fz_f(), _fz_f(), _fz_f()));
+    var rad = radiated_sound_power(surfaces, _fz_f(), _fz_f());
+    _fz_keep(radiation_result_power_per_band(rad, _fz_i()));
+    _fz_keep(radiation_efficiency(_fz_f(), _fz_f(), _fz_f(), _fz_f(), _fz_f()));
+    _fz_keep(nearest_band(_fz_f()));
+    return 0;
+}
+
+fn _fz_group_scene() {
+    var room = _fz_room();
+    var engine = kiran_occlusion_engine_new(room);
+    var q = kiran_occlusion_query(engine, _fz_v3(), _fz_v3());
+    _fz_keep(kiran_occlusion_result_band(q, _fz_i()));
+    var vis = soorat_mode_visualization_for_shoebox(_fz_n(4), _fz_n(4), _fz_f(), _fz_f(), _fz_f(), _fz_n(12));
+    _fz_keep(soorat_mode_visualization_mode_index(vis, _fz_i()));
+    _fz_keep(soorat_mode_visualization_pattern_dimension(vis, _fz_i()));
+    var map = soorat_pressure_map_new(_fz_vec(16), _fz_n(3), _fz_n(3), _fz_n(3), _fz_v3(), _fz_f(), _fz_f());
+    _fz_keep(soorat_pressure_map_dimension(map, _fz_i()));
+    _fz_keep(frequency_band(_fz_i()));
+    _fz_keep(goonj_err_name(_fz_i()));
+    _fz_keep(goonj_is_err(_fz_i()));
+    return 0;
+}
+
+fn _fz_group_geometry() {
+    var verts = vec_new();
+    var n = _fz_n(5);
+    var i = 0;
+    while (i < n) {
+        vec_push(verts, _fz_v3());
+        i = i + 1;
+    }
+    var mat = _fz_material();
+    var wall = wall_new(verts, mat, _fz_v3());
+    _fz_keep(wall_area(wall));
+    _fz_keep(wall_absorption_area(wall));
+    _fz_keep(wall_aabb(wall));
+    _fz_keep(point_in_convex_polygon(_fz_v3(), verts, _fz_v3()));
+    var walls = vec_new();
+    vec_push(walls, wall);
+    vec_push(walls, wall_new(verts, mat, _fz_v3()));
+    var ray = multiband_ray_new(_fz_v3(), _fz_v3());
+    _fz_keep(trace_ray(ray, walls, _fz_n(4)));
+    _fz_keep(compute_image_sources_general(_fz_v3(), walls, _fz_n(2)));
+    var patches = create_patches(walls, _fz_n(2));
+    _fz_keep(solve_radiosity(patches, 0, _fz_bands(), _fz_n(4), _fz_f()));
+    var hit = alloc(sizeof(RayHit));
+    RayHit_set_point(hit, _fz_v3());
+    RayHit_set_normal(hit, _fz_v3());
+    RayHit_set_distance(hit, _fz_f());
+    RayHit_set_wall_index(hit, _fz_i());
+    _fz_keep(reflect_ray(acoustic_ray_new(_fz_v3(), _fz_v3(), _fz_f()), hit, _fz_f(), _fz_f()));
+    _fz_keep(reflect_ray_multiband(ray, hit, _fz_bands(), _fz_f()));
+    _fz_keep(reflect_point(_fz_v3(), _fz_v3(), _fz_v3()));
+    _fz_keep(image_coordinate(_fz_f(), _fz_f(), _fz_i()));
+    _fz_keep(orthonormal_basis(_fz_v3()));
+    _fz_keep(binaural_angular_distance(_fz_f(), _fz_f(), _fz_f(), _fz_f()));
+    _fz_keep(patch_new(_fz_v3(), _fz_v3(), _fz_f(), _fz_bands()));
+    _fz_keep(gfpe_ground_reflection_complex(_fz_f(), _fz_f(), ground_impedance_new(_fz_f())));
+    _fz_keep(axial_modes(_fz_f(), _fz_f(), _fz_f()));
+    _fz_keep(all_axial_modes(_fz_f(), _fz_f(), _fz_f(), _fz_f(), _fz_f()));
+    var filter = boundary_filter_from_material(_fz_material());
+    _fz_keep(boundary_filter_process(filter, _fz_f(), _fz_f()));
+    var axes = alloc(24);
+    store64(axes, axis_absorption_new(_fz_f(), _fz_f()));
+    store64(axes + 8, axis_absorption_new(_fz_f(), _fz_f()));
+    store64(axes + 16, axis_absorption_new(_fz_f(), _fz_f()));
+    _fz_keep(fitzroy_rt60(_fz_f(), _fz_f(), axes));
+    var coupled = alloc(sizeof(CoupledRooms));
+    CoupledRooms_set_room_a(coupled, _fz_room());
+    CoupledRooms_set_room_b(coupled, _fz_room());
+    CoupledRooms_set_portal(coupled, portal_new(_fz_v3(), _fz_v3(), _fz_f(), _fz_f()));
+    _fz_keep(coupled_room_decay(coupled));
+    var positions = vec_new();
+    var areas = vec_new();
+    vec_push(positions, _fz_v3());
+    vec_push(areas, _fz_f());
+    var modes = vec_new();
+    vec_push(modes, vibration_mode_new(_fz_f(), _fz_f(), _fz_vec(4)));
+    _fz_keep(modal_radiation(positions, areas, modes, _fz_f(), _fz_f(), _fz_f()));
+    return 0;
+}
+
+# One case: the first byte picks the target group, the rest feeds it.
+fn fuzz_main(data, len) {
+    if (len < 8) { return 0; }
+    _fz_ptr = data;
+    _fz_len = len;
+    _fz_at = 0;
+    var group = (_fz_word() >> 56) % FZ_GROUPS;
+    if (group == 0) { _fz_group_propagation(); }
+    if (group == 1) { _fz_group_outdoor(); }
+    if (group == 2) { _fz_group_material(); }
+    if (group == 3) { _fz_group_analysis(); }
+    if (group == 4) { _fz_group_ray(); }
+    if (group == 5) { _fz_group_image(); }
+    if (group == 6) { _fz_group_ir(); }
+    if (group == 7) { _fz_group_grids(); }
+    if (group == 8) { _fz_group_gfpe(); }
+    if (group == 9) { _fz_group_audio(); }
+    if (group == 10) { _fz_group_directivity(); }
+    if (group == 11) { _fz_group_scene(); }
+    if (group == 12) { _fz_group_geometry(); }
+    return 0;
+}
+
+fn _fz_tables() {
+    _fz_floats = alloc(16 * 8);
+    store64(_fz_floats, 0);
+    store64(_fz_floats + 8, 0x8000000000000000);        # -0
+    store64(_fz_floats + 16, F64_ONE);
+    store64(_fz_floats + 24, f64_neg(F64_ONE));
+    store64(_fz_floats + 32, F64_HALF);
+    store64(_fz_floats + 40, f64_from(343));
+    store64(_fz_floats + 48, f64_from(48000));
+    store64(_fz_floats + 56, 1);                         # smallest subnormal
+    store64(_fz_floats + 64, 0x7FEFFFFFFFFFFFFF);        # largest finite
+    store64(_fz_floats + 72, 0xFFEFFFFFFFFFFFFF);        # most negative finite
+    store64(_fz_floats + 80, 0x4202A05F20000000);        # 1e10
+    store64(_fz_floats + 88, 0x46293E5939A08CEA);        # 1e30
+    store64(_fz_floats + 96, 0x0010000000000000);        # smallest normal
+    store64(_fz_floats + 104, 0x7FF8000000000000);       # NaN
+    store64(_fz_floats + 112, 0x7FF0000000000000);       # +Inf
+    store64(_fz_floats + 120, 0xFFF0000000000000);       # -Inf
+
+    _fz_ints = alloc(16 * 8);
+    store64(_fz_ints, 0);
+    store64(_fz_ints + 8, 1);
+    store64(_fz_ints + 16, 2);
+    store64(_fz_ints + 24, 7);
+    store64(_fz_ints + 32, 8);
+    store64(_fz_ints + 40, 64);
+    store64(_fz_ints + 48, 48000);
+    store64(_fz_ints + 56, 0 - 1);
+    store64(_fz_ints + 64, 0 - 8);
+    store64(_fz_ints + 72, 0 - 100000000);
+    store64(_fz_ints + 80, 0x7FFFFFFF);
+    store64(_fz_ints + 88, 0x100000000);
+    store64(_fz_ints + 96, 0x4000000000000001);
+    store64(_fz_ints + 104, 0x7FFFFFFFFFFFFFFF);
+    store64(_fz_ints + 112, 0x8000000000000000);
+    store64(_fz_ints + 120, 0x1000000000);
+    return 0;
+}
+
+# xorshift64 over a case's bytes.
+fn _fz_fill(buf, n, seed) {
+    var x = seed * 0x9E3779B97F4A7C15 + 1;
+    var i = 0;
+    while (i + 8 <= n) {
+        x = x ^ (x << 13);
+        x = x ^ (x >> 7);
+        x = x ^ (x << 17);
+        store64(buf + i, x);
+        i = i + 8;
+    }
+    return 0;
+}
+
+# Run the cases [first, last) in a forked child. Returns its wait status.
+fn _fz_batch(first, last) {
+    var pid = syscall(SYS_FORK);
+    if (pid == 0) {
+        var buf = alloc(FZ_DATA_LEN);
+        var c = first;
+        while (c < last) {
+            _fz_fill(buf, FZ_DATA_LEN, c);
+            fuzz_main(buf, FZ_DATA_LEN);
+            c = c + 1;
+        }
+        syscall(SYS_EXIT, 0);
+    }
+    var st[8];
+    store64(&st, 0);
+    syscall(SYS_WAIT4, pid, &st, 0, 0);
+    return load64(&st) & 0xFFFFFFFF;
+}
+
+# Run every batch and report the first failure.
 fn main() {
     alloc_init();
-    fuzz_main("test", 4);
-    println("fuzz: ok");
+    _fz_tables();
+    var first = 0;
+    while (first < FZ_CASES) {
+        var st = _fz_batch(first, first + FZ_BATCH);
+        if (st != 0) {
+            print_num(first);
+            println(": first case of the failing batch");
+            print_num(st);
+            println(": its wait status");
+            return 1;
+        }
+        first = first + FZ_BATCH;
+    }
+    print_num(FZ_CASES);
+    println(" fuzz cases: ok");
     return 0;
 }
 
 var r = main();
-syscall(60, r);
+syscall(SYS_EXIT, r);

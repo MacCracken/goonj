@@ -66,7 +66,11 @@ fn soorat_pressure_map_new(values, nx, ny, nz, origin, spacing, frequency_hz) {
 # Pressure values of map `m`, as a vec.
 fn soorat_pressure_map_values(m) { return load64(m + SPM_VALUES); }
 # Size of map `m` along axis `i` (0 = x, 1 = y, 2 = z).
-fn soorat_pressure_map_dimension(m, i) { return load64(m + SPM_DIM + i * 8); }
+fn soorat_pressure_map_dimension(m, i) {
+    if (i < 0) { return 0; }
+    if (i >= 3) { return 0; }
+    return load64(m + SPM_DIM + i * 8);
+}
 # Origin of map `m` (HVec3).
 fn soorat_pressure_map_origin(m) { return load64(m + SPM_ORIGIN); }
 # Grid spacing of map `m`.
@@ -122,8 +126,16 @@ fn soorat_mode_visualization_for_shoebox(nx, nz, length, width, speed_of_sound, 
 # Modal frequency of visualization `m`, in Hz.
 fn soorat_mode_visualization_frequency_hz(m) { return load64(m + SMV_FREQ); }
 # Mode index of visualization `m` along axis `i`.
-fn soorat_mode_visualization_mode_index(m, i) { return load64(m + SMV_IDX + i * 8); }
+fn soorat_mode_visualization_mode_index(m, i) {
+    if (i < 0) { return 0; }
+    if (i >= 3) { return 0; }
+    return load64(m + SMV_IDX + i * 8);
+}
 # Mode pattern of visualization `m`, as a vec.
 fn soorat_mode_visualization_pattern(m) { return load64(m + SMV_PATTERN); }
 # Size of the pattern of visualization `m` along axis `i` (0 or 1).
-fn soorat_mode_visualization_pattern_dimension(m, i) { return load64(m + SMV_PDIM + i * 8); }
+fn soorat_mode_visualization_pattern_dimension(m, i) {
+    if (i < 0) { return 0; }
+    if (i >= 2) { return 0; }
+    return load64(m + SMV_PDIM + i * 8);
+}

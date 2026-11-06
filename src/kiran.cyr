@@ -48,6 +48,8 @@ fn kiran_occlusion_result_attenuation_db(result) {
 # Per-frequency-band attenuation in dB at band index 0..7.
 #must_use
 fn kiran_occlusion_result_band(result, band) {
+    if (band < 0) { return 0; }
+    if (band >= NUM_BANDS) { return 0; }
     return load64(result + KOR_FREQ + band * 8);
 }
 

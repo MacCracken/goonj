@@ -6,6 +6,9 @@
 > **Note, 2026-11-06.** Hazard 2 below describes `f64_to` before cyrius 6.6.8. It
 > saturates now. Every rule here still stands, and
 > [ADR-0003](0003-f64-to-saturates-keep-bounding-in-f64.md) explains why.
+>
+> **Note, 2.1.3.** Rule 4 applies to every comparison, and `f64_min` and `f64_max` have
+> the same hazard: see [ADR-0005](0005-hostile-input-parity-and-recorded-gaps.md).
 
 ## Context
 

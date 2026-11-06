@@ -108,7 +108,8 @@ fn ocean_sound_speed(profile) {
 #must_use
 fn ocean_speed_at_depth(surface, thermocline_gradient, mixed_layer_depth, depth) {
     var temp = OceanProfile_temperature_celsius(surface);
-    if (f64_gt(depth, mixed_layer_depth) == 1) {
+    # Rust keeps the surface value on `depth <= mixed_layer_depth`, so NaN goes below.
+    if (f64_le(depth, mixed_layer_depth) == 0) {
         temp = f64_add(temp, f64_mul(thermocline_gradient, f64_sub(depth, mixed_layer_depth)));
     }
     var clamped = f64_max(temp, f64_neg(F64_TWO));

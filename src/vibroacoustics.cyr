@@ -76,7 +76,11 @@ fn radiation_result_sound_power_watts(r)    { return load64(r + RR_WATTS); }
 fn radiation_result_sound_power_level_db(r) { return load64(r + RR_DB); }
 # Radiated power of `r` in frequency band `band`.
 #must_use
-fn radiation_result_power_per_band(r, band) { return load64(r + RR_BANDS + band * 8); }
+fn radiation_result_power_per_band(r, band) {
+    if (band < 0) { return 0; }
+    if (band >= NUM_BANDS) { return 0; }
+    return load64(r + RR_BANDS + band * 8);
+}
 
 # Build a RadiationResult with all per-band powers zeroed.
 fn _rr_make(watts, db) {

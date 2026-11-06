@@ -88,13 +88,23 @@ fn _wav_sample_to_pcm(s) {
     return f64_to(f64_trunc(scaled));
 }
 
+# 1 if the header's 32-bit rate field can hold `sample_rate`, a u32 in Rust. Anything
+# else would write a different rate than the caller gave: -48000 becomes 4294919296 Hz.
+#must_use
+fn _wav_rate_ok(sample_rate) {
+    if (sample_rate < 0) { return 0; }
+    if (sample_rate > 0xFFFFFFFF) { return 0; }
+    return 1;
+}
+
 # ================================================================
 # Public writers
 # ================================================================
 # Write a mono 16-bit PCM WAV from a sample vec. Returns a WavBytes on
-# success or ERR_COMPUTATION if the data would overflow the 32-bit header.
+# success, or ERR_COMPUTATION if the data or the rate would overflow the 32-bit header.
 #must_use
 fn write_wav_mono(samples, sample_rate) {
+    if (_wav_rate_ok(sample_rate) == 0) { return ERR_COMPUTATION; }
     var num_channels = 1;
     var bits_per_sample = 16;
     var byte_rate = sample_rate * num_channels * bits_per_sample / 8;
@@ -121,12 +131,13 @@ fn write_wav_mono(samples, sample_rate) {
 
 # Write a stereo 16-bit PCM WAV from equal-length left/right vecs (samples
 # interleaved L,R). Returns ERR_COMPUTATION on mismatched lengths or
-# 32-bit-header overflow.
+# 32-bit-header overflow, in the data or the rate.
 #must_use
 fn write_wav_stereo(left, right, sample_rate) {
     var nl = vec_len(left);
     var nr = vec_len(right);
     if (nl != nr) { return ERR_COMPUTATION; }
+    if (_wav_rate_ok(sample_rate) == 0) { return ERR_COMPUTATION; }
     var num_channels = 2;
     var bits_per_sample = 16;
     var byte_rate = sample_rate * num_channels * bits_per_sample / 8;

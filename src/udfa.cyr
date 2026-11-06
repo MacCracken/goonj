@@ -43,7 +43,11 @@ fn df_delay_seconds(f) { return load64(f + DF_DELAY); }
 fn df_quality(f) { return load64(f + DF_QUAL); }
 # Attenuation of filter `f` in frequency band `band`, in dB.
 #must_use
-fn df_attenuation_band(f, band) { return load64(f + DF_ATTEN + band * 8); }
+fn df_attenuation_band(f, band) {
+    if (band < 0) { return 0; }
+    if (band >= NUM_BANDS) { return 0; }
+    return load64(f + DF_ATTEN + band * 8);
+}
 fn _df_set_band(f, band, v) { store64(f + DF_ATTEN + band * 8, v); return 0; }
 
 # Per-band attenuation (negative dB) for the UDFA spectral shape.
@@ -136,7 +140,7 @@ fn chain_diffraction_filters(filters) {
             b = b + 1;
         }
         total_delay = f64_add(total_delay, df_delay_seconds(filt));
-        min_quality = f64_min(min_quality, df_quality(filt));
+        min_quality = goonj_fmin(min_quality, df_quality(filt));
         k = k + 1;
     }
 

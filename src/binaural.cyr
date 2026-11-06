@@ -198,7 +198,8 @@ fn generate_binaural_ir(source, listener, room, hrtf, config) {
                     band = band + 1;
                 }
                 var amp = f64_div(amp_sum, f64_from(NUM_BANDS));
-                if (f64_ge(amp, GOONJ_EPSILON) == 1) {
+                # Rust skips on `amp < EPSILON`, so a NaN amplitude is not skipped.
+                if (f64_lt(amp, GOONJ_EPSILON) == 0) {
                     var angles = binaural_direction_to_angles(early_reflection_direction(refl));
                     var pair = hrtf_dataset_nearest(
                       hrtf, BinauralAngles_azimuth(angles), BinauralAngles_elevation(angles));

@@ -336,6 +336,309 @@ fn _h_nan_vertex() {
     return 0;
 }
 
+# ================================================================
+# 2.1.3 -- public index accessors. Rust's `[f32; NUM_BANDS]` fields panic out of
+# range. These were raw load64/store64: band -1 read the field before, a far
+# index faulted, and mbr_set_energy_band was a wild write through the public API.
+# ================================================================
+fn _h_band_accessors() {
+    test_group("2.1.3: out-of-range band indices read 0 and write nothing");
+    var src = hvec3_new(F64_ONE, F64_ONE, F64_ONE);
+    var ray = multiband_ray_new(src, hvec3_unit_x());
+    assert_eq(mbr_energy_band(ray, 0 - 1), 0, "mbr_energy_band(-1) -> 0");
+    assert_eq(mbr_energy_band(ray, NUM_BANDS), 0, "mbr_energy_band(NUM_BANDS) -> 0");
+    assert_eq(mbr_energy_band(ray, 1 << 40), 0, "mbr_energy_band(huge) -> 0");
+    mbr_set_energy_band(ray, 0 - 1, _h_inf());
+    mbr_set_energy_band(ray, NUM_BANDS, _h_inf());
+    mbr_set_energy_band(ray, 1 << 40, _h_inf());
+    assert_eq(mbr_origin(ray), src, "mbr_set_energy_band(-1..) leaves the fields alone");
+    assert_eq(mbr_distance(ray), 0, "mbr_set_energy_band(NUM_BANDS) leaves the distance alone");
+    assert_eq(mbr_energy_band(ray, 7), F64_ONE, "a valid band still reads back");
+
+    var mat = acoustic_material_concrete();
+    assert_eq(am_absorption_band(mat, 0 - 1), 0, "am_absorption_band(-1) -> 0");
+    assert_eq(am_absorption_band(mat, NUM_BANDS), 0, "am_absorption_band(NUM_BANDS) -> 0");
+    assert(f64_gt(am_absorption_band(mat, NUM_BANDS - 1), 0) == 1, "a valid band still reads");
+
+    var map = soorat_pressure_map_new(vec_new(), 2, 3, 4, src, F64_ONE, F64_ONE);
+    assert_eq(soorat_pressure_map_dimension(map, 2), 4, "pressure map z dimension");
+    assert_eq(soorat_pressure_map_dimension(map, 0 - 1), 0, "pressure map dimension(-1) -> 0");
+    assert_eq(soorat_pressure_map_dimension(map, 3), 0, "pressure map dimension(3) -> 0");
+    return 0;
+}
+
+# ================================================================
+# 2.1.3 -- NaN parity. f64_min and f64_max keep a NaN in the second position, which
+# Rust's min and max ignore, and a guard written as the negation of Rust's test
+# sends NaN the other way. Each of these matched neither Rust nor a green suite.
+# ================================================================
+fn _h_nan_parity() {
+    test_group("2.1.3: NaN takes the branch Rust's test sends it down");
+    var src = hvec3_new(f64_from(2), f64_from(2), F64_ONE);
+    var lis = hvec3_new(f64_from(6), f64_from(5), F64_ONE);
+    var room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+    var walls = RoomGeometry_walls(AcousticRoom_geometry(room));
+
+    # A fold over [.., NaN] kept the NaN, and a fold over [.., NaN, x] lost the peak.
+    var ray = multiband_ray_new(src, hvec3_unit_x());
+    mbr_set_energy_band(ray, 7, _h_nan());
+    assert_eq(multiband_ray_max_energy(ray), F64_ONE, "max_energy ignores a NaN last band");
+    var m = multiband_ir_new(1000, F64_ONE);
+    var b0 = multiband_ir_band(m, 0);
+    vec_push(b0, f64_from(5));
+    vec_push(b0, _h_nan());
+    vec_push(b0, F64_ONE);
+    var bb = ImpulseResponse_samples(multiband_ir_to_broadband(m));
+    assert_eq(vec_get(bb, 0), F64_ONE, "normalization finds the peak across a NaN sample");
+
+    # Rust: length.max(width).max(height). width NaN leaves max(10, 3).
+    var cfg = fdn_config_for_room(f64_from(10), _h_nan(), f64_from(3), F64_ONE, 48000);
+    var dl = FdnConfig_delay_lengths(cfg);
+    assert_eq(vec_get(dl, 7), vec_get(dl, 0), "fdn longest-dimension delay ignores a NaN width");
+
+    var q = vec_new();
+    vec_push(q, compute_diffraction_filter(_h_nan(), F64_ONE, f64_from(20)));
+    vec_push(q, compute_diffraction_filter(F64_ONE, F64_ONE, f64_from(20)));
+    assert_eq(df_quality(chain_diffraction_filters(q)), df_quality(vec_get(q, 1)),
+      "chained quality ignores a NaN filter");
+
+    # Rust's Some(NaN) is a hit that nothing can then beat. The port called it a miss.
+    var nan_src = hvec3_new(_h_nan(), f64_from(2), F64_ONE);
+    var nan_path = trace_ray(multiband_ray_new(nan_src, hvec3_unit_x()), walls, 10);
+    assert_eq(vec_len(ray_path_bounces(nan_path)), 10, "a NaN origin still bounces, as in Rust");
+
+    # Rust drops on `distance < EPSILON`, so NaN stays in the list.
+    var nan_lis = hvec3_new(_h_nan(), F64_ONE, F64_ONE);
+    assert_eq(vec_len(compute_early_reflections(src, nan_lis, room, 1, f64_from(343))), 7,
+      "a NaN listener keeps its seven reflections, as in Rust");
+
+    # The one recorded gap (ADR-0005): hisab's BVH reports no leaf on a NaN slab.
+    var nan_bvh = trace_ray_bvh(multiband_ray_new(nan_src, hvec3_unit_x()), accelerated_room_new(room), 10);
+    assert_eq(vec_len(ray_path_bounces(nan_bvh)), 0, "a NaN origin through the BVH hits nothing");
+
+    # Rust panics on wall.vertices[0], and this aborted in vec_get.
+    var bare = vec_new();
+    vec_push(bare, wall_new(vec_new(), acoustic_material_concrete(), hvec3_unit_y()));
+    assert_eq(vec_len(compute_image_sources_general(src, bare, 2)), 1, "a wall with no vertices is skipped");
+
+    # Rust keeps the direction on `len > EPSILON`, so NaN returns the source.
+    var wind = wind_profile_new(hvec3_unit_x(), 0, 0);
+    var temp = temperature_profile_new(f64_from(20), 0);
+    var nan_dir = hvec3_new(_h_nan(), 0, 0);
+    assert_eq(vec_len(trace_ray_atmospheric(src, nan_dir, wind, temp, f64_from(100), F64_ONE)), 1,
+      "a NaN direction returns just the source");
+
+    # Rust keeps the surface value on `depth <= mixed_layer`, so NaN goes below it.
+    var surface = ocean_profile_new(f64_from(15), f64_from(35), 0);
+    var at_depth = ocean_speed_at_depth(surface, F64_ONE, _h_nan(), f64_from(100));
+    assert(f64_eq(at_depth, at_depth) == 1, "ocean speed with a NaN mixed layer stays finite");
+    assert_eq(at_depth, ocean_sound_speed(ocean_profile_new(f64_neg(F64_TWO), f64_from(35), f64_from(100))),
+      "a NaN mixed layer takes Rust's thermocline branch, floored at -2 C");
+
+    # Rust takes +1 on `y >= 0`, so a NaN y gets -1.
+    var step = refract_ray_step(src, hvec3_new(F64_HALF, _h_nan(), 0), &_h_speed_fn, 0, F64_ONE);
+    assert(f64_lt(HVec3_y(RayStep_direction(step)), 0) == 1, "a NaN vertical component bends down");
+
+    # Rust's Ray::new rejects len_sq < 1e-7 (hisab geo/primitives.rs:30).
+    var accel = accelerated_room_new(room);
+    var bvh = AcceleratedRoom_bvh(accel);
+    var tiny = hvec3_new(f64_div(F64_ONE, f64_from(100000)), 0, 0);
+    assert_eq(find_nearest_wall_bvh(src, tiny, walls, bvh, 0 - 1), 0, "a tiny direction is None");
+    assert(find_nearest_wall_bvh(src, hvec3_unit_x(), walls, bvh, 0 - 1) != 0, "a unit direction hits");
+    return 0;
+}
+
+fn _h_speed_fn(ctx, h) { return f64_from(343); }
+
+# ================================================================
+# 2.1.3 -- Rust's usize and u32 floor at 0. These each echoed a negative or behaved
+# as if the sign were not there.
+# ================================================================
+fn _h_negative_counts() {
+    test_group("2.1.3: negative rates and counts act as their u32 floor");
+    var sig = vec_new();
+    vec_push(sig, F64_ONE);
+    vec_push(sig, F64_HALF);
+    var zero = 1;
+    var band = band_energies(sig, 0 - 48000);
+    var i = 0;
+    while (i < NUM_BANDS) {
+        if (load64(band + i * 8) != 0) { zero = 0; }
+        i = i + 1;
+    }
+    assert_eq(zero, 1, "band_energies at a negative rate -> zeros");
+    assert_eq(required_dx(0 - 1, f64_from(343)), 0, "required_dx at a negative rate -> 0");
+    var dc = dwm_config_new(0 - 48000, F64_ONE, f64_from(343), 8, 8, 8, F64_ONE, wall_materials_rigid());
+    assert_eq(dispersion_factor(dc, f64_from(100)), F64_ONE, "dispersion_factor at a negative rate -> 1");
+
+    var fs = fdtd_source_gaussian_pulse(1, 1, 0 - 10, F64_ONE, F64_ONE);
+    var f0 = fdtd_source_gaussian_pulse(1, 1, 0, F64_ONE, F64_ONE);
+    assert_eq(vec_len(FdtdSource_signal(fs)), vec_len(FdtdSource_signal(f0)), "fdtd negative peak_step -> 0");
+    var ds = dwm_source_gaussian_pulse(1, 1, 1, 0 - 10, F64_ONE, F64_ONE);
+    var d0 = dwm_source_gaussian_pulse(1, 1, 1, 0, F64_ONE, F64_ONE);
+    assert_eq(vec_get(DwmSource_signal(ds), 0), vec_get(DwmSource_signal(d0), 0), "dwm negative peak_step -> 0");
+
+    assert_eq(vec_len(HoaIr_channels(new_hoa_ir(0 - 5, 4, 48000))), 1, "negative HOA order -> order 0");
+
+    # (2^32 + 48000) used to write a clean-looking 48 kHz header.
+    assert(goonj_is_err(write_wav_mono(sig, 0 - 48000)) == 1, "wav mono rejects a negative rate");
+    assert(goonj_is_err(write_wav_mono(sig, 0x100000000 + 48000)) == 1, "wav mono rejects rate > u32");
+    assert(goonj_is_err(write_wav_stereo(sig, sig, 0 - 48000)) == 1, "wav stereo rejects a negative rate");
+    assert(goonj_is_err(write_wav_mono(sig, 48000)) == 0, "wav still writes a valid rate");
+
+    var room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+    var src = hvec3_new(f64_from(2), f64_from(2), F64_ONE);
+    var rain = diffuse_rain_config_new(0 - 5, 4, F64_ONE, F64_ONE, f64_from(343), 1);
+    assert_eq(DiffuseRainResult_rays_traced(generate_diffuse_rain(src, src, room, rain)), 0,
+      "negative num_rays -> 0 rays traced");
+    var patches = create_patches(RoomGeometry_walls(AcousticRoom_geometry(room)), 1);
+    var energy = alloc(NUM_BANDS * 8);
+    assert_eq(RadiosityResult_iterations(solve_radiosity(patches, 0, energy, 0 - 1, F64_ONE)), 0,
+      "negative max_iterations -> 0 iterations");
+
+    # The gain used the raw length, so -48000 gave a gain of 1000 and a blow-up.
+    var lens = vec_new();
+    vec_push(lens, 0 - 48000);
+    var cfg = alloc(sizeof(FdnConfig));
+    FdnConfig_set_num_delays(cfg, 1);
+    FdnConfig_set_delay_lengths(cfg, lens);
+    FdnConfig_set_feedback_gains(cfg, vec_new());
+    FdnConfig_set_sample_rate(cfg, 48000);
+    FdnConfig_set_target_rt60(cfg, F64_ONE);
+    var fdn = fdn_new(cfg);
+    var o = F64_ONE;
+    i = 0;
+    while (i < 200) {
+        o = fdn_process_sample(fdn, o);
+        i = i + 1;
+    }
+    assert(f64_eq(o, o) == 1, "a negative hand-built delay length stays stable");
+    return 0;
+}
+
+# ================================================================
+# 2.1.3 -- loops that input could run away. axial_modes aborted at vec's 2^28 cap on
+# any non-finite argument, all_axial_modes and diffuse rain sorted in O(n^2), and an
+# i64 rate gave iacc 1e12 lags where Rust's u32 stopped near 4e6.
+# ================================================================
+fn _h_runaway_loops() {
+    test_group("2.1.3: runaway loops stop");
+    var c = f64_from(343);
+    assert_eq(vec_len(axial_modes(_h_nan(), f64_from(100), c)), 0, "NaN dimension -> no modes");
+    assert_eq(vec_len(axial_modes(f64_from(5), _h_nan(), c)), 0, "NaN max_frequency -> no modes");
+    assert_eq(vec_len(axial_modes(f64_from(5), f64_from(100), _h_nan())), 0, "NaN speed -> no modes");
+    assert_eq(vec_len(axial_modes(f64_from(5), _h_inf(), c)), AXIAL_MODES_MAX, "+Inf max stops at the cap");
+    assert_eq(vec_len(axial_modes(f64_from(5), f64_from(200), c)), 5, "a real room is untouched");
+
+    # Three interleaved runs over the sort's insertion cutoff, equal keys included.
+    var modes = all_axial_modes(f64_from(5), f64_from(4), f64_from(5), f64_from(2000), c);
+    var sorted = 1;
+    var i = 1;
+    while (i < vec_len(modes)) {
+        if (f64_gt(vec_get(modes, i - 1), vec_get(modes, i)) == 1) { sorted = 0; }
+        i = i + 1;
+    }
+    assert_gt(vec_len(modes), GOONJ_SORT_INSERTION_MAX, "the merge path ran");
+    assert_eq(sorted, 1, "all_axial_modes comes back sorted");
+
+    var left = vec_new();
+    var right = vec_new();
+    vec_push(left, F64_ONE);
+    vec_push(left, F64_HALF);
+    vec_push(right, F64_ONE);
+    vec_push(right, F64_HALF);
+    assert_eq(iacc(left, right, 1000000000000000), F64_ONE, "iacc at a 1e15 rate returns");
+    return 0;
+}
+
+# goonj_sort_by_key must be stable: Rust's sort_by is, and ties decide output order.
+fn _h_sort_item_key(p) { return load64(p); }
+
+fn _h_stable_sort() {
+    test_group("2.1.3: goonj_sort_by_key is stable");
+    var sizes = vec_new();
+    vec_push(sizes, 2);
+    vec_push(sizes, GOONJ_SORT_INSERTION_MAX);
+    vec_push(sizes, GOONJ_SORT_INSERTION_MAX + 1);
+    vec_push(sizes, 1000);
+    var s = 0;
+    while (s < vec_len(sizes)) {
+        var n = vec_get(sizes, s);
+        var v = vec_new();
+        var i = 0;
+        while (i < n) {
+            var item = alloc(16);
+            store64(item, f64_from((i * 7919) % 17));
+            store64(item + 8, i);
+            vec_push(v, item);
+            i = i + 1;
+        }
+        goonj_sort_by_key(v, &_h_sort_item_key);
+        var ok = 1;
+        i = 1;
+        while (i < n) {
+            var a = vec_get(v, i - 1);
+            var b = vec_get(v, i);
+            if (f64_gt(load64(a), load64(b)) == 1) { ok = 0; }
+            if (f64_eq(load64(a), load64(b)) == 1) {
+                if (load64(a + 8) > load64(b + 8)) { ok = 0; }
+            }
+            i = i + 1;
+        }
+        assert_eq(ok, 1, "sorted, ties in input order");
+        s = s + 1;
+    }
+    return 0;
+}
+
+# ================================================================
+# 2.1.3 -- the FDN known limit. fdn_new took 8 s and 9.3 GiB here, because a vec_push
+# fill touched every page. The lines now cost address space until used.
+# ================================================================
+fn _h_fdn_lazy() {
+    test_group("2.1.3: a capped FDN line touches nothing until used");
+    var before = alloc_used();
+    var fdn = fdn_new(fdn_config_for_room(_h_inf(), F64_ONE, F64_ONE, F64_ONE, 48000));
+    assert(alloc_used() > before, "the lines are allocated");
+    # Five of the eight lines cap. 2.1.2 grew each by doubling, which was twice this.
+    assert(alloc_used() - before < 5 * FDN_MAX_DELAY_SAMPLES * 8 + 1048576, "no doubling garbage");
+    var o = fdn_process_sample(fdn, F64_ONE);
+    assert_eq(o, 0, "the first output is the empty line");
+    o = fdn_process_sample(fdn, F64_ONE);
+    assert(f64_eq(o, o) == 1, "an +Inf room still runs");
+    return 0;
+}
+
+# ================================================================
+# 2.1.3 -- allocation refusal ends the process, as Rust's does (ADR-0004). The one
+# that mattered was bvh_build: its 0 also means "empty", so a refused build used to
+# give a room whose every ray escaped, with no error.
+# ================================================================
+fn _h_refused_exit_status(which) {
+    var pid = syscall(SYS_FORK);
+    if (pid == 0) {
+        var devnull = syscall(SYS_OPEN, "/dev/null", 1, 0);
+        syscall(SYS_DUP2, devnull, 2);
+        var room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+        var geom = AcousticRoom_geometry(room);
+        ALLOC_MAX = 1;
+        if (which == 0) { goonj_alloc(1024); }
+        if (which == 1) { var b = room_geometry_build_bvh(geom); syscall(SYS_EXIT, 42 + (b == 0)); }
+        syscall(SYS_EXIT, 42);
+    }
+    var st[8];
+    store64(&st, 0);
+    syscall(SYS_WAIT4, pid, &st, 0, 0);
+    return load64(&st) & 0xFFFFFFFF;
+}
+
+fn _h_allocation_refusal() {
+    test_group("2.1.3: a refused allocation ends the process");
+    assert_eq(_h_refused_exit_status(0), 256, "goonj_alloc: exit 1");
+    assert_eq(_h_refused_exit_status(1), 256, "room_geometry_build_bvh: exit 1, not an empty BVH");
+    return 0;
+}
+
 alloc_init();
 _h_fdtd();
 _h_dwm();
@@ -347,6 +650,13 @@ _h_ir_sample_count();
 _h_index_guards();
 _h_f64_to_saturation();
 _h_nan_vertex();
+_h_band_accessors();
+_h_nan_parity();
+_h_negative_counts();
+_h_runaway_loops();
+_h_stable_sort();
+_h_fdn_lazy();
+_h_allocation_refusal();
 
 var rc = assert_summary();
 syscall(60, rc);

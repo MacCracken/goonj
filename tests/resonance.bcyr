@@ -1,6 +1,7 @@
 # resonance.bcyr -- benchmarks for the room-resonance module.
 # Run: cyrius bench tests/resonance.bcyr
 
+include "src/error.cyr"
 include "src/resonance.cyr"
 
 # Run `fp` for `n` iterations as benchmark `name`, then print its report.
