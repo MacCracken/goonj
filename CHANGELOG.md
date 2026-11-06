@@ -2,6 +2,60 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-06
+
+Moves to the cyrius 6.7.x language minor. **No goonj source or public API change**,
+and no computed result moves, but **consumers now need cyrius ≥ 6.7.2**.
+**41 suites / 3685 assertions**, all green.
+
+### Changed
+
+- **Toolchain `6.6.20` → `6.7.9`, hisab `3.3.7` → `3.4.0`, sakshi `2.5.7` →
+  `2.5.8`** (ganita 1.2.14 → 1.2.15, from the stdlib snapshot). 3.4.0 is the hisab
+  release pinned to exactly 6.7.9; 3.4.1 needs 6.7.18. sakshi 2.5.8 is what hisab
+  declares and what 6.7.9 folds. 2.5.9 and 2.5.10 also pin 6.7.9, but hisab found
+  2.5.10 warns on every compile that `lib/` shadows the toolchain's copy.
+- ⚠ **A consumer's cyrius floor is now 6.7.2.** sakshi 2.5.8 declares its syscall
+  numbers `const`, which needs that release, and goonj's `logging` pulls sakshi in.
+  Measured by building a consumer on 6.6.3, 6.6.10, 6.6.20, 6.7.0, 6.7.1, 6.7.2,
+  6.7.5 and 6.7.9: every pin below 6.7.2 fails at compile time with
+  `undefined variable '_SK_SYS_OPEN'`, and every pin from 6.7.2 builds and runs.
+  The failure is loud, not silent. All six repos that declare `[deps.goonj]` pin
+  below it today.
+- **hisab 3.4.0 retires 27 public names** and changes others under the same name.
+  Neither reaches goonj: it calls none of them, and none of the 19 hisab functions
+  it does call returns a `Result`. Ten of those 19 changed in body, all benign:
+  refused-allocation guards, plus `hvec3_distance` computing on the stack.
+- **`bvh_query_ray` can now return 0 on a refused allocation**, where it used to
+  abort. In `ray.cyr` that makes a clean out-of-memory exit a null read. Left alone:
+  it is reachable only once allocation fails, and goonj already faults on a refused
+  `hvec3_new` the same way.
+- **Size**: `dist/hisab.cyr` grows 2.10 → 2.64 MB, and the smoke binary 1.30 → 1.63 MB.
+
+### Verified — no result moved
+
+2.0.6 showed a green suite proves little across a pin bump, so this one was checked
+at value level, 6.6.20 against 6.7.9:
+
+- **Primitives**: 5,808 probes over 31 of the 32 `f64_*` primitives goonj uses, on a
+  grid of edge values (NaN, ±Inf, ±0, subnormals, values past `i64`). None changed.
+  Only `f64_from`, which takes an integer, is not in the grid.
+- **Test values**: all 824 `approx` and `assert_eq` values, across the 40 suites that
+  have any, are bit-identical.
+- **Whole pipelines**: FNV hashes of every output sample are identical for
+  `generate_ir` (384,000 samples), `compute_early_reflections` (129),
+  `synthesize_dvn_ir` (96,000), and the FDTD (1,102) and DWM (441) receiver traces.
+- **The language changes do not reach goonj's source.** Outside strings and comments
+  it has no lone `!` (a no-op until 6.7.3, so a real one would have flipped), no
+  `~`, no unary `-` on a constant before an operator, and no reserved word as a name.
+- **Gates and timings match 2.0.6**: 29 lint warnings, 135 undocumented in `src/`,
+  no new compiler warning, median benchmark ratio 1.006, and no row past +10%.
+
+### Documentation
+
+- `state.md` gains the consumer floor and a shorter bump procedure. A clean resolve
+  needed no `--relock` this time, and `cyrius deps --locked` now checks the result.
+
 ## [2.0.6] - 2026-11-06
 
 Toolchain and dependency refresh, plus a memory-exhaustion regression that the

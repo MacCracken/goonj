@@ -5,7 +5,7 @@ description = "goonj — acoustics engine (sound propagation, room simulation, i
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/goonj"
 language = "cyrius"
-cyrius = "6.6.20"
+cyrius = "6.7.9"
 
 [build]
 entry = "src/main.cyr"
@@ -82,9 +82,9 @@ stdlib = [
 
 # hisab — math/geometry (HVec3 and friends). goonj consumes the single
 # distlib bundle, same pattern hisab uses for its own deps. Tag is the
-# hisab release pinned to this toolchain: 3.3.7 is the last on 6.6.x, and
-# 3.4.0 onward needs cyrius 6.7.x. It carries sakshi 2.5.7 transitively.
+# hisab release pinned to this toolchain: 3.4.0 pins exactly 6.7.9, and 3.4.1
+# needs 6.7.18. It carries sakshi 2.5.8 transitively, the copy 6.7.9 folds.
 [deps.hisab]
 git = "https://github.com/MacCracken/hisab.git"
-tag = "3.3.7"
+tag = "3.4.0"
 modules = ["dist/hisab.cyr"]

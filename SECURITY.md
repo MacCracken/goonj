@@ -4,7 +4,8 @@
 
 | Version | Supported | Notes |
 |---------|-----------|-------|
-| 2.0.6   | ✅ Yes    | Current. **Known limit:** a non-finite or overflowing room dimension reaching `fdn_new` costs about 9.3 GiB and aborts where that is unavailable. Reject non-finite dimensions before calling it. |
+| 2.1.0   | ✅ Yes    | Current. Carries the same known limit as 2.0.6. |
+| 2.0.6   | ✅ Yes    | **Known limit:** a non-finite or overflowing room dimension reaching `fdn_new` costs about 9.3 GiB and aborts where that is unavailable. Reject non-finite dimensions before calling it. |
 | 2.0.3–2.0.5 | ⚠️ Upgrade if built on cyrius ≥ 6.6.8 | `+Inf` or overflowing input to the FDTD/DWM gaussian pulses or the FDN exhausts memory without limit. Safe below 6.6.8. Fixed for the pulses and bounded for the FDN in 2.0.6. |
 | 2.0.2   | ⚠️ Upgrade | Fixed 11 P-1 defects but introduced a memory-exhaustion regression in `generate_ir` (a negative or NaN `max_time_seconds` allocates ~7.4 GB). Fixed in 2.0.3. |
 | 2.0.0–2.0.1 | ❌ No | Carry 11 defects reachable through the public API — 4 out-of-bounds accesses (SIGSEGV), 3 process aborts, and 4 silently-wrong results. Fixed in 2.0.2. |
