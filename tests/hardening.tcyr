@@ -5,8 +5,8 @@
 # result instead. They share one root cause: the Rust oracle typed its indices
 # and extents `usize`/`u32`, so non-negativity and saturating float->int casts
 # came free from the type system. The Cyrius port carries all of them as signed
-# i64 with a non-saturating `f64_to`, so every guard that Rust wrote as a single
-# upper-bound test lost its lower half.
+# i64, and `f64_to` did not saturate until cyrius 6.6.8, so every guard that Rust
+# wrote as a single upper-bound test lost its lower half.
 #
 # Run: cyrius test tests/hardening.tcyr
 #
@@ -159,8 +159,8 @@ fn _h_analysis() {
 }
 
 # ================================================================
-# propagation -- f64_to does not saturate, so an infinite/huge
-# max_distance made max_iter INT64_MIN and returned a 1-point path.
+# propagation -- f64_to did not saturate before cyrius 6.6.8, so an
+# infinite/huge max_distance made max_iter INT64_MIN and returned a 1-point path.
 # ================================================================
 fn _h_propagation() {
     test_group("propagation: non-finite max_distance saturates like Rust");
@@ -175,7 +175,7 @@ fn _h_propagation() {
     var p1 = trace_ray_atmospheric(src, hvec3_unit_x(), wcalm, tflat, _h_inf(), F64_ONE);
     assert_eq(vec_len(p1), 1000001, "+inf max_distance -> 1000001 points, not 1");
 
-    # 1e19 (> i64::MAX, so f64_to alone yields INT64_MIN).
+    # 1e19 (> i64::MAX: past f64_to's range, whichever way it fails).
     var huge = f64_mul(f64_from(1000000000), f64_from(10000000000));
     var p2 = trace_ray_atmospheric(src, hvec3_unit_x(), wcalm, tflat, huge, F64_ONE);
     assert_eq(vec_len(p2), 1000001, "1e19 max_distance -> 1000001 points, not 1");
@@ -192,8 +192,8 @@ fn _h_propagation() {
 
 # ================================================================
 # impulse / binaural -- Rust's `as usize` cast SATURATES (NaN and
-# negatives to 0, overflow to usize::MAX). Cyrius f64_to does not, so
-# the sample-count clamp has to happen in f64. Mapping the INT64_MIN
+# negatives to 0, overflow to usize::MAX). Cyrius f64_to keeps the sign,
+# so the sample-count clamp has to happen in f64. Mapping the INT64_MIN
 # sentinel to max_samples instead (as 2.0.2 first did) turns Rust's
 # no-op into an 8 x 115.2M x 8 B ~= 7.4 GB allocation.
 # ================================================================
@@ -255,6 +255,87 @@ fn _h_index_guards() {
     return 0;
 }
 
+# ================================================================
+# f64_to saturation (2.0.6) -- cyrius 6.6.8 made f64_to saturate. Three sites
+# floored with `if (n < 1) { n = 1; }` and relied on +Inf arriving as INT64_MIN
+# to land on that floor. It now arrives as INT64_MAX, so each ran a vec_push loop
+# until the process was out of memory, with every other test still green.
+# ADR-0003. These two groups fail on 2.0.5's source built by 6.6.20.
+# ================================================================
+fn _h_f64_to_saturation() {
+    test_group("f64_to: the semantics ADR-0003 rests on");
+    # A tripwire, not a parity test: if a toolchain moves these again, audit
+    # every f64_to site rather than trust the suite.
+    assert_eq(f64_to(_h_nan()), 0, "f64_to(NaN) == 0");
+    assert_eq(f64_to(_h_inf()), 0x7FFFFFFFFFFFFFFF, "f64_to(+Inf) == INT64_MAX");
+    assert_eq(f64_to(f64_neg(_h_inf())), 0x8000000000000000, "f64_to(-Inf) == INT64_MIN");
+    assert_eq(f64_to(f64_neg(f64_from(3))), 0 - 3, "f64_to keeps a negative's sign");
+
+    test_group("gaussian pulses: an unbounded span stops at the solver's step cap");
+    var fp = fdtd_source_gaussian_pulse(1, 1, 4, _h_inf(), F64_ONE);
+    assert_eq(vec_len(FdtdSource_signal(fp)), MAX_TIME_STEPS, "fdtd +Inf sigma -> step cap");
+    var fn2 = fdtd_source_gaussian_pulse(1, 1, 4, _h_nan(), F64_ONE);
+    assert_eq(vec_len(FdtdSource_signal(fn2)), 1, "fdtd NaN sigma -> 1, Rust's .max(1)");
+    var dp = dwm_source_gaussian_pulse(1, 1, 1, 4, _h_inf(), F64_ONE);
+    assert_eq(vec_len(DwmSource_signal(dp)), DWM_MAX_TIME_STEPS, "dwm +Inf sigma -> step cap");
+    var dn = dwm_source_gaussian_pulse(1, 1, 1, 4, _h_nan(), F64_ONE);
+    assert_eq(vec_len(DwmSource_signal(dn)), 1, "dwm NaN sigma -> 1, Rust's .max(1)");
+
+    test_group("fdn: a non-finite room is a capped line, not an unbounded one");
+    var four = f64_from(4);
+    var three = f64_from(3);
+    var ci = fdn_config_for_room(_h_inf(), four, three, F64_ONE, 48000);
+    # Config only: fdn_new at the cap takes 8 s and about 9.3 GiB, too much for a
+    # suite that runs on every change. An uncapped length fails this line anyway.
+    assert_eq(vec_get(FdnConfig_delay_lengths(ci), 0), FDN_MAX_DELAY_SAMPLES, "+Inf length -> cap");
+    var cn = fdn_config_for_room(_h_nan(), four, three, F64_ONE, 48000);
+    assert_eq(vec_get(FdnConfig_delay_lengths(cn), 0), 1, "NaN length -> 1, Rust's .max(1)");
+    return 0;
+}
+
+# ================================================================
+# room bounds (2.0.6) -- Rust takes bounds with glam's Vec3::min / max, which ignore
+# NaN. hisab's hvec3_min / hvec3_max propagate it, so moving to hisab 3.3.7 made one
+# NaN vertex poison the bounds: volume NaN and every image source lost.
+# ================================================================
+fn _h_nan_vertex() {
+    test_group("room bounds: a NaN vertex is ignored, as glam's Vec3::min does");
+    var a = hvec3_new(_h_nan(), F64_ONE, f64_from(2));
+    var b = hvec3_new(F64_ONE, _h_nan(), f64_from(3));
+    assert_eq(HVec3_x(room_vec_min(a, b)), F64_ONE, "min: NaN in first operand ignored");
+    assert_eq(HVec3_y(room_vec_min(a, b)), F64_ONE, "min: NaN in second operand ignored");
+    assert_eq(HVec3_z(room_vec_min(a, b)), f64_from(2), "min: finite operands still compare");
+    assert_eq(HVec3_x(room_vec_max(a, b)), F64_ONE, "max: NaN in first operand ignored");
+    assert_eq(HVec3_y(room_vec_max(a, b)), F64_ONE, "max: NaN in second operand ignored");
+    assert_eq(HVec3_z(room_vec_max(a, b)), f64_from(3), "max: finite operands still compare");
+
+    # Every slot of the first and last wall, so neither the order nor an
+    # asymmetric comparison can hide the NaN.
+    var src = hvec3_new(f64_from(2), f64_from(2), F64_ONE);
+    var lis = hvec3_new(f64_from(6), f64_from(5), F64_ONE);
+    var clean = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+    var want = vec_len(compute_early_reflections(src, lis, clean, 2, f64_from(343)));
+    var nw = vec_len(RoomGeometry_walls(AcousticRoom_geometry(clean)));
+    var bad = 0;
+    var w = 0;
+    while (w < nw) {
+        var slot = 0;
+        while (slot < 4) {
+            var r = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+            var geom = AcousticRoom_geometry(r);
+            var verts = Wall_vertices(vec_get(RoomGeometry_walls(geom), w));
+            vec_set(verts, slot, hvec3_new(_h_nan(), F64_ONE, F64_ONE));
+            if (f64_eq(room_geometry_volume_shoebox(geom), f64_from(240)) == 0) { bad = bad + 1; }
+            if (vec_len(compute_early_reflections(src, lis, r, 2, f64_from(343))) != want) { bad = bad + 1; }
+            slot = slot + 1;
+        }
+        w = w + nw - 1;
+    }
+    assert(want > 1, "the clean room really has image sources to lose");
+    assert_eq(bad, 0, "NaN vertex in any slot of first/last wall: volume and reflections unchanged");
+    return 0;
+}
+
 alloc_init();
 _h_fdtd();
 _h_dwm();
@@ -264,6 +345,8 @@ _h_analysis();
 _h_propagation();
 _h_ir_sample_count();
 _h_index_guards();
+_h_f64_to_saturation();
+_h_nan_vertex();
 
 var rc = assert_summary();
 syscall(60, rc);

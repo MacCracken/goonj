@@ -136,8 +136,17 @@ struct DwmSource { ix; iy; iz; signal; }
 # Gaussian pulse centred at peak_step, width sigma_steps; ~6σ long.
 #must_use
 fn dwm_source_gaussian_pulse(ix, iy, iz, peak_step, sigma_steps, amplitude) {
-    var n = f64_to(f64_ceil(f64_add(f64_from(peak_step), f64_mul(f64_from(6), sigma_steps))));
-    if (n < 1) { n = 1; }
+    # Rust: `(peak + 6 * sigma).ceil() as usize` then `.max(1)`
+    # (rust-old/src/dwm.rs:273), with no ceiling. Bound it in f64 (ADR-0003):
+    # solve_dwm_3d runs at most DWM_MAX_TIME_STEPS steps and reads `signal` only
+    # at step < that, so no solver can see past the cap. NaN and anything below
+    # 1 give n = 1, as Rust's `.max(1)` does.
+    var span = f64_ceil(f64_add(f64_from(peak_step), f64_mul(f64_from(6), sigma_steps)));
+    var n = 1;
+    if (f64_ge(span, f64_from(DWM_MAX_TIME_STEPS)) == 1) { n = DWM_MAX_TIME_STEPS; }
+    if (f64_gt(span, F64_ONE) == 1) {
+        if (f64_lt(span, f64_from(DWM_MAX_TIME_STEPS)) == 1) { n = f64_to(span); }
+    }
     var inv_sigma = f64_div(F64_ONE, f64_max(sigma_steps, F64_ONE));
     var signal = vec_new();
     var i = 0;
@@ -356,8 +365,9 @@ fn solve_dwm_3d(config, source, receivers) {
 
     # Rust: `(duration / dt) as u32` then `.min(MAX)`. The `as` cast SATURATES —
     # NaN and negatives to 0, overflow to u32::MAX — so a huge duration runs the
-    # CAP. Cyrius f64_to yields INT64_MIN instead, which is neither > MAX nor
-    # == 0, so the step loop silently ran ZERO times. Clamp in f64 first.
+    # CAP. Before cyrius 6.6.8 f64_to gave INT64_MIN there, which is neither
+    # > MAX nor == 0, so the step loop silently ran ZERO times. Clamp in f64
+    # first: f64_to saturates now, but it still keeps the sign (ADR-0003).
     var steps_f = f64_div(DwmConfig_duration_seconds(config), dt);
     var num_steps = 0;
     if (f64_ge(steps_f, f64_from(DWM_MAX_TIME_STEPS)) == 1) { num_steps = DWM_MAX_TIME_STEPS; }

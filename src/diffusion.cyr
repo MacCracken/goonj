@@ -111,9 +111,10 @@ fn solve_diffusion_2d(config, absorption_field, absorption_len, source_field, so
     var dt = f64_min(dt_cfg, f64_mul(dt_max, f64_div(f64_from(9), f64_from(10))));
     # Rust: `(max_time / dt) as u32` then `.min(1_000_000)` — a saturating cast,
     # so a negative or NaN max_time yields 0 steps (and time_steps: 0 in the
-    # result) while a huge one runs the cap. f64_to keeps the sign and overflows
-    # to INT64_MIN, so a negative max_time was reported verbatim as a negative
-    # time_steps. Unlike fdtd/dwm this must NOT early-return: Rust falls through
+    # result) while a huge one runs the cap. f64_to keeps the sign, so a negative
+    # max_time was reported verbatim as a negative time_steps, and it overflowed
+    # to INT64_MIN before cyrius 6.6.8 (ADR-0003). Unlike fdtd/dwm this must NOT
+    # early-return: Rust falls through
     # and returns a normal result with time_steps = 0.
     var steps_f = f64_div(DiffusionConfig_max_time(config), dt);
     var num_steps = 0;

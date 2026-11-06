@@ -37,11 +37,22 @@ struct Fdn { delay_lines; write_positions; feedback_gains; scratch; sample_rate;
 # fdn_config_for_room -- 8-line FDN config from room dimensions.
 # ================================================================
 
+# Ceiling on one delay line: the oracle's own MAX_IR_SAMPLES (192 kHz x 600 s), so
+# a single round trip across a room about 412 km long at 48 kHz. This favours Rust
+# parity over memory: a non-finite dimension still peaks at about 9.3 GiB in fdn_new
+# (ADR-0003).
+var FDN_MAX_DELAY_SAMPLES = 115200000;
+
 # Samples for one base delay: (2.0 * d / c * sample_rate) as u32, min 1.
+# Rust's `as u32` saturates at u32::MAX, which is a 34 GB line through vec_push:
+# the one ceiling here that deliberately differs from the oracle (ADR-0003).
 fn _delay_samples(d, c, sample_rate) {
     var samples_f = f64_mul(f64_div(f64_mul(F64_TWO, d), c), f64_from(sample_rate));
-    var samples = f64_to(samples_f);
-    if (samples < 1) { samples = 1; }
+    var samples = 1;
+    if (f64_ge(samples_f, f64_from(FDN_MAX_DELAY_SAMPLES)) == 1) { samples = FDN_MAX_DELAY_SAMPLES; }
+    if (f64_gt(samples_f, F64_ONE) == 1) {
+        if (f64_lt(samples_f, f64_from(FDN_MAX_DELAY_SAMPLES)) == 1) { samples = f64_to(samples_f); }
+    }
     return samples;
 }
 

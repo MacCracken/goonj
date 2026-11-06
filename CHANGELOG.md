@@ -2,6 +2,83 @@
 
 ## [Unreleased]
 
+## [2.0.6] - 2026-11-06
+
+Toolchain and dependency refresh, plus a memory-exhaustion regression that the
+toolchain move would have introduced, and a NaN regression from the hisab move.
+**41 suites / 3685 assertions**, all green.
+
+### Fixed
+
+- **Three public entry points ran out of memory on `+Inf` or overflowing input
+  once built by cyrius ≥ 6.6.8.** That release made `f64_to` saturate: `+Inf` and
+  values past `i64` went from `INT64_MIN` to `INT64_MAX`, and `NaN` to 0.
+  `fdtd_source_gaussian_pulse`, `dwm_source_gaussian_pulse` and `fdn_new` (through
+  `fdn_config_for_room`) wrote only a floor, `if (n < 1) { n = 1; }`, so the old
+  sentinel landed on it harmlessly and the new one drove a `vec_push` loop until
+  the process died with `vec: alloc failed`. **All 3667 assertions stayed green
+  throughout**; only a value-level probe of the new toolchain found it. All three
+  now bound the value in f64, per ADR-0002 rule 2:
+  - Gaussian pulses cap at the solver's step limit, which no solver can read past.
+  - FDN delay lines cap at the new `FDN_MAX_DELAY_SAMPLES` (115,200,000, the oracle's
+    `MAX_IR_SAMPLES`). **This is a deliberate divergence from the Rust oracle**, which
+    saturates at `u32::MAX`, for dimensions past about 412 km at 48 kHz.
+    **The FDN case is bounded, not closed:** a non-finite dimension through `fdn_new`
+    still takes about 8 s and 9.3 GiB, and aborts with `vec: alloc failed` where that
+    memory is unavailable. Consumers forwarding untrusted room dimensions must reject
+    non-finite values first.
+  Recorded in [ADR-0003](docs/adr/0003-f64-to-saturates-keep-bounding-in-f64.md).
+  Any consumer building an older goonj on cyrius ≥ 6.6.8 has this path live.
+- **A NaN wall vertex no longer wipes out a room's reflections.** Rust takes bounds
+  with glam's `Vec3::min` / `max`, which ignore NaN. hisab's `hvec3_min` /
+  `hvec3_max` propagate it, so on hisab 3.3.7 one NaN vertex made
+  `room_geometry_volume_shoebox` NaN and took `compute_early_reflections` from 25
+  results to 1, again with every test green. Bounds now go through new
+  `room_vec_min` / `room_vec_max`, which match Rust at every vertex slot. That also
+  fixes the old behaviour, where `f64_min`'s asymmetry let a NaN in and let the next
+  vertex drop the bound so far.
+
+### Changed
+
+- **Toolchain `6.6.2` → `6.6.20`, hisab `2.22.1` → `3.3.7`, sakshi `2.5.1` →
+  `2.5.7`** (ganita 1.2.14, from the stdlib snapshot). 3.3.7 is the last hisab on
+  6.6.x: it pins exactly 6.6.20, and 3.4.0 onward needs cyrius 6.7.x.
+- **hisab 3.x needed no call-site migration.** Its 48-function `Result` change and
+  its `private` bundle both miss goonj: none of the 21 hisab functions goonj calls
+  returns a `Result`, and it reaches no private name.
+- **`dist/goonj.deps` shrinks from 14 leaves to 1 (`io`)**, and `dist/goonj.cyr`
+  gains a `# Requires` block. Both are `cyrius distlib` ≥ 6.6.18 behaviour: the
+  sidecar now names only what the compile-verify proves, and the rest arrives
+  through hisab's and sakshi's own blocks. A from-scratch consumer declaring only
+  `hisab` and `goonj` was built and run to confirm it.
+- **`lib/` now equals a clean resolve at the pin**, 31 files. `boxed`, `callback`
+  and `tagged` are gone: they only ever arrived through hisab's old 16-leaf
+  sidecar and nothing includes them. `alloc_cx` and `poison` are new. `lib/` is
+  byte-identical to the cyrius 6.6.20 snapshot plus the hisab and sakshi bundles
+  at their tags.
+- **Numeric results move only at the ulp level.** Of 504 test values dumped from
+  both trees, 497 are bit-identical and 6 moved by under 64 ulps, four of them by 1
+  (`f64_tan` moved from hisab to ganita; `f64_pow` is 1 ulp different). The seventh is
+  `cos(π/2)`, now exactly libm's `6.123233995736766e-17`. `f64_le`, `f64_ge` and
+  `f64_trunc` became compiler builtins with identical results, NaN included.
+- **Closer to Rust at no cost:** a `NaN` reflection delay lands at index 0 as
+  `NaN as usize` does, and `f64_neg(0)` is −0.
+- Benchmarks: median unchanged (1.008×). `propagation/ground_reflection` is the
+  one notable mover, 186 → 262 ns; `dvn/synthesize` +15%, `gfpe/solve` +11%.
+
+### Documentation
+
+- **New [ADR-0003](docs/adr/0003-f64-to-saturates-keep-bounding-in-f64.md).**
+  ADR-0002's rules all stand, with a pointer added at the fact that moved. Source
+  comments that stated the old `f64_to` behaviour in the present tense are
+  corrected; the guards they explain are unchanged.
+- **Stale claims corrected.** `state.md` said no consumer uses the Cyrius port, but
+  six repos declare `[deps.goonj]`. It also called lint clean with 55 undocumented
+  fns; the gate reads 29 line-length warnings in `tests/`, unchanged from the old
+  tree, and 135 undocumented in `src/` because 6.6.20's `cyrdoc` is stricter (it
+  reports 135 on the unchanged 2.0.5 source too). README's version and pin and
+  `SECURITY.md`'s table had also gone stale.
+
 ## [2.0.5] - 2026-09-11
 
 ### Changed

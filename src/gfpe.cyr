@@ -327,10 +327,11 @@ fn solve_gfpe(terrain, config) {
     if (f64_le(ref_speed, 0) == 1) { return _gfpe_empty_result(); }
 
     # Rust used saturating float->usize casts, so an absurd ratio saturates to
-    # usize::MAX and the cell cap below fires. f64_to overflows to INT64_MIN,
-    # which the `< 2` / `< 1` floors then laundered back into a LEGAL value —
-    # so the cap passed and the solver returned a plausible-looking 2-row grid
-    # for an input Rust rejected outright. Bail in f64, before the conversion.
+    # usize::MAX and the cell cap below fires. Before cyrius 6.6.8 f64_to
+    # overflowed to INT64_MIN, which the `< 2` / `< 1` floors then laundered back
+    # into a LEGAL value — so the cap passed and the solver returned a
+    # plausible-looking 2-row grid for an input Rust rejected outright. Bail in
+    # f64, before the conversion (ADR-0003).
     # nz > GFPE_MAX_GRID_CELLS implies nz*num_ranges > cap (num_ranges >= 2),
     # so this is exactly Rust's outcome and never over-rejects. NaN fails every
     # f64_gt test and falls to the floor, matching `NaN as usize == 0`.

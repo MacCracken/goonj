@@ -185,8 +185,8 @@ fn generate_binaural_ir(source, listener, room, hrtf, config) {
     while (ri < nr) {
         var refl = vec_get(reflections, ri);
         var sample_idx = f64_to(f64_mul(early_reflection_delay_seconds(refl), f64_from(rate)));
-        # f64_to does not saturate (INT64_MIN on NaN/Inf/overflow) where Rust's
-        # `as usize` does, so the upper-bound test alone is not a full bound.
+        # Rust's `as usize` cannot go negative; f64_to keeps the sign, so the
+        # upper-bound test alone is not a full bound here.
         if (sample_idx >= 0) {
             if (sample_idx < num_samples) {
                 # Average amplitude across bands for broadband HRTF application.

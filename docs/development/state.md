@@ -5,6 +5,16 @@
 
 ## Version
 
+**2.0.6** — toolchain 6.6.2 → **6.6.20**, hisab 2.22.1 → **3.3.7**, sakshi 2.5.1 →
+**2.5.7**. Fixes the memory exhaustion that `f64_to` saturating at cyrius 6.6.8
+opened in the FDTD/DWM gaussian pulses and bounds it in the FDN, with every
+assertion green throughout
+([ADR-0003](../adr/0003-f64-to-saturates-keep-bounding-in-f64.md)). A non-finite room
+dimension through `fdn_new` still costs about 9.3 GiB; the 11.52M alternative is
+measured there.
+
+**2.0.5** — toolchain 6.5.35 → 6.6.2, hisab 2.11.2 → 2.22.1; documentation sweep.
+
 **2.0.4** — closes out the `rust-old/` parity sweep: 7 behavioural divergences
 fixed (DVN unsigned modulo, radiosity result aliasing, saturating step counts in
 fdtd/dwm/diffusion, gfpe cap + negative index, `GOONJ_LOG`), 6 vacuous tests made
@@ -42,9 +52,19 @@ port's audit trail and still resolve against that tag.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.5.35` (in `cyrius.cyml [package].cyrius`) — moved
-  deliberately at 2.0.1 (was `6.3.14`). The pin is still set on purpose: bump it
-  as a decision, don't auto-chase `cycc` wrapper drift.
+- **Cyrius pin**: `6.6.20` (in `cyrius.cyml [package].cyrius`) — moved
+  deliberately at 2.0.6 (was `6.6.2`). The pin is still set on purpose: bump it
+  as a decision, don't auto-chase `cycc` wrapper drift. **Moving past 6.6.x means
+  moving hisab too:** 3.3.7 is its last release on 6.6.x.
+- **A toolchain bump can change results with the suite still green.** 2.0.6 is the
+  worked case: run a value-level probe of the primitives on both pins, not only
+  the tests. `tests/hardening.tcyr` now trips if `f64_to` moves again.
+- **Bumping the pin needs a clean re-resolve.** `cyrius lib sync` re-locks at the
+  new pin but skips undeclared leaves, so `cyrius deps` then refuses `lib/atomic.cyr`
+  and `lib/result.cyr` as DISAGREE. It also leaves old commit rows in the lock, and
+  `cyrius deps --verify` checks `lib/` against the lock, not against the pin. Delete
+  `cyrius.lock` and any leaf a clean resolve drops, re-run `cyrius deps`, and diff
+  `lib/` against `~/.cyrius/versions/<pin>/lib`.
 - The 6.5.35 formatter indents continuation lines deeper than 6.3.x did, so the
   whole tree was re-canonicalised at 2.0.1 (whitespace only). **Three of the four
   obvious ways to check formatting are traps** (all verified against 6.5.35):
@@ -67,14 +87,13 @@ port's audit trail and still resolve against that tag.
 | Gate | Status |
 |------|--------|
 | fmt   | ✅ clean (was FAIL / 23 files before the 2.0.1 re-canonicalisation) |
-| lint  | ✅ clean |
-| docs  | ⚠ **55 undocumented public fns** — pre-existing, unchanged by 2.0.1/2.0.2 |
+| lint  | ⚠ **29 line-length warnings**, all in `tests/` — pre-existing, identical on 2.0.5 |
+| docs  | ⚠ **217 undocumented public fns**: 135 in `src/`, the rest in `tests/`. Was 55 in `src/` on 6.6.2; that rise is 6.6.20's stricter `cyrdoc`, which also reports 135 on the unchanged 2.0.5 source |
 | tests | ✅ 41 suites green (37 parity + hardening + dwm_modal + 2 smoke) |
 | bench | ✅ 16 suites green |
 
-`cyrius audit` **exits 1**, and did so at 2.0.0 as well — the docs gate is the
-only non-green one. Don't read the exit status as a regression signal; read the
-gate list. (Note the exit code is easy to lose: `cyrius audit > log; echo $?`
+`cyrius audit` **exits 1**, and did so at 2.0.0 as well. Don't read the exit
+status as a regression signal; read the gate list. (Note the exit code is easy to lose: `cyrius audit > log; echo $?`
 in a compound command reports the `echo`, not the audit.)
 
 ## Source
@@ -102,7 +121,7 @@ Per-module parity is tracked in [`port-audit.md`](port-audit.md). Summary:
 | pending | none — all 37 modules ported |
 
 Per-module detail in [`port-audit.md`](port-audit.md). Benchmarks in
-[`../benchmarks/results.md`](../benchmarks/results.md). Toolchain: cyrius **6.5.35**.
+[`../benchmarks/results.md`](../benchmarks/results.md). Toolchain: cyrius **6.6.20**.
 
 ## Tests
 
@@ -114,10 +133,10 @@ round-trips (no serde in Cyrius). **37 suites, 3624 assertions, all green.** Run
 one with `cyrius test tests/<module>.tcyr`.
 
 Four suites sit outside that per-module set, bringing the totals to
-**41 suites / 3667 assertions**:
+**41 suites / 3685 assertions**:
 
-- **`hardening.tcyr`** (26) — every P-1 defect from the 2.0.2 sweep plus the
-  2.0.3 IR sample-count contract. Runs against the shipped `dist/goonj.cyr`, so
+- **`hardening.tcyr`** (44) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
+  sample-count contract, and the 2.0.6 `f64_to` and NaN-vertex cases. Runs against the shipped `dist/goonj.cyr`, so
   it also proves each repair reached the bundle. A real regression suite: it
   SIGSEGVs or aborts against 2.0.1.
 - **`dwm_modal.tcyr`** (4) — the DWM solver's only physics-correctness check
@@ -140,20 +159,33 @@ Direct (declared in `cyrius.cyml`, locked in `cyrius.lock`):
   **ganita** (transcendentals: pow/exp/ln/sin/cos/sqrt/acos/…), **fnptr**
   (`fncallN` indirect calls for the closure→callback pattern), **bench**
   (`bench_new`/`bench_run`/`bench_report` for `.bcyr` benchmarks).
-- **hisab** 2.11.2 — math/geometry; consumed as the single `dist/hisab.cyr`
-  bundle (HVec3 and friends). Pulls transitive **sakshi** 2.4.11.
+- **hisab** 3.3.7 — math/geometry; consumed as the single `dist/hisab.cyr`
+  bundle (HVec3 and friends). Pulls transitive **sakshi** 2.5.7. goonj calls 21
+  hisab functions, none of them `Result`-returning.
 
 `cyrius.lock` pins 31 entries (2 commit-pinned deps + the vendored `lib/`
-hashes) — up from 29 at 2.0.0, because 6.5.35's stdlib snapshot adds
-`lib/callback.cyr` and `lib/tagged.cyr` as transitive leaves.
+hashes), down from 32 at 2.0.5: `boxed`, `callback` and `tagged` left with hisab's
+old 16-leaf sidecar, and `alloc_cx` and `poison` arrived with 6.6.20.
+
+`dist/goonj.deps` names one leaf, `io`. That is correct, not a loss: from cyrius
+6.6.18 the sidecar holds only what the compile-verify proves, and everything else
+reaches a consumer through hisab's and sakshi's own `# Requires` blocks.
 
 ## Consumers
 
-dhvani, shruti, kiran/joshua, aethersafha — *none consuming the Cyrius
-port yet*. The bundle is not the gate — `dist/goonj.cyr` has shipped since
-2.0.0, is validated by `tests/bundle.tcyr` and gated in CI by
-`cyrius distlib --check`. The gate is the consumers themselves being ported;
-see [`roadmap.md`](roadmap.md#open-gates).
+Six repos declare `[deps.goonj]`, all pinned behind 2.0.6 (as of 2026-11-06):
+
+| Repo | goonj | hisab | cyrius |
+|------|-------|-------|--------|
+| dhvani | 2.0.5 | 2.11.2 | 6.6.10 |
+| garjan, ghurni, prani | 2.0.4 | 2.11.2 | 6.6.3 |
+| naad, svara | 2.0.4 | 2.22.1 | 6.6.3 |
+
+⚠ **dhvani builds 2.0.5 on cyrius ≥ 6.6.8**, so the memory exhaustion fixed in 2.0.6
+is live there until it bumps. Moving any of them to goonj 2.0.6 also means moving
+to hisab 3.x and cyrius 6.6.20. Whether these builds pass has not been checked from
+here; see [`roadmap.md`](roadmap.md#open-gates). aethersafha does not declare it, and
+shruti and kiran/joshua have no `cyrius.cyml` alongside these repos.
 
 ## Next
 

@@ -307,8 +307,8 @@ fn compute_early_reflections(source, listener, room, max_order, c_sound) {
         var j = 0;
         while (j < nv) {
             var vtx = vec_get(verts, j);
-            mn = hvec3_min(mn, vtx);
-            mx = hvec3_max(mx, vtx);
+            mn = room_vec_min(mn, vtx);
+            mx = room_vec_max(mx, vtx);
             j = j + 1;
         }
         i = i + 1;

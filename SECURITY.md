@@ -4,8 +4,8 @@
 
 | Version | Supported | Notes |
 |---------|-----------|-------|
-| 2.0.4   | ✅ Yes    | Current. |
-| 2.0.3   | ✅ Yes    | First release free of the known P-1 defects below. |
+| 2.0.6   | ✅ Yes    | Current. **Known limit:** a non-finite or overflowing room dimension reaching `fdn_new` costs about 9.3 GiB and aborts where that is unavailable. Reject non-finite dimensions before calling it. |
+| 2.0.3–2.0.5 | ⚠️ Upgrade if built on cyrius ≥ 6.6.8 | `+Inf` or overflowing input to the FDTD/DWM gaussian pulses or the FDN exhausts memory without limit. Safe below 6.6.8. Fixed for the pulses and bounded for the FDN in 2.0.6. |
 | 2.0.2   | ⚠️ Upgrade | Fixed 11 P-1 defects but introduced a memory-exhaustion regression in `generate_ir` (a negative or NaN `max_time_seconds` allocates ~7.4 GB). Fixed in 2.0.3. |
 | 2.0.0–2.0.1 | ❌ No | Carry 11 defects reachable through the public API — 4 out-of-bounds accesses (SIGSEGV), 3 process aborts, and 4 silently-wrong results. Fixed in 2.0.2. |
 | 1.x (Rust) | ❌ No | The pre-port Rust line. Superseded by 2.0.0. |
@@ -44,8 +44,10 @@ What that means in practice, and what to expect from a report:
 - **Two porting hazards account for most defects found so far** and are the first
   place to look: the Rust original's `usize` indices became signed `i64` here, so
   a guard written as a single upper-bound test is only half a bound; and
-  `f64_to` does not saturate the way Rust's `as` casts do. Both are documented in
-  [ADR-0002](docs/adr/0002-signed-index-and-float-conversion-hazards.md).
+  `f64_to` does not clamp the way Rust's `as usize` casts do. Both are documented in
+  [ADR-0002](docs/adr/0002-signed-index-and-float-conversion-hazards.md), and
+  [ADR-0003](docs/adr/0003-f64-to-saturates-keep-bounding-in-f64.md) covers what
+  changed at cyrius 6.6.8.
 - **Out of scope**: resource use on inputs a consumer legitimately chose (a large
   grid really does allocate a large grid), and the bump allocator never reclaiming
   within a run — both are documented behaviour, not vulnerabilities.

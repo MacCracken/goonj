@@ -3,6 +3,10 @@
 **Status**: Accepted
 **Date**: 2026-08-23
 
+> **Note, 2026-11-06.** Hazard 2 below describes `f64_to` before cyrius 6.6.8. It
+> saturates now. Every rule here still stands, and
+> [ADR-0003](0003-f64-to-saturates-keep-bounding-in-f64.md) explains why.
+
 ## Context
 
 [ADR-0001](0001-rust-to-cyrius-port-conventions.md) settled the *shape* of the

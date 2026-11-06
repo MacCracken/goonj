@@ -14,9 +14,11 @@
 - [ ] **Consumer-green** — at least one downstream consumer compiles and passes
       against `dist/goonj.cyr`. The bundle itself has shipped since 2.0.0
       (validated by `tests/bundle.tcyr`, gated in CI by `cyrius distlib --check`);
-      what is missing is a consumer. **Gate: dhvani / shruti / kiran being
-      ported to Cyrius** — goonj is being worked up the stack, so this is not
-      goonj's to close alone.
+      what is missing is a checked consumer. **Gate: dhvani / shruti / kiran
+      being ported to Cyrius** — goonj is being worked up the stack, so this is
+      not goonj's to close alone. Six repos already declare `[deps.goonj]` at
+      2.0.4 or 2.0.5 (see [`state.md`](state.md#consumers)); nobody has yet
+      confirmed that any of them compiles and passes against it, or against 2.0.6.
 - [ ] **Retire `rust-old/`** — the frozen oracle is cleared for deletion
       (verified: build, all suites and the bundle check pass with it removed).
       Its benchmark baseline is already archived to
@@ -58,6 +60,8 @@
 
 | Release | Date | What |
 |---------|------|------|
+| **2.0.6** | 2026-11-06 | Toolchain 6.6.2 → 6.6.20, hisab 2.22.1 → 3.3.7, sakshi 2.5.1 → 2.5.7; fixed the memory exhaustion that `f64_to` saturating at 6.6.8 opened in the gaussian pulses and bounded it in the FDN ([ADR-0003](../adr/0003-f64-to-saturates-keep-bounding-in-f64.md)) |
+| **2.0.5** | 2026-09-11 | Toolchain 6.5.35 → 6.6.2, hisab 2.11.2 → 2.22.1; documentation sweep |
 | **2.0.4** | 2026-08-23 | `rust-old/` parity close-out: 7 behavioural divergences fixed (DVN unsigned modulo, radiosity result aliasing, saturating step counts, gfpe cap + negative index, `GOONJ_LOG`), 6 vacuous tests made falsifiable, `error` given a suite |
 | **2.0.3** | 2026-08-23 | Fixed a 2.0.2 regression in `generate_ir` (a negative/NaN `max_time_seconds` allocated ~7.4 GB where Rust yields an empty IR) |
 | **2.0.2** | 2026-08-23 | Security/hardening: 11 reachable P-1 defects (4 SIGSEGV, 3 process aborts, 4 silently-wrong results), pinned by `tests/hardening.tcyr` |

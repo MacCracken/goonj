@@ -86,6 +86,36 @@ fn wall_absorption_area(wall) {
     return f64_mul(wall_area(wall), average_absorption(Wall_material(wall)));
 }
 
+# Rust's `f32::min` / `f32::max`, which ignore a NaN operand. rust-old takes bounds
+# with glam's `Vec3::min` / `max`, which apply them per component, so one NaN vertex
+# leaves a room's bounds finite. hisab's hvec3_min / hvec3_max propagate NaN, and
+# through them a single NaN vertex made the volume NaN and lost every image source.
+fn _room_min1(a, b) {
+    if (f64_eq(a, a) == 0) { return b; }
+    if (f64_eq(b, b) == 0) { return a; }
+    return f64_min(a, b);
+}
+
+fn _room_max1(a, b) {
+    if (f64_eq(a, a) == 0) { return b; }
+    if (f64_eq(b, b) == 0) { return a; }
+    return f64_max(a, b);
+}
+
+# Component-wise minimum, ignoring NaN as Rust's glam `Vec3::min` does.
+fn room_vec_min(a, b) {
+    return hvec3_new(_room_min1(HVec3_x(a), HVec3_x(b)),
+      _room_min1(HVec3_y(a), HVec3_y(b)),
+      _room_min1(HVec3_z(a), HVec3_z(b)));
+}
+
+# Component-wise maximum, ignoring NaN as Rust's glam `Vec3::max` does.
+fn room_vec_max(a, b) {
+    return hvec3_new(_room_max1(HVec3_x(a), HVec3_x(b)),
+      _room_max1(HVec3_y(a), HVec3_y(b)),
+      _room_max1(HVec3_z(a), HVec3_z(b)));
+}
+
 # Axis-aligned bounding box of the wall's vertices, padded by 0.001 to
 # avoid zero-thickness slabs. Empty vertex list → zero-size box at origin.
 #must_use
@@ -100,8 +130,8 @@ fn wall_aabb(wall) {
     var i = 1;
     while (i < n) {
         var v = vec_get(verts, i);
-        mn = hvec3_min(mn, v);
-        mx = hvec3_max(mx, v);
+        mn = room_vec_min(mn, v);
+        mx = room_vec_max(mx, v);
         i = i + 1;
     }
     var pad = hvec3_splat(ROOM_PAD);
@@ -243,8 +273,8 @@ fn room_geometry_volume_shoebox(geom) {
         var j = 0;
         while (j < nv) {
             var v = vec_get(verts, j);
-            mn = hvec3_min(mn, v);
-            mx = hvec3_max(mx, v);
+            mn = room_vec_min(mn, v);
+            mx = room_vec_max(mx, v);
             j = j + 1;
         }
         i = i + 1;

@@ -285,8 +285,8 @@ fn generate_ir(source, listener, room, config) {
     # Rust: `(max_time_seconds * sample_rate) as usize` then `.min(max_samples)`.
     # The `as` cast SATURATES — NaN and negatives to 0, overflow to usize::MAX —
     # so Rust yields an empty IR for a negative or NaN max_time. Cyrius f64_to
-    # does not saturate (INT64_MIN for NaN/+-Inf/out-of-range), so the clamp has
-    # to happen in f64, before the conversion. Getting this wrong in either
+    # saturates from 6.6.8 but keeps the sign (ADR-0003), so the clamp has to
+    # happen in f64, before the conversion. Getting this wrong in either
     # direction is expensive: mapping the sentinel to max_samples allocates
     # 8 bands x 115.2M x 8 B ~= 7.4 GB for what Rust treats as a no-op.
     var t_samples = f64_mul(IrConfig_max_time_seconds(config), f64_from(rate));
@@ -318,7 +318,7 @@ fn generate_ir(source, listener, room, config) {
         var refl = vec_get(early, ei);
         var sidx = f64_to(f64_mul(early_reflection_delay_seconds(refl), f64_from(rate)));
         # Rust's `as usize` cannot go negative, so `< num_samples` was a full
-        # bound there. Here an INT64_MIN sidx would pass it and abort in vec_set.
+        # bound there. Here a negative sidx would pass it and abort in vec_set.
         if (sidx >= 0) {
             if (sidx < num_samples) {
                 var eband = 0;
@@ -348,7 +348,7 @@ fn generate_ir(source, listener, room, config) {
     while (ci < nc) {
         var contrib = vec_get(contribs, ci);
         var didx = f64_to(f64_mul(lrc_time(contrib), f64_from(rate)));
-        # Same unsaturated f64_to hazard as the early-reflection index above.
+        # Same signed-index hazard as the early-reflection index above.
         if (didx >= 0) {
             if (didx < num_samples) {
                 var dband = 0;
