@@ -5,6 +5,10 @@
 
 ## Version
 
+**2.1.1** — toolchain 6.7.9 → **6.7.18**, hisab 3.4.0 → **3.4.1**, sakshi 2.5.8 →
+**2.5.10**, each its project's newest tag. No source or API change, and no result
+moved at value level. The consumer floor stays cyrius 6.7.2.
+
 **2.1.0** — toolchain 6.6.20 → **6.7.9**, hisab 3.3.7 → **3.4.0**, sakshi 2.5.7 →
 **2.5.8**. No source or API change, and no result moved at value level (5,808
 primitive probes and five whole pipelines are bit-identical). It is a minor because
@@ -57,10 +61,10 @@ port's audit trail and still resolve against that tag.
 
 ## Toolchain
 
-- **Cyrius pin**: `6.7.9` (in `cyrius.cyml [package].cyrius`) — moved
-  deliberately at 2.1.0 (was `6.6.20`). The pin is still set on purpose: bump it
-  as a decision, don't auto-chase `cycc` wrapper drift. **Moving past 6.7.9 means
-  moving hisab too:** 3.4.1 needs 6.7.18.
+- **Cyrius pin**: `6.7.18` (in `cyrius.cyml [package].cyrius`) — moved
+  deliberately at 2.1.1 (was `6.7.9`). The pin is still set on purpose: bump it
+  as a decision, don't auto-chase `cycc` wrapper drift. As of 2026-11-06 this pin,
+  hisab 3.4.1 and sakshi 2.5.10 are each their project's newest tag.
 - **A toolchain bump can change results with the suite still green.** 2.0.6 is the
   worked case: run a value-level probe of the primitives on both pins, not only
   the tests. `tests/hardening.tcyr` now trips if `f64_to` moves again.
@@ -69,13 +73,13 @@ port's audit trail and still resolve against that tag.
   and `lib/result.cyr` as DISAGREE. It also leaves old commit rows in the lock, and
   `cyrius deps --verify` checks `lib/` against the lock, not against the pin. Delete
   `cyrius.lock` and any leaf a clean resolve drops, re-run `cyrius deps`, and diff
-  `lib/` against `~/.cyrius/versions/<pin>/lib`. At 2.1.0 that was just
+  `lib/` against `~/.cyrius/versions/<pin>/lib`. At 2.1.0 and 2.1.1 that was just
   `rm lib/*.cyr cyrius.lock; cyrius deps`, with no refusal and no `--relock`, and
   `cyrius deps --locked` (6.7.6) then confirmed `lib/` and the lock are what the tags
   resolve.
 - **Read `docs/development/ecosystem-migration.md` at the new tag before bumping.**
   It lists what changes meaning at a pin. Dep guides list consumer-visible changes
-  too, but check their floors against what goonj pulls in: hisab 3.4.0 states 6.6.3
+  too, but check their floors against what goonj pulls in: hisab 3.4.x states 6.6.3
   for its own consumers, which never need sakshi, while goonj's real floor is 6.7.2.
 - The 6.5.35 formatter indents continuation lines deeper than 6.3.x did, so the
   whole tree was re-canonicalised at 2.0.1 (whitespace only). **Three of the four
@@ -133,7 +137,7 @@ Per-module parity is tracked in [`port-audit.md`](port-audit.md). Summary:
 | pending | none — all 37 modules ported |
 
 Per-module detail in [`port-audit.md`](port-audit.md). Benchmarks in
-[`../benchmarks/results.md`](../benchmarks/results.md). Toolchain: cyrius **6.7.9**.
+[`../benchmarks/results.md`](../benchmarks/results.md). Toolchain: cyrius **6.7.18**.
 
 ## Tests
 
@@ -171,8 +175,8 @@ Direct (declared in `cyrius.cyml`, locked in `cyrius.lock`):
   **ganita** (transcendentals: pow/exp/ln/sin/cos/sqrt/acos/…), **fnptr**
   (`fncallN` indirect calls for the closure→callback pattern), **bench**
   (`bench_new`/`bench_run`/`bench_report` for `.bcyr` benchmarks).
-- **hisab** 3.4.0 — math/geometry; consumed as the single `dist/hisab.cyr`
-  bundle (HVec3 and friends). Pulls transitive **sakshi** 2.5.8. goonj calls 19
+- **hisab** 3.4.1 — math/geometry; consumed as the single `dist/hisab.cyr`
+  bundle (HVec3 and friends). Pulls transitive **sakshi** 2.5.10. goonj calls 19
   hisab functions, none of them `Result`-returning.
 
 `cyrius.lock` pins 31 entries (2 commit-pinned deps + the vendored `lib/`
@@ -185,11 +189,12 @@ reaches a consumer through hisab's and sakshi's own `# Requires` blocks.
 
 ## Consumers
 
-**A consumer of goonj 2.1.0 needs cyrius ≥ 6.7.2.** sakshi 2.5.8 declares its
-syscall numbers `const`, and goonj's `logging` pulls sakshi in. Measured from 6.6.3
-to 6.7.9: below 6.7.2 the build fails with `undefined variable '_SK_SYS_OPEN'`.
+**A consumer of goonj 2.1.x needs cyrius ≥ 6.7.2.** sakshi declares its syscall
+numbers `const` from 2.5.8, and goonj's `logging` pulls sakshi in. Measured on 13
+pins from 6.6.3 to 6.7.18 at 2.1.1: below 6.7.2 the build fails with `undefined
+variable '_SK_SYS_OPEN'`, and every pin from 6.7.2 builds and runs.
 
-Six repos declare `[deps.goonj]`, all pinned behind 2.1.0 and below that floor (as
+Six repos declare `[deps.goonj]`, all pinned behind 2.1.1 and below that floor (as
 of 2026-11-06):
 
 | Repo | goonj | hisab | cyrius |
@@ -199,7 +204,7 @@ of 2026-11-06):
 | naad, svara | 2.0.4 | 2.22.1 | 6.6.3 |
 
 ⚠ **dhvani builds 2.0.5 on cyrius ≥ 6.6.8**, so the memory exhaustion fixed in 2.0.6
-is live there until it bumps. A from-scratch consumer builds and runs on 2.1.0, but
+is live there until it bumps. A from-scratch consumer builds and runs on 2.1.1, but
 whether these six repos' own code does has not been checked from here; see
 [`roadmap.md`](roadmap.md#open-gates). aethersafha does not declare it, and
 shruti and kiran/joshua have no `cyrius.cyml` alongside these repos.

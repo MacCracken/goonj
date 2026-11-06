@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-06
+
+Moves to the newest cyrius and dependency releases. **No goonj source or public API
+change**, no computed result moved, and the consumer floor stays cyrius 6.7.2.
+**41 suites / 3685 assertions**, all green.
+
+### Changed
+
+- **Toolchain `6.7.9` → `6.7.18`, hisab `3.4.0` → `3.4.1`, sakshi `2.5.8` →
+  `2.5.10`**; ganita stays 1.2.15. Each is its project's newest tag, and they agree:
+  hisab 3.4.1 pins exactly 6.7.18 and declares sakshi 2.5.10, the copy 6.7.18 folds.
+- **hisab 3.4.1 carries 118 fixes and keeps all 703 public names.** None of the 19
+  hisab functions goonj calls changed in body.
+- **`vec_get`, `vec_set` and `vec_push` moved their aborts into `_vec_abort`.** Both
+  bounds checks stay, so the fail-fast layer ADR-0002 relies on is unchanged.
+- **Size**: `dist/hisab.cyr` grows 2.64 → 3.66 MB and the smoke binary 1.63 → 2.14 MB.
+  Compile time and run time do not suffer for it.
+
+### Verified — no result moved
+
+Checked at value level, 6.7.9 against 6.7.18, as for 2.1.0:
+
+- **Primitives**: the same 5,808 probes over 31 of the 32 `f64_*` primitives goonj
+  uses. None changed.
+- **Vectors**: 23,625 probes over nine `hvec3_*` operations, on edge-value components.
+  None changed. New this release.
+- **Test values**: all 824 `approx` and `assert_eq` values are bit-identical.
+- **Whole pipelines**: FNV hashes of every output sample are identical for
+  `generate_ir`, `compute_early_reflections`, `synthesize_dvn_ir`, the FDTD and DWM
+  receiver traces, 40 `trace_ray` paths and `solve_gfpe`. The five that 2.1.0 also
+  hashed have not moved across 6.6.20, 6.7.9 and 6.7.18.
+- **The language changes do not reach goonj's source.** The re-scan of 96 files finds
+  no construct whose meaning moved, and the 6.7.x float-typing rules need a `: f64`
+  annotation somewhere: goonj has none, and calls no lib fn that does.
+- **Consumer floor re-measured**, on 13 pins from 6.6.3 to 6.7.18: still 6.7.2, with
+  the same `const` failure below it.
+- **Gates and timings match 2.1.0**: 29 lint warnings, 135 undocumented in `src/`, no
+  new compiler warning, median benchmark ratio 0.974, and no row past +5%.
+
 ## [2.1.0] - 2026-11-06
 
 Moves to the cyrius 6.7.x language minor. **No goonj source or public API change**,

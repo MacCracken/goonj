@@ -18,7 +18,7 @@
       being ported to Cyrius** — goonj is being worked up the stack, so this is
       not goonj's to close alone. Six repos already declare `[deps.goonj]` at
       2.0.4 or 2.0.5 (see [`state.md`](state.md#consumers)); nobody has yet
-      confirmed that any of them compiles and passes against it. Reaching 2.1.0
+      confirmed that any of them compiles and passes against it. Reaching 2.1.x
       needs each of them on cyrius ≥ 6.7.2 first.
 - [ ] **Retire `rust-old/`** — the frozen oracle is cleared for deletion
       (verified: build, all suites and the bundle check pass with it removed).
@@ -61,6 +61,7 @@
 
 | Release | Date | What |
 |---------|------|------|
+| **2.1.1** | 2026-11-06 | Toolchain 6.7.9 → 6.7.18, hisab 3.4.0 → 3.4.1, sakshi 2.5.8 → 2.5.10, each the newest tag; no source or result change |
 | **2.1.0** | 2026-11-06 | Toolchain 6.6.20 → 6.7.9, hisab 3.3.7 → 3.4.0, sakshi 2.5.7 → 2.5.8; no source or result change, but consumers now need cyrius ≥ 6.7.2 |
 | **2.0.6** | 2026-11-06 | Toolchain 6.6.2 → 6.6.20, hisab 2.22.1 → 3.3.7, sakshi 2.5.1 → 2.5.7; fixed the memory exhaustion that `f64_to` saturating at 6.6.8 opened in the gaussian pulses and bounded it in the FDN ([ADR-0003](../adr/0003-f64-to-saturates-keep-bounding-in-f64.md)) |
 | **2.0.5** | 2026-09-11 | Toolchain 6.5.35 → 6.6.2, hisab 2.11.2 → 2.22.1; documentation sweep |
