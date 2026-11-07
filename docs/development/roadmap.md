@@ -8,21 +8,7 @@
 > This file is the sequencing: what ships next, in what order, and what each step
 > waits on.
 
-## 2.2.x — Retire the oracle, then allocation
-
-### 2.2.0 — Retire `rust-old/`
-
-Next release. 2.1.3 was its last planned use. Deleting the tree removes 49 tracked
-files and 3.5 GB of untracked `target/`. `CLAUDE.md`, `CONTRIBUTING.md` and the README
-all name it as the parity oracle, so those rules change in the same release. Re-verify
-first that build, suites and the bundle check pass without it.
-
-Its benchmark baseline is already archived to
-[`../benchmarks/rust-bench-history.csv`](../benchmarks/rust-bench-history.csv), and its
-only runnable demo is ported to [`../../examples/basic.cyr`](../../examples/basic.cyr).
-The source stays readable from git tags.
-
-### Allocation strategy
+## 2.2.x — Allocation strategy
 
 Out-param returns or an arena/pool allocator for the alloc-heavy tiny ops:
 `wall_intersection` and per-ray and per-reflection temporaries. This is the 11–44×

@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-06
+
+Retires `rust-old/`. **No library code changed**, so results are the same as 2.1.3 and
+consumers have nothing to do. **42 suites / 3755 assertions**, all green, and
+`cyrius audit` exits 0. See
+[ADR-0006](docs/adr/0006-retire-rust-old-keep-its-bar.md).
+
+### Removed
+
+- **`rust-old/`**: 49 tracked files and 3.5 GB of ignored build output. The source stays
+  readable at tag `2.1.3`, with `git show 2.1.3:rust-old/src/<module>.rs`, and the
+  `rust-old/src/x.rs` citations in `src/` and `tests/` resolve there. It still builds
+  from the tag: all 518 unit and 6 integration tests pass.
+
+### Added
+
+- **`tests/integration.tcyr`**: the six cross-module tests from
+  `rust-old/tests/integration.rs`. The Rust crate kept them outside `src/`, so the
+  module-by-module port never picked them up.
+
+### Verified before deleting
+
+- **Every gate in a clean tree without the oracle:** build, all suites, `cyrius audit`,
+  `distlib --check`, fuzz and the example.
+- **A last comparison on valid input.** 2.1.3 fed the solvers mostly hostile values, so
+  their maths on valid input had barely been compared. 26 realistic scenes with 4
+  configurations each all agree with Rust to within 1e-4, near zero to within 1e-5. The one
+  exception is analysis of three impulse responses, where 6 of 16,000 samples differ:
+  each is a reflection that rounds to the adjacent sample in f32.
+
+### Changed
+
+- **The parity rules no longer point at a directory.** `CLAUDE.md`, `CONTRIBUTING.md`,
+  the README and the guides name tag `2.1.3`, and the rule against modifying `rust-old/`
+  is gone with the tree. The bar is unchanged: match what Rust did, and diverge only with
+  an ADR.
+- **`.gitignore`** drops the Rust-era entries, and `scripts/bench-history.sh` no longer
+  names the tree.
+
+### Documentation
+
+- New ADR-0006, with the recipe for restoring and running the oracle.
+- Roadmap: retirement removed, and allocation strategy is next.
+- `state.md`: the suite and assertion counts, stale since before 2.1.3.
+
 ## [2.1.3] - 2026-11-06
 
 The P(-1) audit, hardening and optimization sweep. **Upgrade if a consumer forwards

@@ -8,9 +8,8 @@
 # only checkable if the CSV actually exists and keeps accumulating.
 #
 # The Rust-era version of this script ran `cargo bench --bench benchmarks`.
-# There has been no root Cargo.toml since the Cyrius port (the Rust tree is
-# frozen at rust-old/ as a parity oracle), so it exited 101 and — because it
-# piped through `tee -a` — left a 0-byte bench-history.csv behind every time.
+# There has been no root Cargo.toml since the Cyrius port, so it exited 101 and —
+# because it piped through `tee -a` — left a 0-byte bench-history.csv behind every time.
 # This rewrite never creates the CSV until it has rows to put in it.
 #
 # ── Output format contract ────────────────────────────────────────────────
@@ -81,7 +80,7 @@ done
 
 command -v cyrius >/dev/null 2>&1 || {
     echo "error: 'cyrius' not on PATH — this script benches the Cyrius port," >&2
-    echo "       not the frozen Rust tree at rust-old/." >&2
+    echo "       and the Rust tree it replaced is gone (tag 2.1.3 has it)." >&2
     exit 127
 }
 

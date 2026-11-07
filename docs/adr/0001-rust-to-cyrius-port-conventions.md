@@ -18,7 +18,9 @@ Forcing constraints:
 - Cyrius has no generics, no traits, no `enum` with payloads, no closures as
   values, and no `serde`. Floats are f64 bit patterns; there is no f32 math.
 - hisab's `HVec3` is **f64-only**. goonj's geometry types come from hisab.
-- The Rust source is the correctness oracle, frozen at `rust-old/`.
+- The Rust source is the correctness oracle, frozen at `rust-old/`. It left the tree at
+  2.2.0 and stays readable at tag `2.1.3`
+  ([ADR-0006](0006-retire-rust-old-keep-its-bar.md)).
 
 ## Decision
 

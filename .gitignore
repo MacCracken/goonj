@@ -7,10 +7,6 @@ build/
 # Core dumps
 *.core
 
-# Rust-era (rust-old/ reference tree)
-target/
-Cargo.lock
-
 # Editors / OS
 *.swp
 .DS_Store

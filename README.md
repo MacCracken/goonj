@@ -4,8 +4,8 @@
 [AGNOS](https://github.com/MacCracken/agnosticos) ecosystem.
 
 Goonj is a **[Cyrius](https://github.com/MacCracken/cyrius) library** — the
-completed Rust → Cyrius port (**v2.1.3**) of the original ~14,630-line Rust engine
-(frozen at `rust-old/` as a parity oracle). It is compiled by `cycc` (toolchain
+completed Rust → Cyrius port (**v2.2.0**) of the original ~14,630-line Rust engine
+(readable at git tag `2.1.3`). It is compiled by `cycc` (toolchain
 pinned `cyrius = "6.7.18"` in `cyrius.cyml`), built on
 [hisab](https://github.com/MacCracken/hisab) for math/geometry, and ships as a
 single distlib bundle, `dist/goonj.cyr`, for downstream Cyrius consumers.
@@ -13,8 +13,8 @@ single distlib bundle, `dist/goonj.cyr`, for downstream Cyrius consumers.
 37 modules covering sound propagation, room simulation, ray/beam/image-source
 tracing, wave-based methods (DWM, FDTD, GFPE), impulse-response generation,
 diffraction, resonance, and spatialization — **3,624 parity assertions across 37
-test suites, all green** (41 suites / 3,746 assertions counting the hardening,
-modal and smoke suites).
+test suites, all green** (42 suites / 3,755 assertions counting the hardening,
+integration, modal and smoke suites).
 
 ## Features
 
@@ -42,7 +42,7 @@ modal and smoke suites).
 cyrius deps                                  # resolve hisab (+ transitive sakshi) into lib/
 cyrius build examples/basic.cyr build/basic  # build the demo, then ./build/basic
 cyrius build src/main.cyr build/goonj        # build the smoke binary
-cyrius test                                  # run every suite (auto-discovers all 41)
+cyrius test                                  # run every suite (auto-discovers all 42)
 cyrius test tests/propagation.tcyr           # or just one, by path
 cyrius bench tests/dwm.bcyr                  # run a benchmark
 cyrius distlib                               # regenerate dist/goonj.cyr (the shippable bundle)

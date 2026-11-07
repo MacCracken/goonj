@@ -26,3 +26,4 @@ Decisions about goonj — what we chose, the context, and the consequences we ac
 | [0003](0003-f64-to-saturates-keep-bounding-in-f64.md) | `f64_to` saturates from cyrius 6.6.8; keep bounding in f64, and cap where Rust had no ceiling | Accepted |
 | [0004](0004-allocation-refusal-ends-the-process.md) | A refused allocation ends the process | Accepted |
 | [0005](0005-hostile-input-parity-and-recorded-gaps.md) | What hostile input should do, and where the port stays different | Accepted |
+| [0006](0006-retire-rust-old-keep-its-bar.md) | Retire `rust-old/`, and keep its bar | Accepted |

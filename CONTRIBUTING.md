@@ -2,7 +2,7 @@
 
 Goonj is a [Cyrius](https://github.com/MacCracken/cyrius) library
 compiled by `cycc` (toolchain pinned in `cyrius.cyml`). There is no cargo/Rust
-toolchain — the Rust source at `rust-old/` is a frozen parity oracle only.
+toolchain. The original Rust source stays readable at tag `2.1.3`, as the parity reference.
 
 ## Workflow
 
@@ -10,13 +10,14 @@ toolchain — the Rust source at `rust-old/` is a frozen parity oracle only.
 2. Create a feature branch
 3. Make changes following the development process in CLAUDE.md
 4. `cyrius deps` to resolve dependencies, then run the affected suites:
-   `cyrius test` (auto-discovers all 41 suites) or `cyrius test tests/<suite>.tcyr`
+   `cyrius test` (auto-discovers all 42 suites) or `cyrius test tests/<suite>.tcyr`
    for one. 37 per-module parity suites / 3,624 assertions, all green.
    Security-relevant changes should also keep
    `cyrius test tests/hardening.tcyr` green — it pins the 2.0.2 P-1 fixes
    (negative indices, overflow caps, NaN validation) against the shipped bundle.
 5. Add tests (`tests/<module>.tcyr`) and, for hot paths, benchmarks
-   (`tests/<module>.bcyr`) for new code; cross-check behavior against `rust-old/`
+   (`tests/<module>.bcyr`) for new code; cross-check behavior against the Rust source
+   (`git show 2.1.3:rust-old/src/<module>.rs`)
 6. Submit PR (the maintainer handles all git — commit, push, tag)
 
 ## Code style
@@ -47,4 +48,4 @@ toolchain — the Rust source at `rust-old/` is a frozen parity oracle only.
   with `cyrius distlib` and keep it collision-free
 
 The correctness bar is the parity assertions in `tests/*.tcyr` reproducing the
-`rust-old/` oracle's behavior.
+Rust original's behavior.

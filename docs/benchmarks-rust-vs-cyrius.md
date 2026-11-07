@@ -61,10 +61,10 @@ benchmarks. Spot-check: `dwm/solve_30x25x20_50ms` 74,249,133 ns → 74.2 ms;
 1.17 ms; `binaural/generate_ir_shoebox` 6,995 ns → 7.0 µs.
 
 That file was archived out of `rust-old/bench-history.csv` when the frozen Rust
-tree was retired. It is the **only** evidence for the Rust column — the
-benchmarks cannot be re-run once `rust-old/` is gone (no `Cargo.toml`, no Rust
-toolchain in this project), so treat it as a permanent record rather than a
-regenerable artifact. The Cyrius column, by contrast, is reproducible at any
+tree was retired at 2.2.0. It is the **only** evidence for the Rust column kept in
+this tree. The benchmarks can be re-run only by restoring the Rust source from tag
+`2.1.3` ([ADR-0006](adr/0006-retire-rust-old-keep-its-bar.md)), so treat it as a
+permanent record rather than a regenerable artifact. The Cyrius column, by contrast, is reproducible at any
 time with `scripts/bench-history.sh`.
 
 ## The pattern

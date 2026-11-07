@@ -8,7 +8,7 @@
 
 ## Project Identity
 
-**goonj** — Cyrius port of a Rust project (14630 lines preserved at `rust-old/`).
+**goonj** — Cyrius port of a Rust project (14630 lines, readable at tag `2.1.3`).
 
 - **Type**: Port (Rust → Cyrius)
 - **License**: GPL-3.0-only
@@ -32,7 +32,7 @@ This file (`CLAUDE.md`) is durable rules.
 
 ## Scaffolding
 
-Project was scaffolded with `cyrius port`. Original Rust at `rust-old/` is the reference oracle — do not modify it; cross-check the port against it.
+Project was scaffolded with `cyrius port`. The original Rust left the tree at 2.2.0 and stays readable at tag `2.1.3`: `git show 2.1.3:rust-old/src/<module>.rs`. `rust-old/...` citations in `src/` and `tests/` resolve there ([ADR-0006](docs/adr/0006-retire-rust-old-keep-its-bar.md)).
 
 ## Quick Start
 
@@ -46,7 +46,7 @@ cyrius distlib                           # regenerate dist/goonj.cyr (the bundle
 
 ## Key Principles
 
-- **Cross-check against `rust-old/`** — the port's correctness bar is "matches what Rust did". Diverge only with an ADR.
+- **Match what Rust did** — that is the port's correctness bar. Check behavior against the Rust source at tag `2.1.3`. Diverge only with an ADR.
 - **Correctness over cleverness** — if the Cyrius behavior diverges silently from Rust, the bugs win
 - Test after every change, not after the feature is "done"
 - ONE change at a time — never bundle unrelated changes
@@ -58,7 +58,6 @@ cyrius distlib                           # regenerate dist/goonj.cyr (the bundle
 
 - **Do not commit or push** — the user handles all git operations
 - **Never use `gh` CLI** — use `curl` to the GitHub API if needed
-- Do not modify `rust-old/` — it's the parity oracle
 - Do not skip tests before claiming changes work
 - Do not modify `lib/` files (vendored stdlib / dep symlinks)
 - Do not hardcode toolchain versions in CI YAML — `cyrius = "X.Y.Z"` in `cyrius.cyml` is the source of truth

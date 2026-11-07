@@ -5,6 +5,10 @@
 
 ## Version
 
+**2.2.0** — retires `rust-old/`. No library code changed. A last comparison on valid
+input agreed with Rust, six integration tests that were never ported joined the suites,
+and every gate was proven in a tree without the oracle before it was deleted.
+
 **2.1.3** — the P(-1) sweep: 172,076 hostile cases differenced against `rust-old/`, all
 37 modules read against it, real fuzz targets, allocation fault injection. Fixes 21
 out-of-bounds public accessors, a refused BVH build that silently removed every wall,
@@ -54,21 +58,19 @@ by the `rust-old/` parity sweep, not by the hardening sweep that caused it.
 
 ### The Rust oracle
 
-`rust-old/` (14,630 lines, 37 modules) served as the parity oracle through the
-port and three follow-up sweeps. It is **cleared for deletion**: nothing in the
-build, test, bench or distlib path reads it — verified by building and running
-all 41 suites in a tree with it removed. Two things were extracted first:
+`rust-old/` (14,630 lines, 37 modules) served as the parity oracle through the port and
+four follow-up sweeps, and left the tree at 2.2.0
+([ADR-0006](../adr/0006-retire-rust-old-keep-its-bar.md)). The source stays readable at
+tag `2.1.3`: `git show 2.1.3:rust-old/src/<module>.rs`. The `rust-old/src/x.rs`
+citations in `src/` and `tests/` are deliberately kept and resolve at that tag.
+
+Its other artifacts moved first:
 
 - `rust-old/bench-history.csv` → [`../benchmarks/rust-bench-history.csv`](../benchmarks/rust-bench-history.csv),
-  the frozen Rust baseline behind every Rust figure in the comparison doc. It
-  cannot be regenerated once the tree is gone (no `Cargo.toml`, no Rust toolchain).
+  the frozen Rust baseline behind every Rust figure in the comparison doc.
 - `rust-old/examples/basic.rs` → [`../../examples/basic.cyr`](../../examples/basic.cyr),
   the port's only runnable demo.
-
-After removal the oracle stays readable at tag `2.0.2`:
-`git show 2.0.2:rust-old/src/<module>.rs`. The `Ports rust-old/src/x.rs`
-provenance comments in `src/` and `tests/` are deliberately kept — they are the
-port's audit trail and still resolve against that tag.
+- `rust-old/tests/integration.rs` → [`../../tests/integration.tcyr`](../../tests/integration.tcyr).
 
 ## Toolchain
 
@@ -116,7 +118,7 @@ port's audit trail and still resolve against that tag.
 | fmt   | ✅ clean (was FAIL / 23 files before the 2.0.1 re-canonicalisation) |
 | lint  | ✅ clean (was 29 line-length warnings in `tests/` before 2.1.2) |
 | docs  | ✅ complete (was 217 undocumented before 2.1.2) |
-| tests | ✅ 41 suites green (37 parity + hardening + dwm_modal + 2 smoke) |
+| tests | ✅ 42 suites green (37 parity + hardening + integration + dwm_modal + 2 smoke) |
 | bench | ✅ 16 suites green |
 
 `cyrius audit` **exits 0** as of 2.1.2, for the first time. It fails on any lint
@@ -127,7 +129,7 @@ in a compound command reports the `echo`, not the audit.)
 
 ## Source
 
-- Rust reference: 14,630 lines across 37 modules at `rust-old/` (frozen).
+- Rust reference: 14,630 lines across 37 modules, readable at tag `2.1.3`.
 - Cyrius port: `src/main.cyr` (smoke) + per-module `src/*.cyr` (library,
   validated via `tests/*.tcyr`, not included by the smoke binary — same
   layout hisab uses).
@@ -162,12 +164,14 @@ round-trips (no serde in Cyrius). **37 suites, 3624 assertions, all green.** Run
 one with `cyrius test tests/<module>.tcyr`.
 
 Four suites sit outside that per-module set, bringing the totals to
-**41 suites / 3685 assertions**:
+**42 suites / 3755 assertions**:
 
 - **`hardening.tcyr`** (105) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
   sample-count contract, the 2.0.6 `f64_to` and NaN-vertex cases, and the 2.1.3 sweep.
   Runs against the shipped `dist/goonj.cyr`, so it also proves each repair reached the
   bundle. A real regression suite: it SIGSEGVs or aborts against 2.0.1 and 2.1.2.
+- **`integration.tcyr`** (9) — the six cross-module tests from `rust-old/tests/integration.rs`,
+  run against the shipped bundle.
 - **`dwm_modal.tcyr`** (4) — the DWM solver's only physics-correctness check
   (first axial mode dominates). Split out because it runs ~15 s.
 - **`bundle.tcyr`**, **`goonj.tcyr`** — cross-layer and smoke.
@@ -231,7 +235,7 @@ shruti and kiran/joshua have no `cyrius.cyml` alongside these repos.
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). 2.2.0 retires `rust-old/`.
+See [`roadmap.md`](roadmap.md). Allocation strategy is next.
 
 **Every language pattern is now proven** (f32→f64, hex literals, integer errors,
 HVec3, manual layout, `Vec`, closures→fnptr+ctx, tuple→struct, bit-ops/xorshift,

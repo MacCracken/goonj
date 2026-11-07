@@ -10,7 +10,7 @@ Every Cyrius module matches the Rust oracle function-for-function.
 > let these numbers drift across 2.0.1–2.0.3 in the first place.
 
 **Status:** ✅ ported & tested · 🟡 partial · ⬜ pending
-**LOC** = Rust lines (incl. tests) at `rust-old/src/`.
+**LOC** = Rust lines (incl. tests) at `rust-old/src/`, readable at tag `2.1.3`.
 
 ## Conventions established (apply to every module)
 

@@ -11,7 +11,7 @@ cyrius bench tests/dwm.bcyr              # run a benchmark
 cyrius distlib                           # regenerate dist/goonj.cyr (the bundle)
 ```
 
-Bare `cyrius test` auto-discovers and runs every suite (41 suites / 3,746
+Bare `cyrius test` auto-discovers and runs every suite (42 suites / 3,755
 assertions; the per-module parity subset is 37 suites / 3,624). Pass an explicit
 `tests/<module>.tcyr` path to run just one — that is the faster loop while
 working on a single module.
@@ -30,13 +30,12 @@ working on a single module.
 - `examples/basic.cyr` — the runnable demo. Builds against the bundle, so it
   doubles as a worked example of how a consumer folds goonj in:
   `cyrius build examples/basic.cyr build/basic && ./build/basic`.
-- `rust-old/` — the original Rust source, frozen as the parity oracle. Do not
-  modify.
 
 ## Adding / changing a module
 
 1. Edit `src/<module>.cyr` (or add a new module file).
-2. Cross-check parity against `rust-old/src/<module>.rs`.
+2. Cross-check parity against the Rust source:
+   `git show 2.1.3:rust-old/src/<module>.rs`.
 3. Add/extend `tests/<module>.tcyr` (ported from the Rust `#[test]` blocks) and
    run `cyrius test tests/<module>.tcyr` — it must print `N passed, 0 failed`.
 4. Formatting canonical (`diff <(cyrfmt src/x.cyr) src/x.cyr` — **not**

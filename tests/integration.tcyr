@@ -1,0 +1,140 @@
+# integration.tcyr -- cross-module tests, ported from rust-old/tests/integration.rs.
+#
+# The Rust crate kept these outside src/, so the per-module port never picked them up.
+# They went in when rust-old/ was retired, the last time they could be read beside the
+# code. Each test crosses at least two modules.
+#
+# Run: cyrius test tests/integration.tcyr
+#
+# Tests the SHIPPED bundle, as bundle.tcyr and hardening.tcyr do.
+include "lib/hisab.cyr"
+include "lib/sakshi.cyr"
+include "dist/goonj.cyr"
+
+fn _i_room(material) {
+    return acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), material);
+}
+
+fn _i_sabine(room) {
+    var geom = AcousticRoom_geometry(room);
+    return sabine_rt60(room_geometry_volume_shoebox(geom), room_geometry_total_absorption(geom));
+}
+
+fn _i_shoebox_room_sabine_rt60() {
+    test_group("shoebox_room_sabine_rt60");
+    var rt60 = _i_sabine(_i_room(acoustic_material_carpet()));
+    assert(f64_gt(rt60, f64_div(F64_ONE, f64_from(10))) == 1, "carpet room RT60 above 0.1 s");
+    assert(f64_lt(rt60, F64_TWO) == 1, "carpet room RT60 below 2 s");
+    return 0;
+}
+
+fn _i_concrete_longer_than_carpet() {
+    test_group("concrete_longer_than_carpet");
+    var concrete = _i_sabine(_i_room(acoustic_material_concrete()));
+    var carpet = _i_sabine(_i_room(acoustic_material_carpet()));
+    assert(f64_gt(concrete, carpet) == 1, "concrete is more reverberant than carpet");
+    return 0;
+}
+
+fn _i_speed_and_doppler_consistency() {
+    test_group("speed_and_doppler_consistency");
+    var c = speed_of_sound(f64_from(20));
+    var f = doppler_shift(f64_from(440), 0, 0, c);
+    var err = f64_abs(f64_sub(f, f64_from(440)));
+    assert(f64_lt(err, f64_div(F64_ONE, f64_from(100))) == 1, "stationary -> no shift");
+    return 0;
+}
+
+fn _i_schroeder_frequency_shoebox() {
+    test_group("schroeder_frequency_shoebox");
+    var room = _i_room(acoustic_material_concrete());
+    var fs = schroeder_frequency(_i_sabine(room), room_geometry_volume_shoebox(AcousticRoom_geometry(room)));
+    assert(f64_gt(fs, f64_from(50)) == 1, "Schroeder frequency above 50 Hz");
+    assert(f64_lt(fs, f64_from(1000)) == 1, "Schroeder frequency below 1 kHz");
+    return 0;
+}
+
+fn _i_ray_traces_through_shoebox() {
+    test_group("ray_traces_through_shoebox");
+    var walls = RoomGeometry_walls(AcousticRoom_geometry(_i_room(acoustic_material_concrete())));
+    var origin = hvec3_new(f64_from(5), f64_div(f64_from(3), F64_TWO), f64_from(4));
+    var ray = acoustic_ray_new(origin, hvec3_unit_z(), f64_from(1000));
+    var bounces = 0;
+    var last_wall = 0 - 1;
+    var going = 1;
+    while (going == 1) {
+        if (acoustic_ray_is_alive(ray) == 0) { going = 0; }
+        if (bounces >= 50) { going = 0; }
+        if (going == 1) {
+            # Skip the wall just bounced off, to avoid self-intersection.
+            var found = 0;
+            var best_t = 0;
+            var best_idx = 0;
+            var i = 0;
+            while (i < vec_len(walls)) {
+                if (i != last_wall) {
+                    var t = ray_wall_intersection(ray, vec_get(walls, i));
+                    if (f64_lt(t, 0) == 0) {
+                        if (found == 0) {
+                            found = 1;
+                            best_t = t;
+                            best_idx = i;
+                        } else {
+                            if (f64_lt(t, best_t) == 1) {
+                                best_t = t;
+                                best_idx = i;
+                            }
+                        }
+                    }
+                }
+                i = i + 1;
+            }
+            if (found == 0) {
+                going = 0;
+            } else {
+                var wall = vec_get(walls, best_idx);
+                var hit = alloc(sizeof(RayHit));
+                var step = hvec3_scale(AcousticRay_direction(ray), best_t);
+                RayHit_set_point(hit, hvec3_add(AcousticRay_origin(ray), step));
+                RayHit_set_normal(hit, Wall_normal(wall));
+                RayHit_set_distance(hit, best_t);
+                RayHit_set_wall_index(hit, best_idx);
+                var mat = Wall_material(wall);
+                ray = reflect_ray(ray, hit, average_absorption(mat), am_scattering(mat));
+                last_wall = best_idx;
+                bounces = bounces + 1;
+            }
+        }
+    }
+    assert_gt(bounces, 5, "the ray bounces many times in a concrete room");
+    assert(f64_lt(AcousticRay_energy(ray), F64_ONE) == 1, "the ray loses energy");
+    return 0;
+}
+
+fn _i_diffraction_occlusion_through_wall() {
+    test_group("diffraction_occlusion_through_wall");
+    var five = f64_from(5);
+    var verts = vec_new();
+    vec_push(verts, hvec3_new(five, f64_neg(five), five));
+    vec_push(verts, hvec3_new(five, five, five));
+    vec_push(verts, hvec3_new(five, five, f64_neg(five)));
+    vec_push(verts, hvec3_new(five, f64_neg(five), f64_neg(five)));
+    var normal = hvec3_new(f64_neg(F64_ONE), 0, 0);
+    var walls = vec_new();
+    vec_push(walls, wall_new(verts, acoustic_material_concrete(), normal));
+    var source = hvec3_zero();
+    var listener = hvec3_new(f64_from(10), 0, 0);
+    assert_eq(is_occluded(source, listener, walls), 1, "a wall between them occludes");
+    return 0;
+}
+
+alloc_init();
+_i_shoebox_room_sabine_rt60();
+_i_concrete_longer_than_carpet();
+_i_speed_and_doppler_consistency();
+_i_schroeder_frequency_shoebox();
+_i_ray_traces_through_shoebox();
+_i_diffraction_occlusion_through_wall();
+
+var rc = assert_summary();
+syscall(60, rc);
