@@ -5,6 +5,10 @@
 
 ## Version
 
+**2.3.0** — SIMD on the grid solvers: the DWM solver goes from about 15× behind Rust to
+about 2×, FDTD from about 17× to 6×, and ray traversal gets faster too. No result moves
+([ADR-0008](../adr/0008-row-kernels-for-grid-solvers.md)).
+
 **2.2.1** — the allocation strategy: hot paths work in stack buffers, so a 1 s impulse
 response leaves 1.1 MB behind where it left 3.6 MB, and ray paths run about 35% faster.
 No result moves, across 172,180 compared cases
@@ -169,11 +173,11 @@ round-trips (no serde in Cyrius). **37 suites, 3624 assertions, all green.** Run
 one with `cyrius test tests/<module>.tcyr`.
 
 Four suites sit outside that per-module set, bringing the totals to
-**42 suites / 3784 assertions**:
+**42 suites / 3801 assertions**:
 
-- **`hardening.tcyr`** (134) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
-  sample-count contract, the 2.0.6 `f64_to` and NaN-vertex cases, the 2.1.3 sweep, and the
-  2.2.1 stack-escape checks and allocation budgets.
+- **`hardening.tcyr`** (151) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
+  sample-count contract, the 2.0.6 `f64_to` and NaN-vertex cases, the 2.1.3 sweep, the
+  2.2.1 stack-escape checks and allocation budgets, and the 2.3.0 golden hashes.
   Runs against the shipped `dist/goonj.cyr`, so it also proves each repair reached the
   bundle. A real regression suite: it SIGSEGVs or aborts against 2.0.1 and 2.1.2.
 - **`integration.tcyr`** (9) — the six cross-module tests from `rust-old/tests/integration.rs`,
@@ -204,7 +208,8 @@ Direct (declared in `cyrius.cyml`, locked in `cyrius.lock`):
   **math** (F64_* constants, clamp/min/max, exp/ln polyfills),
   **ganita** (transcendentals: pow/exp/ln/sin/cos/sqrt/acos/…), **fnptr**
   (`fncallN` indirect calls for the closure→callback pattern), **bench**
-  (`bench_new`/`bench_run`/`bench_report` for `.bcyr` benchmarks).
+  (`bench_new`/`bench_run`/`bench_report` for `.bcyr` benchmarks), **simd**
+  (`simd_has_avx2`, for the row kernels' 256-bit path).
 - **hisab** 3.4.1 — math/geometry; consumed as the single `dist/hisab.cyr`
   bundle (HVec3 and friends). Pulls transitive **sakshi** 2.5.10. goonj calls 19
   hisab functions, none of them `Result`-returning.
@@ -241,7 +246,7 @@ shruti and kiran/joshua have no `cyrius.cyml` alongside these repos.
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). 2.3.x, number types and SIMD, is next.
+See [`roadmap.md`](roadmap.md). What remains in 2.3.x is f32.
 
 **Every language pattern is now proven** (f32→f64, hex literals, integer errors,
 HVec3, manual layout, `Vec`, closures→fnptr+ctx, tuple→struct, bit-ops/xorshift,

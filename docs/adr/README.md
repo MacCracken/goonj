@@ -28,3 +28,4 @@ Decisions about goonj — what we chose, the context, and the consequences we ac
 | [0005](0005-hostile-input-parity-and-recorded-gaps.md) | What hostile input should do, and where the port stays different | Accepted |
 | [0006](0006-retire-rust-old-keep-its-bar.md) | Retire `rust-old/`, and keep its bar | Accepted |
 | [0007](0007-stack-buffers-over-an-arena.md) | Hot paths use stack buffers, not an arena | Accepted |
+| [0008](0008-row-kernels-for-grid-solvers.md) | Grid solvers run as row kernels over `f64v_*` | Accepted |

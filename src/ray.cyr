@@ -178,25 +178,47 @@ fn multiband_ray_max_energy(r) {
 fn point_in_convex_polygon(point, vertices, normal) {
     var n = vec_len(vertices);
     if (n < 3) { return 0; }
-    var edge: i64[3];
-    var to_point: i64[3];
-    var c: i64[3];
+    var limit = f64_neg(GOONJ_EPSILON);
+    var verts = _vec_data(vertices);
+    var px = HVec3_x(point);
+    var py = HVec3_y(point);
+    var pz = HVec3_z(point);
+    var nx = HVec3_x(normal);
+    var ny = HVec3_y(normal);
+    var nz = HVec3_z(normal);
+    # Each edge in turn: (v1 - v0) x (point - v0) must not point against the normal.
+    # Spelled out because this is the hottest test in the tracer, and only the sign of
+    # the dot is read, so hvec3_dot's +0 convention can't show.
+    var v0 = load64(verts);
     var i = 0;
     while (i < n) {
-        var v0 = vec_get(vertices, i);
-        var v1 = vec_get(vertices, (i + 1) % n);
-        _v3_sub(&edge, v1, v0);
-        _v3_sub(&to_point, point, v0);
-        _v3_cross(&c, &edge, &to_point);
-        if (f64_lt(hvec3_dot(&c, normal), f64_neg(GOONJ_EPSILON)) == 1) { return 0; }
+        var next = i + 1;
+        if (next == n) { next = 0; }
+        var v1 = load64(verts + next * 8);
+        var x0 = load64(v0);
+        var y0 = load64(v0 + 8);
+        var z0 = load64(v0 + 16);
+        var ex = f64_sub(load64(v1), x0);
+        var ey = f64_sub(load64(v1 + 8), y0);
+        var ez = f64_sub(load64(v1 + 16), z0);
+        var tx = f64_sub(px, x0);
+        var ty = f64_sub(py, y0);
+        var tz = f64_sub(pz, z0);
+        var cx = f64_sub(f64_mul(ey, tz), f64_mul(ez, ty));
+        var cy = f64_sub(f64_mul(ez, tx), f64_mul(ex, tz));
+        var cz = f64_sub(f64_mul(ex, ty), f64_mul(ey, tx));
+        var dot = f64_add(f64_add(f64_mul(cx, nx), f64_mul(cy, ny)), f64_mul(cz, nz));
+        if (f64_lt(dot, limit) == 1) { return 0; }
+        v0 = v1;
         i = i + 1;
     }
     return 1;
 }
 
-# ray_wall_intersection from an origin and a direction, with no AcousticRay to build.
+# Distance along the ray to the wall's plane, or RAY_NONE if it is behind the ray or the
+# ray runs along it. Half of an intersection test: see _ray_hits_polygon.
 #must_use
-fn _ray_wall_t(origin, direction, wall) {
+fn _ray_plane_t(origin, direction, wall) {
     var verts = Wall_vertices(wall);
     if (vec_len(verts) < 3) { return RAY_NONE; }
 
@@ -208,12 +230,25 @@ fn _ray_wall_t(origin, direction, wall) {
     _v3_sub(&diff, vec_get(verts, 0), origin);
     var t = f64_div(hvec3_dot(&diff, n), d_dot_n);
     if (f64_lt(t, GOONJ_EPSILON) == 1) { return RAY_NONE; }
+    return t;
+}
 
+# 1 if the ray's point at `t` on the wall's plane is inside the wall.
+#must_use
+fn _ray_hits_polygon(origin, direction, wall, t) {
     var along: i64[3];
     var hit: i64[3];
     _v3_scale(&along, direction, t);
     _v3_add(&hit, origin, &along);
-    if (point_in_convex_polygon(&hit, verts, n) == 1) { return t; }
+    return point_in_convex_polygon(&hit, Wall_vertices(wall), Wall_normal(wall));
+}
+
+# ray_wall_intersection from an origin and a direction, with no AcousticRay to build.
+#must_use
+fn _ray_wall_t(origin, direction, wall) {
+    var t = _ray_plane_t(origin, direction, wall);
+    if (f64_lt(t, 0) == 1) { return RAY_NONE; }
+    if (_ray_hits_polygon(origin, direction, wall, t) == 1) { return t; }
     return RAY_NONE;
 }
 
@@ -300,13 +335,19 @@ fn _nearest_wall(origin, direction, walls, skip_wall, out) {
     var i = 0;
     while (i < n) {
         if (i != skip_wall) {
-            var t = _ray_wall_t(origin, direction, vec_get(walls, i));
+            var wall = vec_get(walls, i);
+            var t = _ray_plane_t(origin, direction, wall);
             # RAY_NONE is Rust's None. A NaN t is Rust's Some(NaN), which is a hit.
+            # A plane no nearer than the best hit can't win, so its polygon test is skipped.
             if (f64_lt(t, 0) == 0) {
                 if (found == 0) {
-                    found = 1; best_t = t; best_idx = i;
+                    if (_ray_hits_polygon(origin, direction, wall, t) == 1) {
+                        found = 1; best_t = t; best_idx = i;
+                    }
                 } else {
-                    if (f64_lt(t, best_t) == 1) { best_t = t; best_idx = i; }
+                    if (f64_lt(t, best_t) == 1) {
+                        if (_ray_hits_polygon(origin, direction, wall, t) == 1) { best_t = t; best_idx = i; }
+                    }
                 }
             }
         }
@@ -355,12 +396,17 @@ fn _nearest_wall_bvh(origin, direction, walls, bvh, skip_wall, out) {
     while (j < m) {
         var idx = vec_get(candidates, j);
         if (idx != skip_wall) {
-            var t = _ray_wall_t(origin, direction, vec_get(walls, idx));
+            var wall = vec_get(walls, idx);
+            var t = _ray_plane_t(origin, direction, wall);
             if (f64_lt(t, 0) == 0) {
                 if (found == 0) {
-                    found = 1; best_t = t; best_idx = idx;
+                    if (_ray_hits_polygon(origin, direction, wall, t) == 1) {
+                        found = 1; best_t = t; best_idx = idx;
+                    }
                 } else {
-                    if (f64_lt(t, best_t) == 1) { best_t = t; best_idx = idx; }
+                    if (f64_lt(t, best_t) == 1) {
+                        if (_ray_hits_polygon(origin, direction, wall, t) == 1) { best_t = t; best_idx = idx; }
+                    }
                 }
             }
         }

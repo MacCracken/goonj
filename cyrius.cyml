@@ -80,6 +80,7 @@ stdlib = [
     "ganita",
     "fnptr",
     "bench",
+    "simd",
 ]
 
 # hisab — math/geometry (HVec3 and friends). goonj consumes the single

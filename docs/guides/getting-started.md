@@ -11,7 +11,7 @@ cyrius bench tests/dwm.bcyr              # run a benchmark
 cyrius distlib                           # regenerate dist/goonj.cyr (the bundle)
 ```
 
-Bare `cyrius test` auto-discovers and runs every suite (42 suites / 3,784
+Bare `cyrius test` auto-discovers and runs every suite (42 suites / 3,801
 assertions; the per-module parity subset is 37 suites / 3,624). Pass an explicit
 `tests/<module>.tcyr` path to run just one — that is the faster loop while
 working on a single module.

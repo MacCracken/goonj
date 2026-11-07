@@ -1,6 +1,6 @@
 # goonj — Benchmark results
 
-Measured with `cyrius bench tests/<suite>.bcyr` (goonj **2.2.1**, toolchain **6.7.18**,
+Measured with `cyrius bench tests/<suite>.bcyr` (goonj **2.3.0**, toolchain **6.7.18**,
 x86_64, idle host). Cyrius figures are the **min** the harness reports — as of Cyrius
 6.5.19 that is a min over *per-chunk averages*, net of a per-clock-read floor the
 harness measures and prints on the `[timer floor …]` line of every run (this run:
@@ -25,17 +25,17 @@ Two scenes, matching the Rust `ray/*` benchmarks config-for-config:
 
 | Benchmark | Cyrius (min) | Rust | ratio | iters |
 |-----------|-------------:|-----:|------:|------:|
-| `ray/wall_intersection`      | 106 ns   | 7 ns    | ~15× | 200,000 |
-| `ray/trace_single_shoebox`   | 28.79 µs | 2.58 µs | ~11× | 20,000 |
-| `ray/trace_100_rays_shoebox` | 2.575 ms | 221 µs  | ~12× | 200 |
-| `ray/trace_linear_100_walls` | 673.1 µs | 48.1 µs | ~14× | 3,000 |
-| `ray/trace_bvh_100_walls`    | 866.9 µs | 75.6 µs | ~11× | 3,000 |
+| `ray/wall_intersection`      | 99 ns    | 7 ns    | ~14× | 200,000 |
+| `ray/trace_single_shoebox`   | 25.42 µs | 2.58 µs | ~10× | 20,000 |
+| `ray/trace_100_rays_shoebox` | 2.04 ms | 221 µs  | ~9× | 200 |
+| `ray/trace_linear_100_walls` | 354.7 µs | 48.1 µs | ~7× | 3,000 |
+| `ray/trace_bvh_100_walls`    | 560.9 µs | 75.6 µs | ~7× | 3,000 |
 
 **Finding — allocation, then logic.** These were the suite's alloc-heaviest ops: 15
 allocations per `wall_intersection` and about 50 per bounce through 2.2.0. 2.2.1 moved
 those temporaries to the stack ([ADR-0007](../adr/0007-stack-buffers-over-an-arena.md)),
-which took them from ~16–23× to ~11–15×, into the band compute-bound loops were always
-in. The thesis got a direct test at
+which took them from ~16–23× to ~11–15×. 2.3.0 took them to ~7–14× by skipping polygon
+tests that can't win and spelling out the one that runs most. The thesis got a direct test at
 2.0.1: Cyrius 6.3.17 gave the stdlib allocator a single-threaded lock-elision fast
 path, and this table roughly halved (e.g. `trace_100_rays_shoebox` 12.58 → 5.35 ms)
 while the compute-bound suites moved by ~1%.
@@ -45,11 +45,11 @@ is the retired harness floor rather than real work, and the rest of the ray tabl
 gain has not been bisected between the allocator change, hisab 2.6.7 → 2.11.2, and
 6.5.35 codegen. Don't attribute it to a single cause.
 
-**Finding — BVH vs linear at 100 walls stays ~even** (866.9 vs 673.1 µs), and it's
+**Finding — BVH vs linear at 100 walls stays ~even** (560.9 vs 354.7 µs), and it's
 ~even in Rust too (75.6 vs 48.1 µs). The 94 axis-aligned partitions don't cull, so
 the BVH crossover is past 100 walls in *both* languages — not a Cyrius artifact.
-BVH now trails linear by 29% (it was 9% at v2.0.0), because the linear path lost all its
-temporaries and the BVH query still allocates inside hisab. Both paths produce identical
+BVH now trails linear by 58% (it was 9% at v2.0.0, and is 57% in Rust), because the linear
+path lost all its temporaries and the BVH query still allocates inside hisab. Both paths produce identical
 bounce sequences (`bvh_trace_matches_linear_trace`), which still holds after
 hisab 2.11.2 changed the BVH's degenerate-partition split from 1-vs-(n−1) to
 median — that reshapes the tree, so query order can differ on exact float ties.
@@ -61,47 +61,57 @@ plus the dispersion-correction FIR.
 
 | Benchmark | Cyrius (min) | iters |
 |-----------|-------------:|------:|
-| `solve_dwm_3d_16cubed_0.01s` (4,096 cells) | 60.59 ms | 30 |
-| `solve_dwm_3d_24cubed_0.01s` (13,824 cells) | 205.7 ms | 15 |
-| `solve_dwm_3d_30x25x20_50ms` (15,000 cells, 1,102 steps) | 1.128 s | 5 |
-| `dwm/dispersion_correct_22kHz_1s` | 327.8 µs | 2,000 |
+| `solve_dwm_3d_16cubed_0.01s` (4,096 cells) | 12.62 ms | 30 |
+| `solve_dwm_3d_24cubed_0.01s` (13,824 cells) | 34.62 ms | 15 |
+| `solve_dwm_3d_30x25x20_50ms` (15,000 cells, 1,102 steps) | 154.8 ms | 5 |
+| `dwm/dispersion_correct_22kHz_1s` | 10.98 µs | 2,000 |
 
 `solve_dwm_3d_30x25x20_50ms` matches the Rust `dwm/solve_30x25x20_50ms` grid and
-step count (15,000 cells, 1,102 steps; Rust 74.2 ms → **~15×**). Two differences
-that do not touch the hot loop: Rust ran f32 where this runs f64, and Rust passed
-one receiver where this passes none — the cleanest codegen+precision gap in the
-whole suite, a tight `f64` triple loop over raw `load64`/`store64` buffers with
-**no per-iteration allocation**. It's the direct target of the number-type + SIMD
-work, and it moved only −1.7% across the 6.3.14 → 6.5.35 bump, which is exactly
-what a non-allocating loop should do. `dispersion_correct` is alloc-heavy by
-contrast (~29× vs Rust's 11.4 µs).
+step count (15,000 cells, 1,102 steps; Rust 74.2 ms → **~2×**). Two differences that do
+not touch the hot loop: Rust ran f32 where this runs f64, and Rust passed one receiver
+where this passes none. Since 2.3.0 the solver runs a row at a time through the `f64v_*`
+builtins ([ADR-0008](../adr/0008-row-kernels-for-grid-solvers.md)), which took it from
+~15×. `dispersion_correct` got the same treatment and runs on the 256-bit kernels, and at
+10.98 µs it edges past Rust's 11.4 µs.
 
-**Finding — near-linear in cell count.** 3.375× the cells (16³→24³) costs ~3.40×
-the time (60.59 → 205.7 ms), consistent with the O(cells · steps) grid sweep. Each
-node does 6 waveguide-port updates per step; the hot loop uses double-buffered
-outgoing waves.
+**Finding — better than linear in cell count now.** 3.375× the cells (16³→24³) costs ~2.74×
+the time (12.62 → 34.62 ms), because the end nodes of each row stay scalar and a longer
+row spends more of its time in the array kernel.
 
 Note that `solve_dwm_3d_24cubed_0.01s` and `solve_dwm_3d_30x25x20_50ms` now report
 min == avg == max: one auto-sized chunk covers every iteration, so those two rows
 carry no dispersion information.
 
-## What moved from 6.5.35 to 2.2.1
+## What moved from 6.5.35 to 2.3.0
 
 Measured against the last baseline (2.0.1 on 6.5.35), then against clean 2.1.2 on
 6.7.18 to isolate each release's work. Figures are `min`.
 
-| Benchmark | 6.5.35 | 2.1.2 on 6.7.18 | 2.1.3 | 2.2.1 |
-|-----------|-------:|----------------:|------:|------:|
-| `ray/wall_intersection` | 215 ns | 173 ns | 158 ns | **106 ns** |
-| `ray/trace_linear_100_walls` | 1.509 ms | 1.105 ms | 1.022 ms | **673.1 µs** |
-| `ray/trace_bvh_100_walls` | 1.816 ms | 1.280 ms | 1.198 ms | **866.9 µs** |
-| `impulse/generate_ir_shoebox` | 60.28 ms | 49.03 ms | 44.56 ms | **30.33 ms** |
-| `diffuse/1000_rays_shoebox` | 57.74 ms | 42.63 ms | 42.16 ms | **27.24 ms** |
-| `image_source/shoebox_order_5` | 402.3 µs | 438.2 µs | **161.5 µs** | 154.1 µs |
-| `image_source/shoebox_order_3` | 56.67 µs | 61.45 µs | **40.51 µs** | 38.12 µs |
-| `propagation/ground_reflection` | 145 ns | 256 ns | 235 ns | 240 ns |
-| `dvn/synthesize_2s_2khz_density` | 3.048 ms | 3.583 ms | 3.512 ms | 3.585 ms |
-| `gfpe/solve_100m_30m_500hz` | 3.290 ms | 3.826 ms | 3.784 ms | 3.871 ms |
+| Benchmark | 6.5.35 | 2.1.2 on 6.7.18 | 2.1.3 | 2.2.1 | 2.3.0 |
+|-----------|-------:|----------------:|------:|------:|------:|
+| `solve_dwm_3d_30x25x20_50ms` | 1.059 s | 1.093 s | 1.064 s | 1.128 s | **154.8 ms** |
+| `dwm/dispersion_correct_22kHz_1s` | 313.5 µs | 322.6 µs | 324.2 µs | 327.8 µs | **10.98 µs** |
+| `fdtd/solve_40x40_50ms` | 18.83 ms | 18.80 ms | 18.88 ms | 19.40 ms | **6.99 ms** |
+| `ray/wall_intersection` | 215 ns | 173 ns | 158 ns | **106 ns** | 99 ns |
+| `ray/trace_linear_100_walls` | 1.509 ms | 1.105 ms | 1.022 ms | **673.1 µs** | **354.7 µs** |
+| `ray/trace_bvh_100_walls` | 1.816 ms | 1.280 ms | 1.198 ms | **866.9 µs** | **560.9 µs** |
+| `impulse/generate_ir_shoebox` | 60.28 ms | 49.03 ms | 44.56 ms | **30.33 ms** | **23.24 ms** |
+| `diffuse/1000_rays_shoebox` | 57.74 ms | 42.63 ms | 42.16 ms | **27.24 ms** | **20.77 ms** |
+| `image_source/shoebox_order_5` | 402.3 µs | 438.2 µs | **161.5 µs** | 154.1 µs | 157.7 µs |
+| `image_source/shoebox_order_3` | 56.67 µs | 61.45 µs | **40.51 µs** | 38.12 µs | 38.62 µs |
+| `propagation/ground_reflection` | 145 ns | 256 ns | 235 ns | 240 ns | 252 ns |
+| `dvn/synthesize_2s_2khz_density` | 3.048 ms | 3.583 ms | 3.512 ms | 3.585 ms | 3.622 ms |
+| `gfpe/solve_100m_30m_500hz` | 3.290 ms | 3.826 ms | 3.784 ms | 3.871 ms | 3.941 ms |
+
+**Finding — array builtins beat a scalar loop by far more than two lanes explain.** SSE2
+doubles the width, but `f64v_add` is 5.5 times faster than a Cyrius loop, because it also
+skips the compiler's general register handling. That is why the DWM solver gained 7×.
+
+**Finding — AVX2 only pays on long rows.** `f64v256_*` is faster in isolation, but under
+about 64 elements it loses in a solver, once each call's `vzeroupper` is paid: at 16³,
+15.1 ms with it against 12.5 ms without. These benchmark grids have short rows, so they
+run on 128-bit lanes. Rows of 64 and up get the 256-bit kernels, which cut run time by
+15–34% on FDTD and DWM grids with 66 to 500 cells per row.
 
 **Finding — the memory mattered more than the time.** Stack buffers took about 35% off
 the ray paths, but a 100-ray diffuse trace went from 142,722 allocations to 383, and from

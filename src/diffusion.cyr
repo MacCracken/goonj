@@ -139,27 +139,48 @@ fn solve_diffusion_2d(config, absorption_field, absorption_len, source_field, so
     var ratio = f64_div(f64_mul(d_coeff, dt), dx2);
     var c_over_mfp = f64_div(c, mfp);
 
+    # The absorption rate per cell (alpha is 0 beyond the supplied field).
+    var loss = goonj_alloc(n * 8);
+    var li = 0;
+    while (li < n) {
+        var alpha = 0;
+        if (li < absorption_len) { alpha = load64(absorption_field + li * 8); }
+        store64(loss + li * 8, f64_mul(c_over_mfp, alpha));
+        li = li + 1;
+    }
+
+    # One row's scratch for the array kernel below (ADR-0008).
+    var inner = nx - 2;
+    var t_new = goonj_alloc(inner * 8);
+    var t_loss = goonj_alloc(inner * 8);
+    var four = f64_from(4);
+
     var step = 0;
     while (step < num_steps) {
+        var w_data = _vec_data(w);
+        var w_new_data = _vec_data(w_new);
         var y = 1;
         while (y < ny - 1) {
-            var x = 1;
-            while (x < nx - 1) {
-                var idx = y * nx + x;
-                var wc = vec_get(w, idx);
-                var laplacian = f64_sub(
-                  f64_add(
-                    f64_add(vec_get(w, idx - 1), vec_get(w, idx + 1)),
-                    f64_add(vec_get(w, idx - nx), vec_get(w, idx + nx))),
-                  f64_mul(f64_from(4), wc));
+            # wn = (wc + ratio * lap) - dt * (loss * wc), a row at a time, where
+            # lap = ((left + right) + (below + above)) - 4 * wc
+            var first = (y * nx + 1) * 8;
+            var wc = w_data + first;
+            _row_add(t_new, wc - 8, wc + 8, inner);
+            _row_add(t_loss, wc - nx * 8, wc + nx * 8, inner);
+            _row_add(t_new, t_new, t_loss, inner);
+            _row_scale(t_loss, wc, four, inner);
+            _row_sub(t_new, t_new, t_loss, inner);
+            _row_scale(t_new, t_new, ratio, inner);
+            _row_add(t_new, wc, t_new, inner);
+            _row_mul(t_loss, loss + first, wc, inner);
+            _row_scale(t_loss, t_loss, dt, inner);
+            _row_sub(t_new, t_new, t_loss, inner);
 
-                # Absorption term (0 beyond the supplied field).
-                var alpha = 0;
-                if (idx < absorption_len) { alpha = load64(absorption_field + idx * 8); }
-                var absorp = f64_mul(f64_mul(c_over_mfp, alpha), wc);
-
-                var wn = f64_sub(f64_add(wc, f64_mul(ratio, laplacian)), f64_mul(dt, absorp));
-                vec_set(w_new, idx, f64_max(wn, 0));   # energy can't go negative
+            # Energy can't go negative.
+            var out = w_new_data + first;
+            var x = 0;
+            while (x < inner) {
+                store64(out + x * 8, f64_max(load64(t_new + x * 8), 0));
                 x = x + 1;
             }
             y = y + 1;

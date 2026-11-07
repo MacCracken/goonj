@@ -8,19 +8,16 @@
 > This file is the sequencing: what ships next, in what order, and what each step
 > waits on.
 
-## 2.3.x — Number types and SIMD
+## 2.3.x — Number types
 
-The port is f64 throughout, with no SIMD. The original gate was Cyrius shipping these
-features, and that has mostly cleared: `lib/simd.cyr` ships at 6.7.18, and hisab
-already uses `f64v_*` inside `HVec3`.
+2.3.0 took SIMD as far as it goes without moving a result
+([ADR-0008](../adr/0008-row-kernels-for-grid-solvers.md)). What is left is f32.
 
-- **SIMD on f64 inner loops:** the dwm solver, ray traversal and wall intersection.
-  No gate.
-- **Narrower integers** for grid indices, if measurement supports it. No gate.
-- **f32 on hot paths.** **Gate: hisab's `HVec3` is f64-only**, so this needs hisab to
+- **f32 on the ray paths.** **Gate: hisab's `HVec3` is f64-only**, so this needs hisab to
   move first.
-- **Refresh [`../benchmarks-rust-vs-cyrius.md`](../benchmarks-rust-vs-cyrius.md)**
-  once these land. It describes goonj's unoptimized first pass.
+- **f32 grids.** Not taken in 2.3.0, and still open. No gate: the row kernels don't use
+  `HVec3`, and `f32v_*` exists. It would double the lanes and halve the memory. It changes
+  every solver result, in the direction of the Rust original, so it needs an ADR.
 
 ## 2.x.x — Unscheduled
 

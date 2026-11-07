@@ -842,6 +842,266 @@ fn _h_allocation_budget() {
     return 0;
 }
 
+# ================================================================
+# 2.3.0 -- the row kernels (ADR-0008). A tolerance can't see what goes wrong here: the
+# first version overran its rows by one element on odd lengths and every suite passed.
+# So these compare bits. The expected hashes came from 2.2.1, the last scalar solvers,
+# on inputs that use only IEEE arithmetic, so no platform's exp or sin is in them.
+# ================================================================
+var _h_hash = 0;
+fn _h_g_reset() { _h_hash = 0xCBF29CE484222325; return 0; }
+fn _h_g_mix(v) {
+    var i = 0;
+    while (i < 8) {
+        _h_hash = _h_hash ^ ((v >> (i * 8)) & 255);
+        _h_hash = _h_hash * 0x100000001B3;
+        i = i + 1;
+    }
+    return 0;
+}
+fn _h_g_vec(v) {
+    var n = vec_len(v);
+    _h_g_mix(n);
+    var i = 0;
+    while (i < n) {
+        _h_g_mix(vec_get(v, i));
+        i = i + 1;
+    }
+    return 0;
+}
+fn _h_g_signal() {
+    var v = vec_new();
+    vec_push(v, F64_ONE);
+    vec_push(v, f64_neg(F64_HALF));
+    vec_push(v, f64_div(F64_ONE, f64_from(3)));
+    return v;
+}
+fn _h_g_walls(k) {
+    if (k == 0) { return wall_materials_rigid(); }
+    if (k == 1) { return wall_materials_uniform(acoustic_material_carpet()); }
+    return wall_materials_new(acoustic_material_concrete(), acoustic_material_carpet(), acoustic_material_wood(),
+      acoustic_material_glass(), acoustic_material_tile(), acoustic_material_drywall());
+}
+fn _h_g_dwm_sweep() {
+    _h_g_reset();
+    var dx = f64_mul(f64_div(f64_from(343), f64_from(22050)), DWM_SQRT_3);
+    var t = f64_div(F64_ONE, f64_from(2000));
+    var nx = 3;
+    while (nx <= 8) {
+        var ny = 3;
+        while (ny <= 5) {
+            var nz = 3;
+            while (nz <= 5) {
+                var w = 0;
+                while (w < 3) {
+                    var sx = 0;
+                    while (sx < nx) {
+                        var src = alloc(sizeof(DwmSource));
+                        DwmSource_set_ix(src, sx);
+                        DwmSource_set_iy(src, (nx + ny + nz + sx) % ny);
+                        DwmSource_set_iz(src, (sx * 3 + w) % nz);
+                        DwmSource_set_signal(src, _h_g_signal());
+                        var cfg = dwm_config_new(22050, dx, f64_from(343), nx, ny, nz, t, _h_g_walls(w));
+                        var rv = vec_new();
+                        vec_push(rv, dwm_receiver_new(nx - 1, ny - 1, nz - 1));
+                        vec_push(rv, dwm_receiver_new(nx / 2, ny / 2, nz / 2));
+                        var r = solve_dwm_3d(cfg, src, rv);
+                        _h_g_vec(DwmResult_final_pressure(r));
+                        _h_g_vec(vec_get(DwmResult_receiver_signals(r), 0));
+                        _h_g_vec(vec_get(DwmResult_receiver_signals(r), 1));
+                        sx = sx + 1;
+                    }
+                    w = w + 1;
+                }
+                nz = nz + 1;
+            }
+            ny = ny + 1;
+        }
+        nx = nx + 1;
+    }
+    return _h_hash;
+}
+fn _h_g_fdtd_sweep() {
+    _h_g_reset();
+    var dx = f64_mul(f64_div(f64_from(343), f64_from(22050)), f64_div(f64_from(3), F64_TWO));
+    var t = f64_div(F64_ONE, f64_from(500));
+    var nx = 3;
+    while (nx <= 14) {
+        var ny = 3;
+        while (ny <= 9) {
+            var sx = 0;
+            while (sx < nx) {
+                var cfg = fdtd_config_new(22050, dx, f64_from(343), nx, ny, t);
+                var rv = vec_new();
+                vec_push(rv, fdtd_receiver_new(nx - 1, ny - 1));
+                vec_push(rv, fdtd_receiver_new(nx / 2, ny / 2));
+                var r = solve_fdtd_2d(cfg, fdtd_source_new(sx, (sx * 5 + ny) % ny, _h_g_signal()), rv);
+                _h_g_vec(FdtdResult_final_pressure(r));
+                _h_g_vec(vec_get(FdtdResult_receiver_signals(r), 0));
+                _h_g_vec(vec_get(FdtdResult_receiver_signals(r), 1));
+                sx = sx + 1;
+            }
+            ny = ny + 1;
+        }
+        nx = nx + 1;
+    }
+    return _h_hash;
+}
+fn _h_g_diffusion_sweep() {
+    _h_g_reset();
+    var nx = 3;
+    while (nx <= 14) {
+        var ny = 3;
+        while (ny <= 9) {
+            var cells = nx * ny;
+            var a = alloc(cells * 8);
+            var s = alloc(cells * 8);
+            var i = 0;
+            while (i < cells) {
+                store64(a + i * 8, f64_div(f64_from(i % 7), f64_from(20)));
+                i = i + 1;
+            }
+            store64(s + (cells / 2) * 8, F64_ONE);
+            var cfg = diffusion_config_new(F64_HALF, f64_div(F64_ONE, f64_from(10000)), nx, ny, f64_from(343), F64_TWO,
+              f64_div(F64_ONE, f64_from(500)));
+            var r = solve_diffusion_2d(cfg, a, cells - nx, s, cells);
+            _h_g_vec(DiffusionResult_energy_density(r));
+            ny = ny + 1;
+        }
+        nx = nx + 1;
+    }
+    return _h_hash;
+}
+fn _h_g_dispersion_sweep() {
+    _h_g_reset();
+    var b0 = f64_div(f64_from(6), f64_from(5));
+    var b1 = f64_neg(f64_div(F64_ONE, f64_from(5)));
+    var dc = dispersion_correction_new(b0, b1);
+    var n = 0;
+    while (n < 600) {
+        var v = vec_new();
+        var i = 0;
+        while (i < n) {
+            vec_push(v, f64_div(f64_from((i * 7) % 13 - 6), f64_from(100)));
+            i = i + 1;
+        }
+        dispersion_correction_apply(dc, v);
+        _h_g_vec(v);
+        n = n + 1;
+    }
+    return _h_hash;
+}
+
+# One sweep of every row op at every length to `max`. Returns how many elements were wrong
+# plus how many writes landed past `n`.
+fn _h_row_sweep(max) {
+    var guard = 0x7FF8DEADBEEF0000;
+    var a = alloc((max + 1) * 8);
+    var b = alloc((max + 1) * 8);
+    var i = 0;
+    while (i <= max) {
+        store64(a + i * 8, f64_div(f64_from(i + 1), f64_from(3)));
+        store64(b + i * 8, f64_div(f64_from(i + 2), f64_from(7)));
+        i = i + 1;
+    }
+    var s = f64_div(f64_from(5), f64_from(9));
+    var out = alloc((max + 1) * 8);
+    var bad = 0;
+    var n = 0;
+    while (n <= max) {
+        var op = 0;
+        while (op < 4) {
+            i = 0;
+            while (i <= max) {
+                store64(out + i * 8, guard);
+                i = i + 1;
+            }
+            if (op == 0) { _row_add(out, a, b, n); }
+            if (op == 1) { _row_sub(out, a, b, n); }
+            if (op == 2) { _row_mul(out, a, b, n); }
+            if (op == 3) { _row_scale(out, a, s, n); }
+            i = 0;
+            while (i < n) {
+                var x = load64(a + i * 8);
+                var y = load64(b + i * 8);
+                var want = f64_add(x, y);
+                if (op == 1) { want = f64_sub(x, y); }
+                if (op == 2) { want = f64_mul(x, y); }
+                if (op == 3) { want = f64_mul(s, x); }
+                if (load64(out + i * 8) != want) { bad = bad + 1; }
+                i = i + 1;
+            }
+            if (load64(out + n * 8) != guard) { bad = bad + 1; }
+            op = op + 1;
+        }
+        n = n + 1;
+    }
+    return bad;
+}
+
+fn _h_row_ops() {
+    test_group("2.3.0: row ops touch exactly n elements");
+    var saved_min = ROW_WIDE_MIN;
+    var saved_wide = _row_wide;
+    var avx2 = simd_has_avx2();
+
+    # Default routing, then 128-bit only, then 256-bit from the shortest row it can take.
+    assert_eq(_h_row_sweep(80), 0, "default routing: scalar bits, nothing past n");
+    _row_wide = 0;
+    assert_eq(_h_row_sweep(80), 0, "128-bit path");
+    _row_wide = avx2;
+    ROW_WIDE_MIN = 1;
+    assert_eq(_h_row_sweep(80), 0, "256-bit path, where the CPU has it");
+    ROW_WIDE_MIN = saved_min;
+    _row_wide = saved_wide;
+
+    # An aliased row, as the kernels use them.
+    var a = alloc(64);
+    var b = alloc(64);
+    var c = alloc(64);
+    var i = 0;
+    while (i < 7) {
+        store64(a + i * 8, f64_div(f64_from(i + 1), f64_from(3)));
+        store64(b + i * 8, f64_div(f64_from(i + 2), f64_from(7)));
+        store64(c + i * 8, load64(a + i * 8));
+        i = i + 1;
+    }
+    _row_add(c, c, b, 7);
+    assert_eq(load64(c + 6 * 8), f64_add(load64(a + 6 * 8), load64(b + 6 * 8)), "out may alias a");
+
+    # _vec_data relies on lib/vec.cyr's documented layout. If that moves, this says so.
+    var v = vec_new();
+    vec_push(v, 11);
+    vec_push(v, 22);
+    assert_eq(load64(_vec_data(v) + 8), 22, "a vec's elements start at its first word");
+    return 0;
+}
+
+fn _h_golden_sweeps() {
+    assert_eq(_h_g_dwm_sweep(), 0x389B6C33178DDA61, "DWM: odd and even rows, every source class, three wall sets");
+    assert_eq(_h_g_fdtd_sweep(), 0xF165376846C6C0F0, "FDTD: odd and even rows, every source position");
+    assert_eq(_h_g_diffusion_sweep(), 0x04C1EA59BE0B7F1C, "diffusion: odd and even rows");
+    assert_eq(_h_g_dispersion_sweep(), 0xEF668F69A5BCC2BB, "dispersion: every length through two chunks");
+    return 0;
+}
+
+# These grids are small, so left alone they would never reach the 256-bit kernels. Each
+# path gets the same four hashes: a path no test runs is how the odd-row overrun got through.
+fn _h_row_kernels() {
+    test_group("2.3.0: row kernels give the bits the scalar solvers gave");
+    var saved_min = ROW_WIDE_MIN;
+    var saved_wide = _row_wide;
+    _h_golden_sweeps();
+    _row_wide = 0;
+    _h_golden_sweeps();
+    _row_wide = simd_has_avx2();
+    ROW_WIDE_MIN = 1;
+    _h_golden_sweeps();
+    ROW_WIDE_MIN = saved_min;
+    _row_wide = saved_wide;
+    return 0;
+}
+
 alloc_init();
 _h_fdtd();
 _h_dwm();
@@ -862,6 +1122,8 @@ _h_fdn_lazy();
 _h_allocation_refusal();
 _h_stack_escape();
 _h_allocation_budget();
+_h_row_ops();
+_h_row_kernels();
 
 var rc = assert_summary();
 syscall(60, rc);

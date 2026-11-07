@@ -271,25 +271,30 @@ fn solve_fdtd_2d(config, source, receivers) {
     var top_row = (ny - 1) * nx;
     var below_top = (ny - 2) * nx;
 
+    # One row's scratch for the array kernel below (ADR-0008).
+    var inner = nx - 2;
+    var t_lap = _fdtd_alloc_zeros(inner);
+    var t_lead = _fdtd_alloc_zeros(inner);
+    var four = f64_from(4);
+
     var step = 0;
     while (step < num_steps) {
-        # Interior 5-point Laplacian + leapfrog update.
+        # Interior 5-point Laplacian + leapfrog update, a row at a time:
+        #   lap = ((left + right) + below + above) - 4 * c
+        #   next = (2 * c - prev) + cfl_sq * lap
         var y = 1;
         while (y < ny - 1) {
-            var row = y * nx;
-            var x = 1;
-            while (x < nx - 1) {
-                var idx = row + x;
-                var c = load64(p_curr + idx * 8);
-                var sum = f64_add(load64(p_curr + (idx - 1) * 8), load64(p_curr + (idx + 1) * 8));
-                sum = f64_add(sum, load64(p_curr + (idx - nx) * 8));
-                sum = f64_add(sum, load64(p_curr + (idx + nx) * 8));
-                var lap = f64_sub(sum, f64_mul(f64_from(4), c));
-                var two_c = f64_mul(F64_TWO, c);
-                var val = f64_add(f64_sub(two_c, load64(p_prev + idx * 8)), f64_mul(cfl_sq, lap));
-                store64(p_next + idx * 8, val);
-                x = x + 1;
-            }
+            var first = (y * nx + 1) * 8;
+            var c = p_curr + first;
+            _row_add(t_lap, c - 8, c + 8, inner);
+            _row_add(t_lap, t_lap, c - nx * 8, inner);
+            _row_add(t_lap, t_lap, c + nx * 8, inner);
+            _row_scale(t_lead, c, four, inner);
+            _row_sub(t_lap, t_lap, t_lead, inner);
+            _row_scale(t_lap, t_lap, cfl_sq, inner);
+            _row_scale(t_lead, c, F64_TWO, inner);
+            _row_sub(t_lead, t_lead, p_prev + first, inner);
+            _row_add(p_next + first, t_lead, t_lap, inner);
             y = y + 1;
         }
 

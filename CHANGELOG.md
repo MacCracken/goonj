@@ -2,6 +2,72 @@
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-06
+
+SIMD on the grid solvers, and the wave solvers stop being the bottleneck. **No result
+moves, and no public signature changes.** **42 suites / 3801 assertions**, all green, and
+`cyrius audit` exits 0.
+
+### Performance
+
+- **Grid solvers run a row at a time through the `f64v_*` builtins**
+  ([ADR-0008](docs/adr/0008-row-kernels-for-grid-solvers.md)). They compile to plain SSE2,
+  or NEON on aarch64, and rows of 64 or more use the 256-bit kernels when the CPU has AVX2.
+
+  | Benchmark | 2.2.1 | 2.3.0 | Rust |
+  |-----------|------:|------:|-----:|
+  | `solve_dwm_3d_30x25x20_50ms` | 1.128 s | **154.8 ms** | 74.2 ms |
+  | `solve_dwm_3d_24cubed_0.01s` | 205.7 ms | **34.62 ms** | |
+  | `solve_dwm_3d_16cubed_0.01s` | 60.59 ms | **12.62 ms** | |
+  | `fdtd/solve_40x40_50ms` | 19.40 ms | **6.99 ms** | 1.17 ms |
+  | `dwm/dispersion_correct_22kHz_1s` | 327.8 µs | **10.98 µs** | 11.4 µs |
+
+  The DWM solver goes from about 15× behind Rust to about 2×, in f64 against Rust's f32.
+  These benchmark grids have short rows. Grids with 66 to 500 cells per row gain another
+  15–34% on AVX2.
+  `solve_diffusion_2d` gets the same kernels, with no benchmark to show for it.
+- **Ray traversal:** `_nearest_wall` skips the polygon test for a plane that can't beat the
+  best hit, and `point_in_convex_polygon` is spelled out as scalar expressions.
+  `ray/trace_linear_100_walls` goes from 673 to 355 µs, `ray/trace_bvh_100_walls` from 867
+  to 561 µs, `diffuse/1000_rays_shoebox` from 27.2 to 20.8 ms, and
+  `impulse/generate_ir_shoebox` from 30.3 to 23.2 ms. SIMD itself didn't help here.
+
+### Changed
+
+- **DWM's outgoing waves are one array per port**, not six values per node, so a row is a run
+  of memory. Internal only.
+- **New `_row_add`, `_row_sub`, `_row_mul`, `_row_scale`:** exact-length wrappers over the
+  builtins. `f64v_*` and `f64v256_*` step 2 or 4 lanes with no scalar tail, so any other length
+  rounds up and writes past the end.
+- **`simd` joins the stdlib list**, for the AVX2 check. Consumers get it through
+  `dist/goonj.deps` when they run `cyrius deps`.
+- **New `_vec_data`,** for reaching a vec's storage. It relies on the layout `lib/vec.cyr`
+  documents, and a test trips if that moves.
+
+### Dropped
+
+- **Narrower integers for grid indices.** The roadmap asked whether they would help if
+  measured. Nothing in goonj stores indices in bulk, so there is nothing to narrow.
+
+### Tests
+
+- **Bits are tested, not values.** The first version of the kernels overran odd rows by one
+  element and every suite passed, because they compare within a tolerance. It was caught by
+  comparing hashes against 2.2.1.
+- **`tests/hardening.tcyr`: 134 → 151 assertions.** Golden hashes from 2.2.1 for DWM, FDTD,
+  diffusion and dispersion, over odd and even rows and every source class, run on each SIMD
+  path, and the row ops writing exactly `n` elements at every length to 80.
+- **172,180 compared outputs are unchanged from 2.2.1**, hostile and realistic, NaN results
+  included. A further 6,498-case grid sweep hashes identically.
+- **The golden hashes also match on aarch64**, run under qemu.
+
+### Documentation
+
+- New [ADR-0008](docs/adr/0008-row-kernels-for-grid-solvers.md).
+- [`benchmarks-rust-vs-cyrius.md`](docs/benchmarks-rust-vs-cyrius.md) is rewritten around
+  v2.3.0: it had described the unoptimized first pass.
+- Roadmap: SIMD removed, and only f32 remains in 2.3.x.
+
 ## [2.2.1] - 2026-11-06
 
 The allocation strategy: hot paths stop leaving garbage behind. **No result moves, and no

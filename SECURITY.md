@@ -4,7 +4,8 @@
 
 | Version | Supported | Notes |
 |---------|-----------|-------|
-| 2.2.1   | ✅ Yes    | Current. See **Known limits**. |
+| 2.3.0   | ✅ Yes    | Current. See **Known limits**. |
+| 2.2.1   | ✅ Yes    | |
 | 2.2.0   | ✅ Yes    | Upgrade for a long-lived process: temporaries are never reclaimed, about 3.6 MB per 1 s impulse response, and a long `solve_radiosity` can run out of memory. |
 | 2.1.3   | ✅ Yes    | Closes the 2.0.6 limit down to an address-space requirement. |
 | 2.1.0–2.1.2 | ⚠️ Upgrade | Public band accessors, including `mbr_set_energy_band`, read and write out of bounds on a bad index, and carry the 2.0.6 limit. Fixed in 2.1.3. |

@@ -298,10 +298,19 @@ fn dispersion_correction_apply(dc, signal) {
     if (n == 0) { return 0; }
     var b0 = DispersionCorrection_b0(dc);
     var b1 = DispersionCorrection_b1(dc);
-    var i = n - 1;
-    while (i >= 1) {
-        vec_set(signal, i, f64_add(f64_mul(b0, vec_get(signal, i)), f64_mul(b1, vec_get(signal, i - 1))));
-        i = i - 1;
+    var data = _vec_data(signal);
+    var now: i64[256];
+    var before: i64[256];
+    # y[i] = b0·x[i] + b1·x[i-1], from the end, so x[i-1] is still the input.
+    var hi = n;
+    while (hi > 1) {
+        var lo = hi - 256;
+        if (lo < 1) { lo = 1; }
+        var len = hi - lo;
+        _row_scale(&now, data + lo * 8, b0, len);
+        _row_scale(&before, data + (lo - 1) * 8, b1, len);
+        _row_add(data + lo * 8, &now, &before, len);
+        hi = lo;
     }
     vec_set(signal, 0, f64_mul(b0, vec_get(signal, 0)));
     return 0;
@@ -314,6 +323,15 @@ fn dispersion_correction_apply(dc, signal) {
 #must_use
 fn _dwm_zeros(count) {
     return goonj_alloc(count * 8);   # alloc's bytes are zero, and 0.0's bit pattern is 0
+}
+
+# One row of a wall's filter state, y[n] = b0·x + a1·prev_y, updated in place from `own`,
+# that row's outgoing wave into the wall. Rows are `len` long; `ta` and `tb` are scratch.
+fn _dwm_face_row(state, own, b0, a1, ta, tb, len) {
+    _row_scale(ta, own, b0, len);
+    _row_scale(tb, state, a1, len);
+    _row_add(state, ta, tb, len);
+    return 0;
 }
 
 # Returns a DwmResult. Empty result on degenerate input (tiny grid, source
@@ -409,91 +427,149 @@ fn solve_dwm_3d(config, source, receivers) {
     }
 
     var source_signal = DwmSource_signal(source);
+    var source_len = vec_len(source_signal);
     var source_node = _dwm_idx(DwmSource_ix(source), DwmSource_iy(source), DwmSource_iz(source), nx, ny);
+    var source_row = source_node - DwmSource_ix(source);
+
+    # Each port is its own array of `n`, so a row of nodes is a run of memory and the
+    # stencil can be array ops (ADR-0008). Ports 0 to 5 point +x, -x, +y, -y, +z, -z.
+    # A node's incoming wave along each axis is its neighbour's opposite port, or at a
+    # wall its own outgoing wave through that face's filter.
+    var inner = nx - 2;
+    var t_sum = _dwm_zeros(nx);
+    var t_other = _dwm_zeros(nx);
+    var b0_ypos = BoundaryFilter_b0(f_ypos);
+    var a1_ypos = BoundaryFilter_a1(f_ypos);
+    var b0_yneg = BoundaryFilter_b0(f_yneg);
+    var a1_yneg = BoundaryFilter_a1(f_yneg);
+    var b0_zpos = BoundaryFilter_b0(f_zpos);
+    var a1_zpos = BoundaryFilter_a1(f_zpos);
+    var b0_zneg = BoundaryFilter_b0(f_zneg);
+    var a1_zneg = BoundaryFilter_a1(f_zneg);
 
     for (var step = 0; step < num_steps; step = step + 1) {
+        var o0 = out_curr;
+        var o1 = o0 + n * 8;
+        var o2 = o1 + n * 8;
+        var o3 = o2 + n * 8;
+        var o4 = o3 + n * 8;
+        var o5 = o4 + n * 8;
+        var q0 = out_next;
+        var q1 = q0 + n * 8;
+        var q2 = q1 + n * 8;
+        var q3 = q2 + n * 8;
+        var q4 = q3 + n * 8;
+        var q5 = q4 + n * 8;
+        var source_on = 0;
+        var source_value = 0;
+        if (step < source_len) {
+            source_on = 1;
+            source_value = vec_get(source_signal, step);
+        }
+
         for (var z = 0; z < nz; z = z + 1) {
             for (var y = 0; y < ny; y = y + 1) {
-                for (var x = 0; x < nx; x = x + 1) {
-                    var node = _dwm_idx(x, y, z, nx, ny);
-                    var base = node * DWM_K;
+                var row = (z * ny + y) * nx;
 
-                    # Incoming waves; at a boundary the outgoing wave reflects
-                    # back through that face's 1-pole IIR (per-cell state).
-                    var in_xpos = 0;
-                    if (x + 1 < nx) {
-                        in_xpos = load64(out_curr + (_dwm_idx(x + 1, y, z, nx, ny) * DWM_K + 1) * 8);
-                    } else {
-                        var si = z * ny + y;
-                        in_xpos = boundary_filter_process(f_xpos, load64(out_curr + base * 8), load64(s_xpos + si * 8));
-                        store64(s_xpos + si * 8, in_xpos);
-                    }
-                    var in_xneg = 0;
-                    if (x > 0) {
-                        in_xneg = load64(out_curr + (_dwm_idx(x - 1, y, z, nx, ny) * DWM_K) * 8);
-                    } else {
-                        var si = z * ny + y;
-                        in_xneg = boundary_filter_process(f_xneg, load64(out_curr + (base + 1) * 8),
-                          load64(s_xneg + si * 8));
-                        store64(s_xneg + si * 8, in_xneg);
-                    }
-                    var in_ypos = 0;
-                    if (y + 1 < ny) {
-                        in_ypos = load64(out_curr + (_dwm_idx(x, y + 1, z, nx, ny) * DWM_K + 3) * 8);
-                    } else {
-                        var si = z * nx + x;
-                        in_ypos = boundary_filter_process(f_ypos, load64(out_curr + (base + 2) * 8),
-                          load64(s_ypos + si * 8));
-                        store64(s_ypos + si * 8, in_ypos);
-                    }
-                    var in_yneg = 0;
-                    if (y > 0) {
-                        in_yneg = load64(out_curr + (_dwm_idx(x, y - 1, z, nx, ny) * DWM_K + 2) * 8);
-                    } else {
-                        var si = z * nx + x;
-                        in_yneg = boundary_filter_process(f_yneg, load64(out_curr + (base + 3) * 8),
-                          load64(s_yneg + si * 8));
-                        store64(s_yneg + si * 8, in_yneg);
-                    }
-                    var in_zpos = 0;
-                    if (z + 1 < nz) {
-                        in_zpos = load64(out_curr + (_dwm_idx(x, y, z + 1, nx, ny) * DWM_K + 5) * 8);
-                    } else {
-                        var si = y * nx + x;
-                        in_zpos = boundary_filter_process(f_zpos, load64(out_curr + (base + 4) * 8),
-                          load64(s_zpos + si * 8));
-                        store64(s_zpos + si * 8, in_zpos);
-                    }
-                    var in_zneg = 0;
-                    if (z > 0) {
-                        in_zneg = load64(out_curr + (_dwm_idx(x, y, z - 1, nx, ny) * DWM_K + 4) * 8);
-                    } else {
-                        var si = y * nx + x;
-                        in_zneg = boundary_filter_process(f_zneg, load64(out_curr + (base + 5) * 8),
-                          load64(s_zneg + si * 8));
-                        store64(s_zneg + si * 8, in_zneg);
-                    }
+                # Incoming along y and z, as pointers to x = 0 of this row. A wall's
+                # filter state already sits row by row, so its result is read in place.
+                var in_yp = o3 + (row + nx) * 8;
+                if (y == ny - 1) {
+                    in_yp = s_ypos + (z * nx) * 8;
+                    _dwm_face_row(in_yp, o2 + row * 8, b0_ypos, a1_ypos, t_sum, t_other, nx);
+                }
+                var in_yn = o2 + (row - nx) * 8;
+                if (y == 0) {
+                    in_yn = s_yneg + (z * nx) * 8;
+                    _dwm_face_row(in_yn, o3 + row * 8, b0_yneg, a1_yneg, t_sum, t_other, nx);
+                }
+                var in_zp = o5 + (row + nxy) * 8;
+                if (z == nz - 1) {
+                    in_zp = s_zpos + (y * nx) * 8;
+                    _dwm_face_row(in_zp, o4 + row * 8, b0_zpos, a1_zpos, t_sum, t_other, nx);
+                }
+                var in_zn = o4 + (row - nxy) * 8;
+                if (z == 0) {
+                    in_zn = s_zneg + (y * nx) * 8;
+                    _dwm_face_row(in_zn, o5 + row * 8, b0_zneg, a1_zneg, t_sum, t_other, nx);
+                }
 
-                    # Junction pressure p = (2/K)·Σ incoming.
-                    var sum = f64_add(f64_add(f64_add(in_xpos, in_xneg), f64_add(in_ypos, in_yneg)),
-                      f64_add(in_zpos, in_zneg));
-                    var p = f64_mul(DWM_SCATTER, sum);
+                # x = 1 to nx - 2. Junction pressure p = (2/K)·Σ incoming, then
+                # outgoing out_i = p − in_i.
+                var first = (row + 1) * 8;
+                var p_row = pressure + first;
+                var in_xp = o1 + first + 8;
+                var in_xn = o0 + first - 8;
+                _row_add(t_sum, in_xp, in_xn, inner);
+                _row_add(t_other, in_yp + 8, in_yn + 8, inner);
+                _row_add(t_sum, t_sum, t_other, inner);
+                _row_add(t_other, in_zp + 8, in_zn + 8, inner);
+                _row_add(t_sum, t_sum, t_other, inner);
+                _row_scale(p_row, t_sum, DWM_SCATTER, inner);
+                _row_sub(q0 + first, p_row, in_xp, inner);
+                _row_sub(q1 + first, p_row, in_xn, inner);
+                _row_sub(q2 + first, p_row, in_yp + 8, inner);
+                _row_sub(q3 + first, p_row, in_yn + 8, inner);
+                _row_sub(q4 + first, p_row, in_zp + 8, inner);
+                _row_sub(q5 + first, p_row, in_zn + 8, inner);
 
-                    # Transparent (additive) source injection.
-                    if (node == source_node) {
-                        if (step < vec_len(source_signal)) {
-                            p = f64_add(p, vec_get(source_signal, step));
+                # The two end nodes have an x wall, so one scalar pass each, and the
+                # source joins its node here if it sits inside the row.
+                var si = z * ny + y;
+                var e = 0;
+                while (e < 3) {
+                    var x = 0;
+                    var do_node = 1;
+                    if (e == 1) { x = nx - 1; }
+                    if (e == 2) {
+                        x = source_node - row;
+                        do_node = 0;
+                        if (source_on == 1) {
+                            if (row == source_row) {
+                                if (x > 0) {
+                                    if (x < nx - 1) { do_node = 1; }
+                                }
+                            }
                         }
                     }
-                    store64(pressure + node * 8, p);
+                    if (do_node == 1) {
+                        var node = row + x;
+                        var xp_val = 0;
+                        var xn_val = 0;
+                        if (e == 0) {
+                            xn_val = boundary_filter_process(f_xneg, load64(o1 + node * 8), load64(s_xneg + si * 8));
+                            store64(s_xneg + si * 8, xn_val);
+                        } else {
+                            xn_val = load64(o0 + (node - 1) * 8);
+                        }
+                        if (e == 1) {
+                            xp_val = boundary_filter_process(f_xpos, load64(o0 + node * 8), load64(s_xpos + si * 8));
+                            store64(s_xpos + si * 8, xp_val);
+                        } else {
+                            xp_val = load64(o1 + (node + 1) * 8);
+                        }
+                        var yp_val = load64(in_yp + x * 8);
+                        var yn_val = load64(in_yn + x * 8);
+                        var zp_val = load64(in_zp + x * 8);
+                        var zn_val = load64(in_zn + x * 8);
 
-                    # Outgoing: out_i = p − in_i.
-                    store64(out_next + base * 8, f64_sub(p, in_xpos));
-                    store64(out_next + (base + 1) * 8, f64_sub(p, in_xneg));
-                    store64(out_next + (base + 2) * 8, f64_sub(p, in_ypos));
-                    store64(out_next + (base + 3) * 8, f64_sub(p, in_yneg));
-                    store64(out_next + (base + 4) * 8, f64_sub(p, in_zpos));
-                    store64(out_next + (base + 5) * 8, f64_sub(p, in_zneg));
+                        var sum = f64_add(f64_add(f64_add(xp_val, xn_val), f64_add(yp_val, yn_val)),
+                          f64_add(zp_val, zn_val));
+                        var p = f64_mul(DWM_SCATTER, sum);
+
+                        # Transparent (additive) source injection.
+                        if (node == source_node) {
+                            if (source_on == 1) { p = f64_add(p, source_value); }
+                        }
+                        store64(pressure + node * 8, p);
+                        store64(q0 + node * 8, f64_sub(p, xp_val));
+                        store64(q1 + node * 8, f64_sub(p, xn_val));
+                        store64(q2 + node * 8, f64_sub(p, yp_val));
+                        store64(q3 + node * 8, f64_sub(p, yn_val));
+                        store64(q4 + node * 8, f64_sub(p, zp_val));
+                        store64(q5 + node * 8, f64_sub(p, zn_val));
+                    }
+                    e = e + 1;
                 }
             }
         }

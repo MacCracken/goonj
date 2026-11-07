@@ -237,3 +237,91 @@ fn _v3_keep(v) {
     if (kept == 0) { goonj_alloc_refused(); }
     return kept;
 }
+
+# The element storage of a vec, for the f64v_* array builtins. lib/vec.cyr documents the
+# layout as { data_ptr, len, cap }, matching lib/slice.cyr. Stale after any push.
+#must_use
+fn _vec_data(v) {
+    return load64(v);
+}
+
+# ================================================================
+# Array ops (ADR-0008)
+# ================================================================
+# Row kernels call these, never the builtins directly. f64v_* steps two lanes and
+# f64v256_* four, with no scalar tail, so a length that isn't a multiple rounds UP:
+# f64v_add(out, a, b, 1) writes two elements. These touch exactly `n` elements and give
+# the same bits as the scalar expression, on either path. `out` may be `a` or `b`, but
+# must not overlap them at an offset.
+
+# Below this a row stays on 128-bit lanes. Measured on the solvers: the ymm kernels lose to
+# them under about 64 elements, once each call's vzeroupper is paid (ADR-0008).
+var ROW_WIDE_MIN = 64;
+
+# 1 = use the 256-bit kernels, 0 = don't, 2 = not probed yet. f64v256_* is an illegal
+# instruction without AVX2, so this comes from the CPU. Only a test sets it otherwise.
+var _row_wide = 2;
+
+# Elements of an `n`-long row for the 256-bit kernels: a multiple of 4, or 0.
+#must_use
+fn _row_wide_len(n) {
+    if (_row_wide == 2) { _row_wide = simd_has_avx2(); }
+    if (_row_wide == 0) { return 0; }
+    return n & (0 - 4);
+}
+
+fn _row_add(out, a, b, n) {
+    var wide = 0;
+    if (n >= ROW_WIDE_MIN) { wide = _row_wide_len(n); }
+    if (wide > 0) { f64v256_add(out, a, b, wide); }
+    var even = n & (0 - 2);
+    if (even > wide) {
+        f64v_add(out + wide * 8, a + wide * 8, b + wide * 8, even - wide);
+    }
+    if (even != n) {
+        store64(out + even * 8, f64_add(load64(a + even * 8), load64(b + even * 8)));
+    }
+    return 0;
+}
+
+fn _row_sub(out, a, b, n) {
+    var wide = 0;
+    if (n >= ROW_WIDE_MIN) { wide = _row_wide_len(n); }
+    if (wide > 0) { f64v256_sub(out, a, b, wide); }
+    var even = n & (0 - 2);
+    if (even > wide) {
+        f64v_sub(out + wide * 8, a + wide * 8, b + wide * 8, even - wide);
+    }
+    if (even != n) {
+        store64(out + even * 8, f64_sub(load64(a + even * 8), load64(b + even * 8)));
+    }
+    return 0;
+}
+
+fn _row_mul(out, a, b, n) {
+    var wide = 0;
+    if (n >= ROW_WIDE_MIN) { wide = _row_wide_len(n); }
+    if (wide > 0) { f64v256_mul(out, a, b, wide); }
+    var even = n & (0 - 2);
+    if (even > wide) {
+        f64v_mul(out + wide * 8, a + wide * 8, b + wide * 8, even - wide);
+    }
+    if (even != n) {
+        store64(out + even * 8, f64_mul(load64(a + even * 8), load64(b + even * 8)));
+    }
+    return 0;
+}
+
+fn _row_scale(out, a, s, n) {
+    var wide = 0;
+    if (n >= ROW_WIDE_MIN) { wide = _row_wide_len(n); }
+    if (wide > 0) { f64v256_scale(out, a, s, wide); }
+    var even = n & (0 - 2);
+    if (even > wide) {
+        f64v_scale(out + wide * 8, a + wide * 8, s, even - wide);
+    }
+    if (even != n) {
+        store64(out + even * 8, f64_mul(load64(a + even * 8), s));
+    }
+    return 0;
+}
