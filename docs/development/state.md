@@ -5,6 +5,10 @@
 
 ## Version
 
+**2.3.1** — first look at the consumers. `Fdn_delay_lines` is a vec of vecs again, after
+naad's suite showed that 2.1.3 had changed what it returns, and `fdn_process_sample` gets
+14% faster. No result moves.
+
 **2.3.0** — SIMD on the grid solvers: the DWM solver goes from about 15× behind Rust to
 about 2×, FDTD from about 17× to 6×, and ray traversal gets faster too. No result moves
 ([ADR-0008](../adr/0008-row-kernels-for-grid-solvers.md)).
@@ -173,11 +177,12 @@ round-trips (no serde in Cyrius). **37 suites, 3624 assertions, all green.** Run
 one with `cyrius test tests/<module>.tcyr`.
 
 Four suites sit outside that per-module set, bringing the totals to
-**42 suites / 3801 assertions**:
+**42 suites / 3806 assertions**:
 
-- **`hardening.tcyr`** (151) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
+- **`hardening.tcyr`** (156) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
   sample-count contract, the 2.0.6 `f64_to` and NaN-vertex cases, the 2.1.3 sweep, the
-  2.2.1 stack-escape checks and allocation budgets, and the 2.3.0 golden hashes.
+  2.2.1 stack-escape checks and allocation budgets, the 2.3.0 golden hashes, and the
+  2.3.1 FDN line shape.
   Runs against the shipped `dist/goonj.cyr`, so it also proves each repair reached the
   bundle. A real regression suite: it SIGSEGVs or aborts against 2.0.1 and 2.1.2.
 - **`integration.tcyr`** (9) — the six cross-module tests from `rust-old/tests/integration.rs`,
@@ -229,20 +234,30 @@ numbers `const` from 2.5.8, and goonj's `logging` pulls sakshi in. Measured on 1
 pins from 6.6.3 to 6.7.18 at 2.1.1: below 6.7.2 the build fails with `undefined
 variable '_SK_SYS_OPEN'`, and every pin from 6.7.2 builds and runs.
 
-Six repos declare `[deps.goonj]`, all pinned behind 2.1.1 and below that floor (as
-of 2026-11-06):
+Six repos declare `[deps.goonj]`, all pinned behind 2.1.1 and below that floor. Each was
+tried in a scratch copy at 2.3.1, on cyrius 6.7.18 and hisab 3.4.1 (as of 2026-11-06):
 
-| Repo | goonj | hisab | cyrius |
-|------|-------|-------|--------|
-| dhvani | 2.0.5 | 2.11.2 | 6.6.10 |
-| garjan, ghurni, prani | 2.0.4 | 2.11.2 | 6.6.3 |
-| naad, svara | 2.0.4 | 2.22.1 | 6.6.3 |
+| Repo | goonj functions called | goonj / hisab / cyrius today | Suites at 2.3.1 | What is left |
+|------|------|------|------|------|
+| dhvani | 20 | 2.0.5 / 2.11.2 / 6.6.10 | 65 of 65 | Move its pins |
+| garjan | 0 | 2.0.4 / 2.11.2 / 6.6.3 | 33 of 33 | Move its pins |
+| ghurni | 0 | 2.0.4 / 2.11.2 / 6.6.3 | 10 of 10 | Move its pins |
+| naad | 33 | 2.0.4 / 2.22.1 / 6.6.3 | 39 of 40 | Bind the `Result` at 3 `num_fft`/`num_ifft` sites in `src/acoustics_convolution.cyr`. One sine golden moved 1 ULP, on a path that calls no goonj |
+| svara | 0 | 2.0.4 / 2.22.1 / 6.6.3 | 18 of 22 | hisab retired `calc_monotone_cubic`, which `src/prosody.cyr` calls |
+| prani | 0 | 2.0.4 / 2.11.2 / 6.6.3 | 12 of 18 | Its suites and guards assume `f64_to` from before cyrius 6.6.8. A 1e300 s duration now ends in `vec: capacity overflow` |
+
+**Every result but naad's ran against a naad patched at those 3 sites.** Released naad
+doesn't compile against hisab 3, and the other five all link it. None of these failures
+comes from goonj.
+
+**Derived accessors count as public here,** even where Rust's fields are private, and
+consumers read them: naad's suite is how 2.1.3's `Fdn_delay_lines` change was found.
+Before changing what one returns, search these repos as well as this one.
 
 ⚠ **dhvani builds 2.0.5 on cyrius ≥ 6.6.8**, so the memory exhaustion fixed in 2.0.6
-is live there until it bumps. A from-scratch consumer builds and runs on 2.1.1, but
-whether these six repos' own code does has not been checked from here; see
-[`roadmap.md`](roadmap.md#consumer-green). aethersafha does not declare it, and
-shruti and kiran/joshua have no `cyrius.cyml` alongside these repos.
+is live there until it bumps. aethersafha does not declare goonj, shruti is still Rust,
+and kiran and joshua have no repo alongside these. See
+[`roadmap.md`](roadmap.md#consumer-green).
 
 ## Next
 

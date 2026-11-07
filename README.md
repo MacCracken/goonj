@@ -13,7 +13,7 @@ single distlib bundle, `dist/goonj.cyr`, for downstream Cyrius consumers.
 37 modules covering sound propagation, room simulation, ray/beam/image-source
 tracing, wave-based methods (DWM, FDTD, GFPE), impulse-response generation,
 diffraction, resonance, and spatialization — **3,624 parity assertions across 37
-test suites, all green** (42 suites / 3,801 assertions counting the hardening,
+test suites, all green** (42 suites / 3,806 assertions counting the hardening,
 integration, modal and smoke suites).
 
 ## Features

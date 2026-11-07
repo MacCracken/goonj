@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-11-06
+
+The first look at goonj's consumers, which found a regression of goonj's own. **No result
+moves.** **42 suites / 3806 assertions**, all green, and `cyrius audit` exits 0.
+
+### Fixed
+
+- **`Fdn_delay_lines` returns a vec of vecs again, as it did through 2.1.2.** 2.1.3 made
+  each line a bare buffer behind the same accessor, because "nothing in the repo reads this
+  one". naad's suite does. `vec_len` read a line's second sample as its length and `vec_get`
+  read its first as a pointer, so a read faulted or saw an empty line, and naad's check
+  that a reset clears the lines passed on length 0. Each line is a vec over the same
+  untouched zeroed storage now, so a capped line still costs only address space.
+
+### Removed
+
+- **`Fdn_delay_lens` and `Fdn_set_delay_lens`**, added in 2.1.3. A line's `vec_len` is its
+  length. No consumer has moved past 2.0.5, so none can be using them.
+
+### Performance
+
+- **`fdn_process_sample` is 14% faster**, 415 to 355 ns per sample on 8 lines, with the same
+  output. Reading each line through its header drops two calls per line per sample.
+
+### Documentation
+
+- **The Consumer-green gate is rewritten from a measurement.** It waited on dhvani being
+  ported, which has happened. What blocks it now is naad moving to hisab 3, because every
+  other repo links naad. See [`state.md`](docs/development/state.md#consumers).
+
 ## [2.3.0] - 2026-11-06
 
 SIMD on the grid solvers, and the wave solvers stop being the bottleneck. **No result

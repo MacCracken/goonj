@@ -595,6 +595,49 @@ fn _h_stable_sort() {
 # 2.1.3 -- the FDN known limit. fdn_new took 8 s and 9.3 GiB here, because a vec_push
 # fill touched every page. The lines now cost address space until used.
 # ================================================================
+fn _h_fdn_lines_are_vecs() {
+    test_group("2.3.1: Fdn_delay_lines is a vec of vecs");
+    # 2.1.3 made each line a bare buffer behind the same accessor. vec_len then read the
+    # second sample as a length, and vec_get the first as a pointer. naad's suite reads
+    # these lines, and its check that a reset clears them passed on length 0.
+    var cfg = fdn_config_for_room(F64_ONE, F64_ONE, F64_ONE, F64_ONE, 8000);
+    var fdn = fdn_new(cfg);
+    var lines = Fdn_delay_lines(fdn);
+    var lens = FdnConfig_delay_lengths(cfg);
+    var n = vec_len(lines);
+    assert_eq(n, vec_len(lens), "one line per delay");
+    var unused = fdn_process_sample(fdn, F64_ONE);
+    unused = fdn_process_sample(fdn, F64_ONE);
+    var share = f64_div(F64_ONE, f64_from(n));
+    var i = 0;
+    var sized = 1;
+    var written = 1;
+    while (i < n) {
+        var line = vec_get(lines, i);
+        if (vec_len(line) != vec_get(lens, i)) { sized = 0; }
+        if (vec_get(line, 0) != share) { written = 0; }
+        if (vec_get(line, 1) != share) { written = 0; }
+        if (vec_get(line, 2) != 0) { written = 0; }
+        i = i + 1;
+    }
+    assert_eq(sized, 1, "each line's length is its delay");
+    assert_eq(written, 1, "each line reads back what the FDN wrote");
+    fdn_reset(fdn);
+    i = 0;
+    var cleared = 1;
+    while (i < n) {
+        var reset_line = vec_get(lines, i);
+        var j = 0;
+        while (j < vec_len(reset_line)) {
+            if (vec_get(reset_line, j) != 0) { cleared = 0; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    assert_eq(cleared, 1, "a reset clears what vec_get reads");
+    return 0;
+}
+
 fn _h_fdn_lazy() {
     test_group("2.1.3: a capped FDN line touches nothing until used");
     var before = alloc_used();
@@ -606,6 +649,7 @@ fn _h_fdn_lazy() {
     assert_eq(o, 0, "the first output is the empty line");
     o = fdn_process_sample(fdn, F64_ONE);
     assert(f64_eq(o, o) == 1, "an +Inf room still runs");
+    assert_eq(vec_len(vec_get(Fdn_delay_lines(fdn), 0)), FDN_MAX_DELAY_SAMPLES, "a capped line is still a vec");
 
     # fdn_reset wrote zeros through every line, 4.6 GiB resident on a capped FDN. That
     # took down a CI runner when the fuzz harness did it in a loop.
@@ -1118,6 +1162,7 @@ _h_nan_parity();
 _h_negative_counts();
 _h_runaway_loops();
 _h_stable_sort();
+_h_fdn_lines_are_vecs();
 _h_fdn_lazy();
 _h_allocation_refusal();
 _h_stack_escape();

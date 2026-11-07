@@ -23,11 +23,15 @@
 
 ### Consumer-green
 
-At least one downstream consumer compiles and passes against `dist/goonj.cyr`. This is
-not goonj's to close alone. Six repos declare `[deps.goonj]` at 2.0.4 or 2.0.5 (see
-[`state.md`](state.md#consumers)), and nobody has confirmed that any of them compiles
-and passes. Reaching 2.1.x needs each of them on cyrius ≥ 6.7.2 first. **Gate: dhvani,
-shruti and kiran being ported to Cyrius.**
+At least one downstream consumer compiles and passes against `dist/goonj.cyr` on its own
+released pins. This is not goonj's to close alone. Six repos declare `[deps.goonj]` at
+2.0.4 or 2.0.5, and reaching 2.1.x needs each of them on cyrius ≥ 6.7.2 first.
+
+In scratch copies at 2.3.1, dhvani, garjan and ghurni pass every suite, naad passes all
+but one, and svara and prani each have work of their own (see
+[`state.md`](state.md#consumers)). Those runs needed a naad patched for hisab 3, and the
+other five all link naad. **Gate: naad moving to hisab 3**, then each repo moving its pins.
+shruti is still Rust, and kiran and joshua have no repo here.
 
 ### Remaining allocation
 
