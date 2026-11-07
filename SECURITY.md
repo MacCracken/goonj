@@ -68,6 +68,7 @@ What that means in practice, and what to expect from a report:
 
 - **`fdn_new` on a non-finite or overflowing room dimension needs about 5.5 GiB of
   address space**, and takes under 25 ms and 18 MiB of it resident, because a delay line
-  costs nothing until it is used. Under a tighter address-space limit it stops with
+  costs nothing until it is used, and `fdn_reset` clears only what was written. Under a
+  tighter address-space limit it stops with
   `goonj: allocation refused`. Reject non-finite dimensions first if a consumer forwards
   them from untrusted input.

@@ -6,7 +6,7 @@
 
 The P(-1) audit, hardening and optimization sweep. **Upgrade if a consumer forwards
 indices or geometry from less-trusted input**: public accessors read and wrote out of
-bounds on a bad index, and have since 2.0.0. **41 suites / 3742 assertions**, all green,
+bounds on a bad index, and have since 2.0.0. **41 suites / 3746 assertions**, all green,
 and `cyrius audit` exits 0.
 
 Results on valid input do not move: seven whole pipelines hash identically to 2.1.2.
@@ -38,7 +38,8 @@ different.
   it took about 8 s and 9.3 GiB resident. It now takes under 25 ms and 18 MiB resident,
   with about 5.5 GiB of address space, because a delay line is zeroed memory that costs
   nothing until it is used. Under a tighter limit it stops with
-  `goonj: allocation refused`. Hand-built configs get the same cap.
+  `goonj: allocation refused`. Hand-built configs get the same cap. `fdn_reset` clears
+  only what was written, so it no longer touches every page of a capped line.
 
 ### Fixed
 
@@ -95,9 +96,11 @@ Every change here keeps results bit-identical on valid input.
 
 ### Tests
 
-- **`tests/hardening.tcyr`: 44 → 101 assertions.** Each new group was run against 2.1.2,
+- **`tests/hardening.tcyr`: 44 → 105 assertions.** Each new group was run against 2.1.2,
   where all of them fail, abort or fault.
-- **`tests/goonj.fcyr` is real:** 2,000 cases, 13 groups, about a minute under `--poison`.
+- **`tests/goonj.fcyr` is real:** 2,000 cases, 13 groups, about 15 s under `--poison`.
+  A batch over 2 GiB resident fails the run, because a hosted runner has far less memory
+  than a dev machine and dies without saying why. A clean run peaks near 0.6 GiB.
 - **CI now gates `cyrius audit` and `cyrius fuzz --poison`.**
 
 ### Documentation

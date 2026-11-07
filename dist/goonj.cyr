@@ -2671,7 +2671,7 @@ struct FdnConfig { num_delays; delay_lengths; feedback_gains; sample_rate; targe
 #   sample_rate     : u32 Hz (retained; unused in processing, as in Rust)
 # ================================================================
 #derive(accessors)
-struct Fdn { delay_lines; delay_lens; write_positions; feedback_gains; scratch; sample_rate; }
+struct Fdn { delay_lines; delay_lens; write_positions; feedback_gains; scratch; sample_rate; samples_written; }
 
 # ================================================================
 # fdn_config_for_room -- 8-line FDN config from room dimensions.
@@ -2807,6 +2807,7 @@ fn fdn_new(config) {
     Fdn_set_feedback_gains(fdn, feedback_gains);
     Fdn_set_scratch(fdn, scratch);
     Fdn_set_sample_rate(fdn, sample_rate);
+    Fdn_set_samples_written(fdn, 0);
     return fdn;
 }
 
@@ -2856,6 +2857,8 @@ fn fdn_process_sample(fdn, input) {
         i = i + 1;
     }
 
+    Fdn_set_samples_written(fdn, Fdn_samples_written(fdn) + 1);
+
     # Normalized output: output_sum / sqrt(n).
     return f64_div(output_sum, f64_sqrt(f64_from(n)));
 }
@@ -2877,15 +2880,20 @@ fn fdn_process_buffer(fdn, input) {
 
 # ================================================================
 # fdn_reset -- clear all delay lines to silence and rewind every cursor.
+# A line fills from slot 0, so only its first samples_written slots can be nonzero.
+# Clearing the rest would touch every page of a capped line, which costs 4.6 GiB
+# resident on an idle FDN and is what fdn_new avoids (ADR-0003).
 # ================================================================
 fn fdn_reset(fdn) {
     var delay_lines = Fdn_delay_lines(fdn);
     var delay_lens = Fdn_delay_lens(fdn);
+    var written = Fdn_samples_written(fdn);
     var n = vec_len(delay_lines);
     var i = 0;
     while (i < n) {
         var line = vec_get(delay_lines, i);
         var len = vec_get(delay_lens, i);
+        if (written < len) { len = written; }
         var j = 0;
         while (j < len) {
             store64(line + j * 8, 0);
@@ -2900,6 +2908,7 @@ fn fdn_reset(fdn) {
         vec_set(write_positions, k, 0);
         k = k + 1;
     }
+    Fdn_set_samples_written(fdn, 0);
     return 0;
 }
 

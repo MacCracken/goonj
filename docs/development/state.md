@@ -164,7 +164,7 @@ one with `cyrius test tests/<module>.tcyr`.
 Four suites sit outside that per-module set, bringing the totals to
 **41 suites / 3685 assertions**:
 
-- **`hardening.tcyr`** (101) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
+- **`hardening.tcyr`** (105) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
   sample-count contract, the 2.0.6 `f64_to` and NaN-vertex cases, and the 2.1.3 sweep.
   Runs against the shipped `dist/goonj.cyr`, so it also proves each repair reached the
   bundle. A real regression suite: it SIGSEGVs or aborts against 2.0.1 and 2.1.2.
@@ -173,7 +173,8 @@ Four suites sit outside that per-module set, bringing the totals to
 - **`bundle.tcyr`**, **`goonj.tcyr`** — cross-layer and smoke.
 
 - **`tests/goonj.fcyr`** — 2,000 hostile cases across 13 target groups, with a fixed seed.
-  It checks survival, not results. Run it with `--poison`, as CI does: about a minute.
+  It checks survival, not results, and fails any batch over 2 GiB resident. Run it with
+  `--poison`, as CI does: about 15 s, peaking near 0.6 GiB.
 
 The differential and fault-injection harnesses from 2.1.3 needed the Rust oracle and a
 patched `alloc`, so they were not kept. ADR-0004 and ADR-0005 record what they found.

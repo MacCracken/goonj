@@ -10,7 +10,8 @@
 #
 # Cases run in batches inside forked children. The bump allocator never frees, so
 # that returns the memory, and a failure names the batch to replay. The seed is
-# fixed, so a failure reproduces.
+# fixed, so a failure reproduces. A batch over its memory budget fails too: a hosted
+# CI runner has far less memory than a dev machine, and dies without saying why.
 #
 # Sizes that a caller legitimately chooses stay small here: a large grid or a long
 # duration really does take that long, which SECURITY.md accepts. Everything else
@@ -23,6 +24,7 @@ var FZ_CASES = 2000;
 var FZ_BATCH = 200;
 var FZ_DATA_LEN = 2048;
 var FZ_GROUPS = 13;
+var FZ_BATCH_RSS_MAX_KIB = 2097152;   # 2 GiB. A clean run peaks near 0.6 GiB.
 
 var _fz_ptr = 0;
 var _fz_len = 0;
@@ -586,7 +588,8 @@ fn _fz_fill(buf, n, seed) {
     return 0;
 }
 
-# Run the cases [first, last) in a forked child. Returns its wait status.
+# Run the cases [first, last) in a forked child. Returns its wait status, or a
+# nonzero status of 1 if the batch went over its memory budget.
 fn _fz_batch(first, last) {
     var pid = syscall(SYS_FORK);
     if (pid == 0) {
@@ -600,9 +603,18 @@ fn _fz_batch(first, last) {
         syscall(SYS_EXIT, 0);
     }
     var st[8];
+    var ru[144];
     store64(&st, 0);
-    syscall(SYS_WAIT4, pid, &st, 0, 0);
-    return load64(&st) & 0xFFFFFFFF;
+    syscall(SYS_WAIT4, pid, &st, 0, &ru);
+    var status = load64(&st) & 0xFFFFFFFF;
+    if (status != 0) { return status; }
+    # ru_maxrss, the fifth word of struct rusage.
+    if (load64(&ru + 32) > FZ_BATCH_RSS_MAX_KIB) {
+        print_num(load64(&ru + 32));
+        println(" KiB resident: over the batch budget");
+        return 1;
+    }
+    return 0;
 }
 
 # Run every batch and report the first failure.
