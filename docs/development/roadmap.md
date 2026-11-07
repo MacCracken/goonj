@@ -8,14 +8,6 @@
 > This file is the sequencing: what ships next, in what order, and what each step
 > waits on.
 
-## 2.2.x — Allocation strategy
-
-Out-param returns or an arena/pool allocator for the alloc-heavy tiny ops:
-`wall_intersection` and per-ray and per-reflection temporaries. This is the 11–44×
-band in the [Rust comparison](../benchmarks-rust-vs-cyrius.md). Its earlier improvement
-came from the stdlib allocator and the bench harness, not from goonj, so this work is
-still fully open. hisab 3.4.0's stack-based `hvec3_distance` is a pattern to follow.
-
 ## 2.3.x — Number types and SIMD
 
 The port is f64 throughout, with no SIMD. The original gate was Cyrius shipping these
@@ -39,6 +31,17 @@ not goonj's to close alone. Six repos declare `[deps.goonj]` at 2.0.4 or 2.0.5 (
 [`state.md`](state.md#consumers)), and nobody has confirmed that any of them compiles
 and passes. Reaching 2.1.x needs each of them on cyrius ≥ 6.7.2 first. **Gate: dhvani,
 shruti and kiran being ported to Cyrius.**
+
+### Remaining allocation
+
+2.2.1 removed goonj's own temporaries
+([ADR-0007](../adr/0007-stack-buffers-over-an-arena.md)). What is left belongs to other
+projects:
+
+- **BVH queries:** `geo_ray_new` and `bvh_query_ray` make about 4 of the 6 allocations per
+  bounce in `trace_ray_bvh`. **Gate: a hisab query that fills a caller's vec.**
+- **Output vectors:** an IR band is filled by `vec_push` from empty, which leaves doubling
+  garbage. **Gate: a stdlib presized vec.**
 
 ### New acoustics features
 

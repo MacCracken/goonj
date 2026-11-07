@@ -89,12 +89,19 @@ fn ray_bounce_energy_after(b, i) {
 # ================================================================
 # AcousticRay
 # ================================================================
+# Normalize direction into `out`; zero-length falls back to +Z.
+fn _ray_norm_into(out, direction) {
+    var len = hvec3_length(direction);
+    if (f64_gt(len, GOONJ_EPSILON) == 1) { return _v3_scale(out, direction, f64_div(F64_ONE, len)); }
+    return _v3_set(out, 0, 0, F64_ONE);
+}
+
 # Normalize direction; zero-length falls back to +Z.
 #must_use
 fn _ray_norm_dir(direction) {
-    var len = hvec3_length(direction);
-    if (f64_gt(len, GOONJ_EPSILON) == 1) { return hvec3_scale(direction, f64_div(F64_ONE, len)); }
-    return hvec3_unit_z();
+    var out = hvec3_zero();
+    _ray_norm_into(out, direction);
+    return out;
 }
 
 # New ray with full energy at `frequency_hz`; a zero direction falls back to +Z.
@@ -109,18 +116,6 @@ fn acoustic_ray_new(origin, direction, frequency_hz) {
     return r;
 }
 
-# Probe ray with the direction used as-is (caller already normalized).
-#must_use
-fn _acoustic_ray_raw(origin, direction) {
-    var r = alloc(sizeof(AcousticRay));
-    AcousticRay_set_origin(r, origin);
-    AcousticRay_set_direction(r, direction);
-    AcousticRay_set_energy(r, F64_ONE);
-    AcousticRay_set_frequency_hz(r, f64_from(1000));
-    AcousticRay_set_distance_traveled(r, 0);
-    return r;
-}
-
 # 1 while the ray's energy is above ENERGY_THRESHOLD, else 0.
 #must_use
 fn acoustic_ray_is_alive(r) {
@@ -131,32 +126,24 @@ fn acoustic_ray_is_alive(r) {
 # ================================================================
 # MultibandRay
 # ================================================================
-#must_use
-fn multiband_ray_new(origin, direction) {
-    var r = alloc(MBR_SIZE);
+# Fill `r`, an MBR_SIZE buffer, as a new ray along the already-normalized `unit_dir`.
+fn _multiband_ray_init(r, origin, unit_dir) {
     store64(r + MBR_ORIGIN, origin);
-    store64(r + MBR_DIR, _ray_norm_dir(direction));
+    store64(r + MBR_DIR, unit_dir);
     var i = 0;
     while (i < NUM_BANDS) {
         store64(r + MBR_ENERGY + i * 8, F64_ONE);
         i = i + 1;
     }
     store64(r + MBR_DIST, 0);
-    return r;
+    return 0;
 }
 
-# Deep copy (Rust clone) — trace mutates a working copy, not the input.
+# New ray with full energy in every band; a zero direction falls back to +Z.
 #must_use
-fn _multiband_ray_clone(src) {
+fn multiband_ray_new(origin, direction) {
     var r = alloc(MBR_SIZE);
-    store64(r + MBR_ORIGIN, mbr_origin(src));
-    store64(r + MBR_DIR, mbr_direction(src));
-    var i = 0;
-    while (i < NUM_BANDS) {
-        store64(r + MBR_ENERGY + i * 8, mbr_energy_band(src, i));
-        i = i + 1;
-    }
-    store64(r + MBR_DIST, mbr_distance(src));
+    _multiband_ray_init(r, origin, _ray_norm_dir(direction));
     return r;
 }
 
@@ -191,55 +178,79 @@ fn multiband_ray_max_energy(r) {
 fn point_in_convex_polygon(point, vertices, normal) {
     var n = vec_len(vertices);
     if (n < 3) { return 0; }
+    var edge: i64[3];
+    var to_point: i64[3];
+    var c: i64[3];
     var i = 0;
     while (i < n) {
         var v0 = vec_get(vertices, i);
         var v1 = vec_get(vertices, (i + 1) % n);
-        var edge = hvec3_sub(v1, v0);
-        var to_point = hvec3_sub(point, v0);
-        var c = hvec3_cross(edge, to_point);
-        if (f64_lt(hvec3_dot(c, normal), f64_neg(GOONJ_EPSILON)) == 1) { return 0; }
+        _v3_sub(&edge, v1, v0);
+        _v3_sub(&to_point, point, v0);
+        _v3_cross(&c, &edge, &to_point);
+        if (f64_lt(hvec3_dot(&c, normal), f64_neg(GOONJ_EPSILON)) == 1) { return 0; }
         i = i + 1;
     }
     return 1;
 }
 
-# Ray-wall intersection distance, or RAY_NONE (negative) if no hit.
+# ray_wall_intersection from an origin and a direction, with no AcousticRay to build.
 #must_use
-fn ray_wall_intersection(ray, wall) {
+fn _ray_wall_t(origin, direction, wall) {
     var verts = Wall_vertices(wall);
     if (vec_len(verts) < 3) { return RAY_NONE; }
 
     var n = Wall_normal(wall);
-    var d_dot_n = hvec3_dot(AcousticRay_direction(ray), n);
+    var d_dot_n = hvec3_dot(direction, n);
     if (f64_lt(f64_abs(d_dot_n), GOONJ_EPSILON) == 1) { return RAY_NONE; }
 
-    var p0 = vec_get(verts, 0);
-    var diff = hvec3_sub(p0, AcousticRay_origin(ray));
-    var t = f64_div(hvec3_dot(diff, n), d_dot_n);
+    var diff: i64[3];
+    _v3_sub(&diff, vec_get(verts, 0), origin);
+    var t = f64_div(hvec3_dot(&diff, n), d_dot_n);
     if (f64_lt(t, GOONJ_EPSILON) == 1) { return RAY_NONE; }
 
-    var hit = hvec3_add(AcousticRay_origin(ray), hvec3_scale(AcousticRay_direction(ray), t));
-    if (point_in_convex_polygon(hit, verts, n) == 1) { return t; }
+    var along: i64[3];
+    var hit: i64[3];
+    _v3_scale(&along, direction, t);
+    _v3_add(&hit, origin, &along);
+    if (point_in_convex_polygon(&hit, verts, n) == 1) { return t; }
     return RAY_NONE;
+}
+
+# Ray-wall intersection distance, or RAY_NONE (negative) if no hit.
+#must_use
+fn ray_wall_intersection(ray, wall) {
+    return _ray_wall_t(AcousticRay_origin(ray), AcousticRay_direction(ray), wall);
 }
 
 # ================================================================
 # Reflection
 # ================================================================
-# Reflection direction: specular r = d - 2(d·n)n, blended toward the
-# normal by `scattering`.
+# Reflection direction into `out`, which may be `d`: specular r = d - 2(d·n)n,
+# blended toward the normal by `scattering`.
+fn _reflect_into(out, d, n, scattering) {
+    var twice: i64[3];
+    _v3_scale(&twice, n, f64_mul(F64_TWO, hvec3_dot(d, n)));
+    _v3_sub(out, d, &twice);
+    if (f64_gt(scattering, GOONJ_EPSILON) == 1) {
+        var from_specular: i64[3];
+        var from_normal: i64[3];
+        var blended: i64[3];
+        _v3_scale(&from_specular, out, f64_sub(F64_ONE, scattering));
+        _v3_scale(&from_normal, n, scattering);
+        _v3_add(&blended, &from_specular, &from_normal);
+        var len = hvec3_length(&blended);
+        if (f64_gt(len, GOONJ_EPSILON) == 1) { _v3_scale(out, &blended, f64_div(F64_ONE, len)); }
+    }
+    return 0;
+}
+
+# _reflect_into for a direction the result keeps.
 #must_use
 fn _reflect_direction(d, n, scattering) {
-    var specular = hvec3_sub(d, hvec3_scale(n, f64_mul(F64_TWO, hvec3_dot(d, n))));
-    if (f64_gt(scattering, GOONJ_EPSILON) == 1) {
-        var blended = hvec3_add(hvec3_scale(specular, f64_sub(F64_ONE, scattering)),
-          hvec3_scale(n, scattering));
-        var len = hvec3_length(blended);
-        if (f64_gt(len, GOONJ_EPSILON) == 1) { return hvec3_scale(blended, f64_div(F64_ONE, len)); }
-        return specular;
-    }
-    return specular;
+    var out = hvec3_zero();
+    _reflect_into(out, d, n, scattering);
+    return out;
 }
 
 # Reflect `ray` at `hit`: energy falls by `absorption`, `scattering` blends specular and diffuse.
@@ -280,10 +291,8 @@ fn _wall_absorption_ptr(wall) { return Wall_material(wall) + AM_ABS; }
 # ================================================================
 # Nearest-wall search (linear + BVH) and path tracing
 # ================================================================
-# Returns a NearestWall (distance,index) or 0 (None). skip_wall = -1 for none.
-#must_use
-fn find_nearest_wall(origin, direction, walls, skip_wall) {
-    var probe = _acoustic_ray_raw(origin, direction);
+# Nearest wall into `out`, a NearestWall-sized buffer. 1 on a hit, 0 for None.
+fn _nearest_wall(origin, direction, walls, skip_wall, out) {
     var found = 0;
     var best_t = 0;
     var best_idx = 0;
@@ -291,7 +300,7 @@ fn find_nearest_wall(origin, direction, walls, skip_wall) {
     var i = 0;
     while (i < n) {
         if (i != skip_wall) {
-            var t = ray_wall_intersection(probe, vec_get(walls, i));
+            var t = _ray_wall_t(origin, direction, vec_get(walls, i));
             # RAY_NONE is Rust's None. A NaN t is Rust's Some(NaN), which is a hit.
             if (f64_lt(t, 0) == 0) {
                 if (found == 0) {
@@ -304,25 +313,39 @@ fn find_nearest_wall(origin, direction, walls, skip_wall) {
         i = i + 1;
     }
     if (found == 0) { return 0; }
-    var nw = alloc(sizeof(NearestWall));
-    NearestWall_set_distance(nw, best_t);
-    NearestWall_set_index(nw, best_idx);
-    return nw;
+    NearestWall_set_distance(out, best_t);
+    NearestWall_set_index(out, best_idx);
+    return 1;
 }
 
-# BVH broadphase variant. A direction Rust's Ray::new rejects -> None. hisab's Rust
+# A heap NearestWall from a stack one.
+#must_use
+fn _nearest_wall_keep(nw) {
+    var kept = alloc(sizeof(NearestWall));
+    NearestWall_set_distance(kept, NearestWall_distance(nw));
+    NearestWall_set_index(kept, NearestWall_index(nw));
+    return kept;
+}
+
+# Returns a NearestWall (distance,index) or 0 (None). skip_wall = -1 for none.
+#must_use
+fn find_nearest_wall(origin, direction, walls, skip_wall) {
+    var nw: i64[2];
+    if (_nearest_wall(origin, direction, walls, skip_wall, &nw) == 0) { return 0; }
+    return _nearest_wall_keep(&nw);
+}
+
+# BVH broadphase _nearest_wall. A direction Rust's Ray::new rejects -> None. hisab's Rust
 # tests len_sq < 1e-7 (EPSILON_F32, geo/primitives.rs:30), a magnitude of 3.16e-4.
 # Both refusals below would otherwise read as "no wall hit", so they end the process
 # like any other (ADR-0004). hisab's BVH reports no leaf for a NaN slab, so a non-finite
 # ray hits nothing here, where the linear search returns Rust's NaN hits (ADR-0005).
-#must_use
-fn find_nearest_wall_bvh(origin, direction, walls, bvh, skip_wall) {
+fn _nearest_wall_bvh(origin, direction, walls, bvh, skip_wall, out) {
     if (f64_lt(hvec3_length_sq(direction), RAY_MIN_DIRECTION_SQ) == 1) { return 0; }
     var hray = geo_ray_new(origin, direction);
     if (hray == 0) { goonj_alloc_refused(); }
     var candidates = bvh_query_ray(bvh, hray);
     if (candidates == 0) { goonj_alloc_refused(); }
-    var probe = _acoustic_ray_raw(origin, direction);
 
     var found = 0;
     var best_t = 0;
@@ -332,7 +355,7 @@ fn find_nearest_wall_bvh(origin, direction, walls, bvh, skip_wall) {
     while (j < m) {
         var idx = vec_get(candidates, j);
         if (idx != skip_wall) {
-            var t = ray_wall_intersection(probe, vec_get(walls, idx));
+            var t = _ray_wall_t(origin, direction, vec_get(walls, idx));
             if (f64_lt(t, 0) == 0) {
                 if (found == 0) {
                     found = 1; best_t = t; best_idx = idx;
@@ -344,17 +367,21 @@ fn find_nearest_wall_bvh(origin, direction, walls, bvh, skip_wall) {
         j = j + 1;
     }
     if (found == 0) { return 0; }
-    var nw = alloc(sizeof(NearestWall));
-    NearestWall_set_distance(nw, best_t);
-    NearestWall_set_index(nw, best_idx);
-    return nw;
+    NearestWall_set_distance(out, best_t);
+    NearestWall_set_index(out, best_idx);
+    return 1;
 }
 
-# Record one bounce into a freshly-alloc'd RayBounce.
+# BVH broadphase variant of find_nearest_wall.
 #must_use
-fn _make_bounce(point, normal, wall_index, distance, ray_after) {
-    var b = alloc(RB_SIZE);
-    store64(b + RB_POINT, point);
+fn find_nearest_wall_bvh(origin, direction, walls, bvh, skip_wall) {
+    var nw: i64[2];
+    if (_nearest_wall_bvh(origin, direction, walls, bvh, skip_wall, &nw) == 0) { return 0; }
+    return _nearest_wall_keep(&nw);
+}
+
+# Fill a RayBounce's fields other than its point.
+fn _fill_bounce(b, normal, wall_index, distance, ray_after) {
     store64(b + RB_NORMAL, normal);
     store64(b + RB_WIDX, wall_index);
     store64(b + RB_DIST, distance);
@@ -363,7 +390,24 @@ fn _make_bounce(point, normal, wall_index, distance, ray_after) {
         store64(b + RB_ENERGY + k * 8, mbr_energy_band(ray_after, k));
         k = k + 1;
     }
-    return b;
+    return 0;
+}
+
+# Record bounce number `b`. With `reuse`, an earlier ray's RayBounce is overwritten, so a
+# caller tracing many rays keeps one set of them (generate_diffuse_rain).
+fn _record_bounce(bounces, reuse, b, point, normal, wall_index, distance, ray_after) {
+    if (reuse == 1) {
+        if (b < vec_len(bounces)) {
+            var old = vec_get(bounces, b);
+            _v3_copy(ray_bounce_point(old), point);
+            return _fill_bounce(old, normal, wall_index, distance, ray_after);
+        }
+    }
+    var kept = alloc(RB_SIZE);
+    store64(kept + RB_POINT, _v3_keep(point));
+    _fill_bounce(kept, normal, wall_index, distance, ray_after);
+    vec_push(bounces, kept);
+    return 0;
 }
 
 # Assemble a RayPath from accumulated bounces + the final ray state.
@@ -380,42 +424,72 @@ fn _make_path(bounces, current) {
     return path;
 }
 
-# Trace a multiband ray through a vec of walls, recording each bounce.
-#must_use
-fn trace_ray(ray, walls, max_bounces) {
-    var current = _multiband_ray_clone(ray);
-    var bounces = vec_new();
+# Walk `ray` through `walls`, bouncing up to `max_bounces` times. One walk, stack buffers
+# throughout, for trace_ray, trace_ray_bvh and generate_diffuse_rain: per bounce it keeps
+# a RayBounce and its point, and with `reuse` not even those. `state` is an MBR_SIZE
+# buffer that ends holding the final energy and distance. Returns the bounce count.
+fn _trace_walk(ray, walls, bvh, use_bvh, max_bounces, bounces, reuse, state) {
+    var origin: i64[3];
+    var dir: i64[3];
+    var along: i64[3];
+    var nw: i64[2];
+    _v3_copy(&origin, mbr_origin(ray));
+    _v3_copy(&dir, mbr_direction(ray));
+    var k = 0;
+    while (k < NUM_BANDS) {
+        store64(state + MBR_ENERGY + k * 8, mbr_energy_band(ray, k));
+        k = k + 1;
+    }
+    store64(state + MBR_DIST, mbr_distance(ray));
+
     var last_wall = 0 - 1;
     var b = 0;
     var go = 1;
     while (go == 1) {
         if (b >= max_bounces) { go = 0; }
         if (go == 1) {
-            if (multiband_ray_is_alive(current) == 0) { go = 0; }
+            if (multiband_ray_is_alive(state) == 0) { go = 0; }
         }
         if (go == 1) {
-            var nw = find_nearest_wall(mbr_origin(current), mbr_direction(current), walls, last_wall);
-            if (nw == 0) {
+            var hit = 0;
+            if (use_bvh == 1) {
+                hit = _nearest_wall_bvh(&origin, &dir, walls, bvh, last_wall, &nw);
+            } else {
+                hit = _nearest_wall(&origin, &dir, walls, last_wall, &nw);
+            }
+            if (hit == 0) {
                 go = 0;
             } else {
-                var idx = NearestWall_index(nw);
-                var t = NearestWall_distance(nw);
+                var idx = NearestWall_index(&nw);
+                var t = NearestWall_distance(&nw);
                 var wall = vec_get(walls, idx);
-                var point = hvec3_add(mbr_origin(current), hvec3_scale(mbr_direction(current), t));
-                var hit = alloc(sizeof(RayHit));
-                RayHit_set_point(hit, point);
-                RayHit_set_normal(hit, Wall_normal(wall));
-                RayHit_set_distance(hit, t);
-                RayHit_set_wall_index(hit, idx);
-                current = reflect_ray_multiband(current, hit, _wall_absorption_ptr(wall),
-                  am_scattering(Wall_material(wall)));
-                vec_push(bounces, _make_bounce(point, Wall_normal(wall), idx, t, current));
+                _v3_scale(&along, &dir, t);
+                _v3_add(&origin, &origin, &along);
+                _reflect_into(&dir, &dir, Wall_normal(wall), am_scattering(Wall_material(wall)));
+                var absorption = _wall_absorption_ptr(wall);
+                k = 0;
+                while (k < NUM_BANDS) {
+                    var e = f64_mul(mbr_energy_band(state, k), f64_sub(F64_ONE, load64(absorption + k * 8)));
+                    store64(state + MBR_ENERGY + k * 8, e);
+                    k = k + 1;
+                }
+                store64(state + MBR_DIST, f64_add(mbr_distance(state), t));
+                _record_bounce(bounces, reuse, b, &origin, Wall_normal(wall), idx, t, state);
                 last_wall = idx;
                 b = b + 1;
             }
         }
     }
-    return _make_path(bounces, current);
+    return b;
+}
+
+# Trace a multiband ray through a vec of walls, recording each bounce.
+#must_use
+fn trace_ray(ray, walls, max_bounces) {
+    var state: i64[11];
+    var bounces = vec_new();
+    _trace_walk(ray, walls, 0, 0, max_bounces, bounces, 0, &state);
+    return _make_path(bounces, &state);
 }
 
 # BVH-accelerated trace through an AcceleratedRoom.
@@ -424,38 +498,8 @@ fn trace_ray_bvh(ray, accel_room, max_bounces) {
     var room = AcceleratedRoom_room(accel_room);
     var walls = RoomGeometry_walls(AcousticRoom_geometry(room));
     var bvh = AcceleratedRoom_bvh(accel_room);
-
-    var current = _multiband_ray_clone(ray);
+    var state: i64[11];
     var bounces = vec_new();
-    var last_wall = 0 - 1;
-    var b = 0;
-    var go = 1;
-    while (go == 1) {
-        if (b >= max_bounces) { go = 0; }
-        if (go == 1) {
-            if (multiband_ray_is_alive(current) == 0) { go = 0; }
-        }
-        if (go == 1) {
-            var nw = find_nearest_wall_bvh(mbr_origin(current), mbr_direction(current), walls, bvh, last_wall);
-            if (nw == 0) {
-                go = 0;
-            } else {
-                var idx = NearestWall_index(nw);
-                var t = NearestWall_distance(nw);
-                var wall = vec_get(walls, idx);
-                var point = hvec3_add(mbr_origin(current), hvec3_scale(mbr_direction(current), t));
-                var hit = alloc(sizeof(RayHit));
-                RayHit_set_point(hit, point);
-                RayHit_set_normal(hit, Wall_normal(wall));
-                RayHit_set_distance(hit, t);
-                RayHit_set_wall_index(hit, idx);
-                current = reflect_ray_multiband(current, hit, _wall_absorption_ptr(wall),
-                  am_scattering(Wall_material(wall)));
-                vec_push(bounces, _make_bounce(point, Wall_normal(wall), idx, t, current));
-                last_wall = idx;
-                b = b + 1;
-            }
-        }
-    }
-    return _make_path(bounces, current);
+    _trace_walk(ray, walls, bvh, 1, max_bounces, bounces, 0, &state);
+    return _make_path(bounces, &state);
 }

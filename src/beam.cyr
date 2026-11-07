@@ -77,21 +77,19 @@ fn acoustic_beam_new(apex, direction, half_angle) {
     return b;
 }
 
-# Deep copy (Rust clone) — trace mutates a working copy, not the input.
-#must_use
-fn _beam_clone(src) {
-    var b = alloc(BEAM_SIZE);
-    store64(b + BEAM_APEX, beam_apex(src));
-    store64(b + BEAM_DIR, beam_direction(src));
-    store64(b + BEAM_HALF, beam_half_angle(src));
+# Copy `src` into `dst`, a BEAM_SIZE buffer (Rust clone).
+fn _beam_copy(dst, src) {
+    store64(dst + BEAM_APEX, beam_apex(src));
+    store64(dst + BEAM_DIR, beam_direction(src));
+    store64(dst + BEAM_HALF, beam_half_angle(src));
     var i = 0;
     while (i < NUM_BANDS) {
-        store64(b + BEAM_ENERGY + i * 8, beam_energy_band(src, i));
+        store64(dst + BEAM_ENERGY + i * 8, beam_energy_band(src, i));
         i = i + 1;
     }
-    store64(b + BEAM_PATH, beam_path_length(src));
-    store64(b + BEAM_ORDER, beam_order(src));
-    return b;
+    store64(dst + BEAM_PATH, beam_path_length(src));
+    store64(dst + BEAM_ORDER, beam_order(src));
+    return 0;
 }
 
 # ================================================================
@@ -140,7 +138,9 @@ fn _beam_wall_distance(beam, wall) {
     var d_dot_n = hvec3_dot(beam_direction(beam), n);
     if (f64_lt(f64_abs(d_dot_n), GOONJ_EPSILON) == 1) { return BEAM_NONE; }
     var p0 = vec_get(verts, 0);
-    var t = f64_div(hvec3_dot(hvec3_sub(p0, beam_apex(beam)), n), d_dot_n);
+    var to_wall: i64[3];
+    _v3_sub(&to_wall, p0, beam_apex(beam));
+    var t = f64_div(hvec3_dot(&to_wall, n), d_dot_n);
     if (f64_lt(t, GOONJ_EPSILON) == 1) { return BEAM_NONE; }
     return t;
 }
@@ -154,7 +154,14 @@ fn _beam_wall_distance(beam, wall) {
 # reflection and tracing stops once the strongest band falls below 0.001.
 #must_use
 fn trace_beam(beam, walls, max_order) {
-    var current = _beam_clone(beam);
+    # A working copy on the stack. Its apex is the last hit point, which the hit keeps.
+    var work: i64[13];
+    var dir: i64[3];
+    var next_energy: i64[8];
+    var current = &work;
+    _beam_copy(current, beam);
+    _v3_copy(&dir, beam_direction(beam));
+    store64(current + BEAM_DIR, &dir);
     var hits = vec_new();
     var last_wall = (0 - 1);
     var nwalls = vec_len(walls);
@@ -214,25 +221,25 @@ fn trace_beam(beam, walls, max_order) {
 
                 # Reflect the axis direction specularly about the wall normal.
                 var n = Wall_normal(wall);
-                var d_dot_n = hvec3_dot(beam_direction(current), n);
-                var reflected_dir = hvec3_sub(beam_direction(current),
-                  hvec3_scale(n, f64_mul(F64_TWO, d_dot_n)));
-                var len = hvec3_length(reflected_dir);
+                var twice: i64[3];
+                var reflected: i64[3];
+                _v3_scale(&twice, n, f64_mul(F64_TWO, hvec3_dot(&dir, n)));
+                _v3_sub(&reflected, &dir, &twice);
+                var len = hvec3_length(&reflected);
                 if (f64_gt(len, GOONJ_EPSILON) == 1) {
-                    reflected_dir = hvec3_scale(reflected_dir, f64_div(F64_ONE, len));
+                    _v3_scale(&reflected, &reflected, f64_div(F64_ONE, len));
                 } else {
-                    reflected_dir = beam_direction(current);
+                    _v3_copy(&reflected, &dir);
                 }
 
                 # Apply per-band absorption; track the strongest band.
-                var next = alloc(BEAM_SIZE);
                 var mat = Wall_material(wall);
                 var max_e = 0;
                 var band = 0;
                 while (band < NUM_BANDS) {
                     var ne = f64_mul(beam_energy_band(current, band),
                       f64_sub(F64_ONE, am_absorption_band(mat, band)));
-                    store64(next + BEAM_ENERGY + band * 8, ne);
+                    store64(&next_energy + band * 8, ne);
                     max_e = goonj_fmax(max_e, ne);
                     band = band + 1;
                 }
@@ -240,12 +247,15 @@ fn trace_beam(beam, walls, max_order) {
                 if (f64_lt(max_e, BEAM_DEAD) == 1) {
                     running = 0;
                 } else {
-                    store64(next + BEAM_APEX, hit_point);
-                    store64(next + BEAM_DIR, reflected_dir);
-                    store64(next + BEAM_HALF, beam_half_angle(current));
-                    store64(next + BEAM_PATH, f64_add(beam_path_length(current), t2));
-                    store64(next + BEAM_ORDER, beam_order(current) + 1);
-                    current = next;
+                    store64(current + BEAM_APEX, hit_point);
+                    _v3_copy(&dir, &reflected);
+                    store64(current + BEAM_PATH, f64_add(beam_path_length(current), t2));
+                    store64(current + BEAM_ORDER, beam_order(current) + 1);
+                    band = 0;
+                    while (band < NUM_BANDS) {
+                        store64(current + BEAM_ENERGY + band * 8, load64(&next_energy + band * 8));
+                        band = band + 1;
+                    }
                     last_wall = best_idx;
                 }
             }

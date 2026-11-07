@@ -125,16 +125,18 @@ fn utd_wedge_diffraction(frequency, wedge_n, source_angle, receiver_angle,
 # `walls` is a stdlib vec of Wall pointers.
 #must_use
 fn is_occluded(source, listener, walls) {
-    var direction = hvec3_sub(listener, source);
-    var max_dist = hvec3_length(direction);
+    var direction: i64[3];
+    var unit: i64[3];
+    _v3_sub(&direction, listener, source);
+    var max_dist = hvec3_length(&direction);
     if (f64_lt(max_dist, GOONJ_EPSILON) == 1) { return 0; }
 
-    var ray = acoustic_ray_new(source, direction, 0);
+    _ray_norm_into(&unit, &direction);
     var limit = f64_sub(max_dist, GOONJ_EPSILON);
     var n = vec_len(walls);
     var i = 0;
     while (i < n) {
-        var t = ray_wall_intersection(ray, vec_get(walls, i));
+        var t = _ray_wall_t(source, &unit, vec_get(walls, i));
         if (f64_gt(t, GOONJ_EPSILON) == 1) {
             if (f64_lt(t, limit) == 1) { return 1; }
         }

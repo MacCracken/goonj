@@ -2,6 +2,66 @@
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-11-06
+
+The allocation strategy: hot paths stop leaving garbage behind. **No result moves, and no
+public signature changes.** **42 suites / 3784 assertions**, all green, and
+`cyrius audit` exits 0.
+
+### Fixed
+
+- **Hot paths leaked memory for the life of the process.** hisab's vector ops allocate
+  their results and the allocator never frees, so a long-lived consumer lost about 3.6 MB
+  per 1 s impulse response. Nearly all of that is gone:
+
+  | Operation | Allocations | Bytes left behind |
+  |---|---:|---:|
+  | `ray_wall_intersection` | 15 → **0** | 360 → **0** |
+  | `trace_ray`, 36 bounces | 1,808 → **77** | 49,824 → **5,320** |
+  | `is_occluded`, shoebox | 50 → **2** | 1,216 → **48** |
+  | `compute_early_reflections`, order 5 | 1,224 → **526** | 73,960 → **40,424** |
+  | `generate_diffuse_rain`, 100 rays | 142,722 → **383** | 3,925,040 → **21,016** |
+  | `generate_ir`, 8 kHz, 1 s | 92,834 → **1,104** | 3,645,024 → **1,115,672** |
+
+  What `generate_ir` keeps now is nearly all the IR itself.
+- **`solve_radiosity` could run out of memory where Rust completes.** Its form factor
+  leaked on every pair and iteration, and no longer allocates at all.
+
+### Changed
+
+- **Hot paths work in stack buffers**
+  ([ADR-0007](docs/adr/0007-stack-buffers-over-an-arena.md)), in `ray`, `diffuse`,
+  `image_source`, `radiosity`, `beam`, `propagation`, `diffraction` and `wall_area`.
+  New out-param helpers `_v3_add`, `_v3_sub`, `_v3_scale`, `_v3_neg` and `_v3_cross` use the
+  same operations as hisab's, so they give the same bits. An arena was the roadmap's other
+  option, but hisab calls `alloc` directly, so it could not have caught this garbage.
+- **`trace_ray`, `trace_ray_bvh` and `generate_diffuse_rain` share one walk**, replacing
+  two copies of the bounce loop.
+
+### Performance
+
+- Ray paths are about 35% faster: `ray/wall_intersection` 158 → 106 ns,
+  `ray/trace_linear_100_walls` 1.022 ms → 673 µs, `diffuse/1000_rays_shoebox` 42.2 → 27.2 ms,
+  and `impulse/generate_ir_shoebox` 44.6 → 30.3 ms.
+- Compared with Rust, the ray rows move from ~16–23× to ~11–15×.
+
+### Tests
+
+- **All 172,180 cases of the comparison built for 2.1.3 and 2.2.0 are unchanged from
+  2.2.0**, hostile and realistic, NaN results included. The exceptions are radiosity cases
+  that used to run out of memory, which now agree with Rust's recorded output where it has
+  one. The 7 whole pipelines hash identically too.
+- **`tests/hardening.tcyr`: 105 → 134 assertions.** Stack buffers bring one new way to go
+  wrong, a result keeping a pointer into a dead frame, so results are read back after
+  further calls have reused the stack. Allocation budgets are pinned, and fail against 2.2.0.
+
+### Documentation
+
+- New [ADR-0007](docs/adr/0007-stack-buffers-over-an-arena.md).
+- `results.md` is refreshed on 2.2.1, and the Rust comparison points at it.
+- Roadmap: allocation strategy removed. What is left needs a hisab or stdlib API, so it is
+  listed under Unscheduled with its gates, and 2.3.x is next.
+
 ## [2.2.0] - 2026-11-06
 
 Retires `rust-old/`. **No library code changed**, so results are the same as 2.1.3 and

@@ -68,13 +68,17 @@ fn wall_area(wall) {
     var verts = Wall_vertices(wall);
     var n = vec_len(verts);
     if (n < 3) { return 0; }
+    var a: i64[3];
+    var b: i64[3];
+    var c: i64[3];
     var total = 0;
     var v0 = vec_get(verts, 0);
     var i = 1;
     while (i < n - 1) {
-        var a = hvec3_sub(vec_get(verts, i), v0);
-        var b = hvec3_sub(vec_get(verts, i + 1), v0);
-        total = f64_add(total, f64_mul(hvec3_length(hvec3_cross(a, b)), F64_HALF));
+        _v3_sub(&a, vec_get(verts, i), v0);
+        _v3_sub(&b, vec_get(verts, i + 1), v0);
+        _v3_cross(&c, &a, &b);
+        total = f64_add(total, f64_mul(hvec3_length(&c), F64_HALF));
         i = i + 1;
     }
     return total;

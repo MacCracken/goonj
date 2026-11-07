@@ -73,10 +73,8 @@ fn image_source_atten_band(s, band) {
     return load64(s + IS_ATTEN + band * 8);
 }
 
-# Allocate an image source at `position`/`order` with all-1.0 attenuation.
-#must_use
-fn _image_source_new(position, order) {
-    var s = alloc(IS_SIZE);
+# Fill `s`, an IS_SIZE buffer, as an image source with all-1.0 attenuation.
+fn _image_source_init(s, position, order) {
     store64(s + IS_POS, position);
     store64(s + IS_ORDER, order);
     var i = 0;
@@ -84,6 +82,14 @@ fn _image_source_new(position, order) {
         store64(s + IS_ATTEN + i * 8, F64_ONE);
         i = i + 1;
     }
+    return 0;
+}
+
+# Allocate an image source at `position`/`order` with all-1.0 attenuation.
+#must_use
+fn _image_source_new(position, order) {
+    var s = alloc(IS_SIZE);
+    _image_source_init(s, position, order);
     return s;
 }
 
@@ -122,8 +128,14 @@ fn _early_reflection_new(delay, direction, order, distance) {
 # d = (point - plane_point)·normal ; result = point - 2·d·normal.
 #must_use
 fn reflect_point(point, plane_point, plane_normal) {
-    var d = hvec3_dot(hvec3_sub(point, plane_point), plane_normal);
-    return hvec3_sub(point, hvec3_scale(plane_normal, f64_mul(f64_from(2), d)));
+    var to_point: i64[3];
+    var twice: i64[3];
+    _v3_sub(&to_point, point, plane_point);
+    var d = hvec3_dot(&to_point, plane_normal);
+    _v3_scale(&twice, plane_normal, f64_mul(f64_from(2), d));
+    var out = hvec3_zero();
+    _v3_sub(out, point, &twice);
+    return out;
 }
 
 # Image coordinate along one axis for reflection count `n`.
@@ -170,18 +182,21 @@ fn _apply_axis_attenuation(atten, materials, neg_wall, pos_wall, n) {
 # ================================================================
 # Shoebox analytic mirror method
 # ================================================================
-# Image sources for a shoebox room (length=x, width=z, height=y). The
-# `materials` block is [floor, ceiling, front, back, left, right]. Caps
+# Visit each image source of a shoebox room (length=x, width=z, height=y), calling
+# `visit(ctx, img)`. `img` and its position are on this stack, so a visitor copies what
+# it keeps. The `materials` block is [floor, ceiling, front, back, left, right]. Caps
 # max_order at 20 to bound the O(n³) source count.
-#must_use
-fn compute_image_sources_shoebox(source, length, width, height, materials, max_order) {
+fn _shoebox_images(source, length, width, height, materials, max_order, visit, ctx) {
     var mo = max_order;
     if (mo > 20) { mo = 20; }
     var max_n = mo;
-    var sources = vec_new();
+    var img: i64[10];
+    var pos: i64[3];
 
     # Order 0 = direct path (the source itself), unit attenuation.
-    vec_push(sources, _image_source_new(source, 0));
+    _v3_copy(&pos, source);
+    _image_source_init(&img, &pos, 0);
+    fncall2(visit, ctx, &img);
 
     var nx = 0 - max_n;
     while (nx <= max_n) {
@@ -197,12 +212,13 @@ fn compute_image_sources_shoebox(source, length, width, height, materials, max_o
                     var x = image_coordinate(HVec3_x(source), length, nx);
                     var y = image_coordinate(HVec3_y(source), height, ny);
                     var z = image_coordinate(HVec3_z(source), width, nz);
-                    var img = _image_source_new(hvec3_new(x, y, z), order);
+                    _v3_set(&pos, x, y, z);
+                    _image_source_init(&img, &pos, order);
                     # left(4)/right(5) = x, floor(0)/ceiling(1) = y, front(2)/back(3) = z.
-                    _apply_axis_attenuation(img + IS_ATTEN, materials, 4, 5, nx);
-                    _apply_axis_attenuation(img + IS_ATTEN, materials, 0, 1, ny);
-                    _apply_axis_attenuation(img + IS_ATTEN, materials, 2, 3, nz);
-                    vec_push(sources, img);
+                    _apply_axis_attenuation(&img + IS_ATTEN, materials, 4, 5, nx);
+                    _apply_axis_attenuation(&img + IS_ATTEN, materials, 0, 1, ny);
+                    _apply_axis_attenuation(&img + IS_ATTEN, materials, 2, 3, nz);
+                    fncall2(visit, ctx, &img);
                 }
                 nz = nz + 1;
             }
@@ -210,6 +226,28 @@ fn compute_image_sources_shoebox(source, length, width, height, materials, max_o
         }
         nx = nx + 1;
     }
+    return 0;
+}
+
+# _shoebox_images visitor: keep a heap copy of each image.
+fn _keep_image(sources, img) {
+    var kept = _image_source_new(_v3_keep(image_source_position(img)), image_source_order(img));
+    var band = 0;
+    while (band < NUM_BANDS) {
+        store64(kept + IS_ATTEN + band * 8, load64(img + IS_ATTEN + band * 8));
+        band = band + 1;
+    }
+    vec_push(sources, kept);
+    return 0;
+}
+
+# Image sources for a shoebox room (length=x, width=z, height=y). The
+# `materials` block is [floor, ceiling, front, back, left, right]. Caps
+# max_order at 20 to bound the O(n³) source count.
+#must_use
+fn compute_image_sources_shoebox(source, length, width, height, materials, max_order) {
+    var sources = vec_new();
+    _shoebox_images(source, length, width, height, materials, max_order, &_keep_image, sources);
     return sources;
 }
 
@@ -275,6 +313,31 @@ fn compute_image_sources_general(source, walls, max_order) {
 # ================================================================
 # Early reflections
 # ================================================================
+#derive(accessors)
+struct EarlyWalk { listener; c_sound; reflections; }
+
+# _shoebox_images visitor: turn an image into an early reflection at the listener.
+fn _reflect_image(ctx, img) {
+    var diff: i64[3];
+    _v3_sub(&diff, EarlyWalk_listener(ctx), image_source_position(img));
+    var distance = hvec3_length(&diff);
+    # Rust drops on `distance < EPSILON`, so a NaN distance is kept.
+    if (f64_lt(distance, GOONJ_EPSILON) == 0) {
+        var delay = f64_div(distance, EarlyWalk_c_sound(ctx));
+        var inv_dist = f64_div(F64_ONE, distance);
+        var direction = hvec3_scale(&diff, inv_dist);
+        var r = _early_reflection_new(delay, direction, image_source_order(img), distance);
+        var band = 0;
+        while (band < NUM_BANDS) {
+            store64(r + ER_AMP + band * 8,
+              f64_mul(image_source_atten_band(img, band), inv_dist));
+            band = band + 1;
+        }
+        vec_push(EarlyWalk_reflections(ctx), r);
+    }
+    return 0;
+}
+
 # Early reflections for a shoebox room: image sources up to max_order, each
 # with arrival time and per-band amplitude (attenuation × inverse distance),
 # returned sorted by arrival time. Empty geometry or non-positive speed → [].
@@ -316,31 +379,12 @@ fn compute_early_reflections(source, listener, room, max_order, c_sound) {
         k = k + 1;
     }
 
-    var image_sources = compute_image_sources_shoebox(
-      source, HVec3_x(dims), HVec3_z(dims), HVec3_y(dims), materials, max_order);
-
-    var ns = vec_len(image_sources);
-    var s = 0;
-    while (s < ns) {
-        var img = vec_get(image_sources, s);
-        var diff = hvec3_sub(listener, image_source_position(img));
-        var distance = hvec3_length(diff);
-        # Rust drops on `distance < EPSILON`, so a NaN distance is kept.
-        if (f64_lt(distance, GOONJ_EPSILON) == 0) {
-            var delay = f64_div(distance, c_sound);
-            var inv_dist = f64_div(F64_ONE, distance);
-            var direction = hvec3_scale(diff, inv_dist);
-            var r = _early_reflection_new(delay, direction, image_source_order(img), distance);
-            var band = 0;
-            while (band < NUM_BANDS) {
-                store64(r + ER_AMP + band * 8,
-                  f64_mul(image_source_atten_band(img, band), inv_dist));
-                band = band + 1;
-            }
-            vec_push(reflections, r);
-        }
-        s = s + 1;
-    }
+    var ctx: i64[3];
+    EarlyWalk_set_listener(&ctx, listener);
+    EarlyWalk_set_c_sound(&ctx, c_sound);
+    EarlyWalk_set_reflections(&ctx, reflections);
+    _shoebox_images(source, HVec3_x(dims), HVec3_z(dims), HVec3_y(dims), materials, max_order,
+      &_reflect_image, &ctx);
     goonj_sort_by_key(reflections, &early_reflection_delay_seconds);
     return reflections;
 }

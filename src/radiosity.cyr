@@ -157,14 +157,18 @@ fn create_patches(walls, patches_per_wall) {
 # line and r is the centre-to-centre distance.
 #must_use
 fn _form_factor(p_i, p_j) {
-    var diff = hvec3_sub(patch_centre(p_j), patch_centre(p_i));
-    var r2 = hvec3_dot(diff, diff);
+    var diff: i64[3];
+    var dir: i64[3];
+    var back: i64[3];
+    _v3_sub(&diff, patch_centre(p_j), patch_centre(p_i));
+    var r2 = hvec3_dot(&diff, &diff);
     if (f64_lt(r2, GOONJ_EPSILON) == 1) { return 0; }
     var r = f64_sqrt(r2);
-    var dir = hvec3_scale(diff, f64_div(F64_ONE, r));
+    _v3_scale(&dir, &diff, f64_div(F64_ONE, r));
+    _v3_neg(&back, &dir);
 
-    var cos_i = f64_max(hvec3_dot(dir, patch_normal(p_i)), 0);
-    var cos_j = f64_max(hvec3_dot(hvec3_neg(dir), patch_normal(p_j)), 0);
+    var cos_i = f64_max(hvec3_dot(&dir, patch_normal(p_i)), 0);
+    var cos_j = f64_max(hvec3_dot(&back, patch_normal(p_j)), 0);
 
     return f64_div(f64_mul(f64_mul(cos_i, cos_j), patch_area(p_j)), f64_mul(F64_PI, r2));
 }
@@ -178,7 +182,7 @@ fn _form_factor(p_i, p_j) {
 struct RadiosityResult { patches; iterations; converged; }
 
 # Deep-copy one patch (centre/normal/area + both 8-band arrays), so a result
-# does not alias the live patch objects. Mirrors _beam_clone in src/beam.cyr.
+# does not alias the live patch objects. Mirrors _beam_copy in src/beam.cyr.
 #must_use
 fn _patch_clone(src) {
     var p = alloc(PA_SIZE);

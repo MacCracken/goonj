@@ -679,6 +679,169 @@ fn _h_allocation_refusal() {
     return 0;
 }
 
+# ================================================================
+# 2.2.1 -- the allocation strategy (ADR-0007). Hot paths now work in stack buffers. The
+# risk is one escaping: a result that keeps a pointer into a dead frame reads fine until
+# the next call overwrites it, so each of these checks a result after more calls.
+# ================================================================
+fn _h_clobber_stack() {
+    var room = acoustic_room_shoebox(f64_from(7), f64_from(6), f64_from(5), acoustic_material_carpet());
+    var ray = multiband_ray_new(hvec3_new(F64_ONE, F64_ONE, F64_ONE), hvec3_new(F64_ONE, F64_TWO, f64_from(3)));
+    var path = trace_ray(ray, RoomGeometry_walls(AcousticRoom_geometry(room)), 8);
+    return vec_len(ray_path_bounces(path));
+}
+
+fn _h_stack_escape() {
+    test_group("2.2.1: nothing a result keeps points into a dead stack frame");
+    var src = hvec3_new(f64_from(2), f64_from(2), F64_ONE);
+    var lis = hvec3_new(f64_from(6), f64_from(5), F64_ONE);
+    var room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+    var walls = RoomGeometry_walls(AcousticRoom_geometry(room));
+
+    # trace_ray: the input is untouched, and every bounce has its own point on a wall.
+    var unit = hvec3_normalize(hvec3_new(F64_ONE, F64_TWO, f64_from(3)));
+    var ray = multiband_ray_new(src, unit);
+    var ux = HVec3_x(mbr_direction(ray));
+    var path = trace_ray(ray, walls, 12);
+    _h_clobber_stack();
+    assert_eq(mbr_origin(ray), src, "trace_ray leaves the ray's origin alone");
+    assert_eq(HVec3_x(mbr_direction(ray)), ux, "trace_ray leaves the ray's direction alone");
+    assert_eq(mbr_energy_band(ray, 3), F64_ONE, "trace_ray leaves the ray's energy alone");
+    var bounces = ray_path_bounces(path);
+    assert_eq(vec_len(bounces), 12, "twelve bounces");
+    var distinct = 1;
+    var on_wall = 1;
+    var i = 1;
+    while (i < vec_len(bounces)) {
+        var p = ray_bounce_point(vec_get(bounces, i));
+        var q = ray_bounce_point(vec_get(bounces, i - 1));
+        if (p == q) { distinct = 0; }
+        var x = HVec3_x(p);
+        var y = HVec3_y(p);
+        var z = HVec3_z(p);
+        var edge = 0;
+        if (f64_lt(f64_abs(x), _h_pct(1)) == 1) { edge = 1; }
+        if (f64_lt(f64_abs(f64_sub(x, f64_from(10))), _h_pct(1)) == 1) { edge = 1; }
+        if (f64_lt(f64_abs(y), _h_pct(1)) == 1) { edge = 1; }
+        if (f64_lt(f64_abs(f64_sub(y, f64_from(3))), _h_pct(1)) == 1) { edge = 1; }
+        if (f64_lt(f64_abs(z), _h_pct(1)) == 1) { edge = 1; }
+        if (f64_lt(f64_abs(f64_sub(z, f64_from(8))), _h_pct(1)) == 1) { edge = 1; }
+        if (edge == 0) { on_wall = 0; }
+        i = i + 1;
+    }
+    assert_eq(distinct, 1, "each bounce keeps its own point");
+    assert_eq(on_wall, 1, "every kept point is still on a wall");
+
+    # Early reflections keep a direction, and image sources a position, each their own.
+    var er = compute_early_reflections(src, lis, room, 2, f64_from(343));
+    _h_clobber_stack();
+    var unit_ok = 1;
+    i = 0;
+    while (i < vec_len(er)) {
+        var len = hvec3_length(early_reflection_direction(vec_get(er, i)));
+        if (f64_lt(f64_abs(f64_sub(len, F64_ONE)), _h_pct(1)) == 0) { unit_ok = 0; }
+        i = i + 1;
+    }
+    assert_gt(vec_len(er), 1, "there are reflections");
+    assert_eq(unit_ok, 1, "each reflection's direction is still a unit vector");
+
+    var mats = alloc(48);
+    i = 0;
+    while (i < 6) {
+        store64(mats + i * 8, acoustic_material_concrete());
+        i = i + 1;
+    }
+    var images = compute_image_sources_shoebox(src, f64_from(10), f64_from(3), f64_from(8), mats, 2);
+    _h_clobber_stack();
+    assert_eq(HVec3_x(image_source_position(vec_get(images, 0))), HVec3_x(src), "direct image is the source");
+    assert(image_source_position(vec_get(images, 1)) != image_source_position(vec_get(images, 2)),
+      "each image keeps its own position");
+
+    # Diffuse rain reuses one set of bounces, so its contributions must hold copies.
+    var rain_cfg = diffuse_rain_config_new(40, 10, F64_ONE, f64_from(4), f64_from(343), 42);
+    var rain = generate_diffuse_rain(src, lis, room, rain_cfg);
+    _h_clobber_stack();
+    var c = DiffuseRainResult_contributions(rain);
+    var c_ok = 1;
+    var band_ok = 1;
+    i = 0;
+    while (i < vec_len(c)) {
+        var len2 = hvec3_length(lrc_direction(vec_get(c, i)));
+        if (f64_lt(f64_abs(f64_sub(len2, F64_ONE)), _h_pct(1)) == 0) { c_ok = 0; }
+        if (f64_gt(lrc_energy_band(vec_get(c, i), 0), F64_ONE) == 1) { band_ok = 0; }
+        i = i + 1;
+    }
+    assert_gt(vec_len(c), 1, "there are contributions");
+    assert_eq(c_ok, 1, "each contribution's direction is still a unit vector");
+    assert_eq(band_ok, 1, "each contribution kept its own energy");
+
+    # trace_beam: the input is untouched, and each hit keeps its own centre.
+    var beam = acoustic_beam_new(src, unit, _h_pct(10));
+    var bp = trace_beam(beam, walls, 6);
+    _h_clobber_stack();
+    assert_eq(beam_energy_band(beam, 0), F64_ONE, "trace_beam leaves the beam's energy alone");
+    assert_eq(beam_order(beam), 0, "trace_beam leaves the beam's order alone");
+    assert_eq(beam_apex(beam), src, "trace_beam leaves the beam's apex alone");
+    var hits = beam_path_hits(bp);
+    assert_gt(vec_len(hits), 1, "the beam hit walls");
+    var first = BeamWallHit_centre(vec_get(hits, 0));
+    assert(first != BeamWallHit_centre(vec_get(hits, 1)), "each hit keeps its own centre");
+
+    # The atmospheric path keeps a point per step.
+    var wind = wind_profile_new(hvec3_unit_x(), 0, 0);
+    var temp = temperature_profile_new(f64_from(20), 0);
+    var air = trace_ray_atmospheric(hvec3_new(0, f64_from(10), 0), hvec3_unit_x(), wind, temp, f64_from(5), F64_ONE);
+    _h_clobber_stack();
+    assert_eq(vec_len(air), 6, "a five-step path has six points");
+    assert_eq(HVec3_x(vec_get(air, 5)), f64_from(5), "the last point is five steps out");
+    assert_eq(HVec3_x(vec_get(air, 2)), F64_TWO, "an earlier point kept its own value");
+
+    # A step's result must be heap too: it goes straight back to the caller.
+    var step = refract_ray_step(src, hvec3_unit_x(), &_h_speed_fn, 0, F64_ONE);
+    _h_clobber_stack();
+    assert_eq(HVec3_x(RayStep_origin(step)), f64_from(3), "refract_ray_step's origin survives");
+    return 0;
+}
+
+# The strategy itself: temporaries stay gone. Each of these counted thousands of bytes of
+# garbage per call before 2.2.1, which a long-lived consumer never got back.
+fn _h_allocation_budget() {
+    test_group("2.2.1: hot paths stay inside their allocation budget");
+    var src = hvec3_new(f64_from(5), f64_div(f64_from(3), F64_TWO), f64_from(4));
+    var lis = hvec3_new(F64_TWO, F64_TWO, F64_TWO);
+    var room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+    var walls = RoomGeometry_walls(AcousticRoom_geometry(room));
+    var ray = acoustic_ray_new(src, hvec3_unit_z(), f64_from(1000));
+    var mray = multiband_ray_new(src, hvec3_normalize(hvec3_new(F64_ONE, F64_TWO, f64_from(3))));
+
+    var before = alloc_used();
+    var i = 0;
+    while (i < 1000) {
+        var t = ray_wall_intersection(ray, vec_get(walls, 3));
+        i = i + 1;
+    }
+    assert_eq(alloc_used() - before, 0, "ray_wall_intersection allocates nothing");
+
+    before = alloc_used();
+    var occluded = is_occluded(src, lis, walls);
+    assert_lt(alloc_used() - before, 64, "is_occluded keeps no temporaries");
+    assert_eq(occluded, 0, "and answers");
+
+    # 49,824 bytes in 2.2.0. A bounce keeps 120 bytes, plus the vec. This one bounces 36 times.
+    before = alloc_used();
+    var path = trace_ray(mray, walls, 50);
+    assert_lt(alloc_used() - before, 8192, "a trace keeps only its path");
+    assert_gt(vec_len(ray_path_bounces(path)), 30, "and really bounced");
+
+    # 3,925,040 bytes in 2.2.0.
+    before = alloc_used();
+    var rain_cfg = diffuse_rain_config_new(100, 50, F64_TWO, F64_TWO, f64_from(343), 42);
+    var rain = generate_diffuse_rain(src, lis, room, rain_cfg);
+    assert_lt(alloc_used() - before, 65536, "100 diffuse rays keep only their contributions");
+    assert_gt(DiffuseRainResult_total_bounces(rain), 100, "and really bounced");
+    return 0;
+}
+
 alloc_init();
 _h_fdtd();
 _h_dwm();
@@ -697,6 +860,8 @@ _h_runaway_loops();
 _h_stable_sort();
 _h_fdn_lazy();
 _h_allocation_refusal();
+_h_stack_escape();
+_h_allocation_budget();
 
 var rc = assert_summary();
 syscall(60, rc);

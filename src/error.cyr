@@ -181,3 +181,59 @@ fn goonj_sort_by_key(v, key_fn) {
     }
     return 0;
 }
+
+# ================================================================
+# Vector out-params (ADR-0007)
+# ================================================================
+# hisab's hvec3_add, hvec3_sub, hvec3_scale, hvec3_neg and hvec3_cross each allocate
+# their result, and the allocator never frees. These form the same bits into `out`, an
+# HVec3-sized buffer the caller owns, usually a `var v: i64[3]` on its stack. The stack
+# buffer must not outlive the call: anything a result keeps goes through _v3_keep.
+# `out` may alias an input, except in _v3_cross.
+fn _v3_set(out, x, y, z) {
+    HVec3_set_x(out, x);
+    HVec3_set_y(out, y);
+    HVec3_set_z(out, z);
+    return 0;
+}
+
+fn _v3_copy(out, v) {
+    return _v3_set(out, HVec3_x(v), HVec3_y(v), HVec3_z(v));
+}
+
+fn _v3_add(out, a, b) {
+    f64v_add(out, a, b, 2);
+    HVec3_set_z(out, f64_add(HVec3_z(a), HVec3_z(b)));
+    return 0;
+}
+
+fn _v3_sub(out, a, b) {
+    f64v_sub(out, a, b, 2);
+    HVec3_set_z(out, f64_sub(HVec3_z(a), HVec3_z(b)));
+    return 0;
+}
+
+fn _v3_scale(out, v, s) {
+    f64v_scale(out, v, s, 2);
+    HVec3_set_z(out, f64_mul(HVec3_z(v), s));
+    return 0;
+}
+
+fn _v3_neg(out, v) {
+    return _v3_set(out, f64_neg(HVec3_x(v)), f64_neg(HVec3_y(v)), f64_neg(HVec3_z(v)));
+}
+
+fn _v3_cross(out, a, b) {
+    return _v3_set(out,
+      f64_sub(f64_mul(HVec3_y(a), HVec3_z(b)), f64_mul(HVec3_z(a), HVec3_y(b))),
+      f64_sub(f64_mul(HVec3_z(a), HVec3_x(b)), f64_mul(HVec3_x(a), HVec3_z(b))),
+      f64_sub(f64_mul(HVec3_x(a), HVec3_y(b)), f64_mul(HVec3_y(a), HVec3_x(b))));
+}
+
+# A heap copy of `v`, for a vector a result keeps.
+#must_use
+fn _v3_keep(v) {
+    var kept = hvec3_new(HVec3_x(v), HVec3_y(v), HVec3_z(v));
+    if (kept == 0) { goonj_alloc_refused(); }
+    return kept;
+}

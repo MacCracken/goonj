@@ -14,6 +14,10 @@ Cyrius `.bcyr` benchmark replicates the *same operation, same inputs* as the Rus
 >    arithmetic + 2× memory traffic. A precision upgrade, not pure overhead.
 > 3. **A young compiler** — Cyrius is self-hosting, assembly-up, no LLVM.
 >
+> **Since this was written:** 2.2.1 removed the per-call temporaries from the ray paths,
+> taking those rows from ~16–23× to ~11–15×. Current figures are in
+> [`results.md`](benchmarks/results.md). This page is refreshed with the 2.3.x work.
+>
 > Cyrius is adding **more diverse float/integer types + related SIMD** (for model
 > training/inference); once those land, goonj's hot paths pick appropriate widths
 > and vectorize — see the [roadmap](development/roadmap.md#23x--number-types-and-simd).

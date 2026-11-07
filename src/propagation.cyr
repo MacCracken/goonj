@@ -259,50 +259,59 @@ fn _ray_step_make(origin, direction) {
     return rs;
 }
 
-# Advance a ray one step through a stratified medium, bending its
-# direction per Snell's law from the local speed gradient.
-#   speed_fn : fn(ctx, height) -> f64   (ctx may be 0 if unused)
-# Returns a RayStep.
-#must_use
-fn refract_ray_step(origin, direction, speed_fn, ctx, step_size) {
+# One refraction step into `out_origin` and `out_dir`, which `refract_ray_step` and
+# `trace_ray_atmospheric` own. Neither may be `origin` or `direction`.
+fn _refract_into(origin, direction, speed_fn, ctx, step_size, out_origin, out_dir) {
     var height = HVec3_y(origin);
     var c_current = fncall2(speed_fn, ctx, height);
 
-    var new_origin = hvec3_add(origin, hvec3_scale(direction, step_size));
-    var new_height = HVec3_y(new_origin);
+    var along: i64[3];
+    _v3_scale(&along, direction, step_size);
+    _v3_add(out_origin, origin, &along);
+    var new_height = HVec3_y(out_origin);
     var c_new = fncall2(speed_fn, ctx, new_height);
 
-    if (f64_lt(f64_abs(c_current), GOONJ_EPSILON) == 1) {
-        return _ray_step_make(new_origin, direction);
-    }
+    _v3_copy(out_dir, direction);
+    if (f64_lt(f64_abs(c_current), GOONJ_EPSILON) == 1) { return 0; }
 
     # Horizontal component is conserved; adjust the vertical part.
-    var horizontal = hvec3_new(HVec3_x(direction), 0, HVec3_z(direction));
-    var h_len = hvec3_length(horizontal);
-    if (f64_lt(h_len, GOONJ_EPSILON) == 1) {
-        # Purely vertical ray — no refraction.
-        return _ray_step_make(new_origin, direction);
-    }
+    var horizontal: i64[3];
+    _v3_set(&horizontal, HVec3_x(direction), 0, HVec3_z(direction));
+    var h_len = hvec3_length(&horizontal);
+    # Purely vertical ray — no refraction.
+    if (f64_lt(h_len, GOONJ_EPSILON) == 1) { return 0; }
 
     var sin_ratio = f64_div(h_len, c_current);
     var new_sin = f64_mul(sin_ratio, c_new);
     if (f64_ge(new_sin, F64_ONE) == 1) {
         # Total internal reflection — ray turns horizontal.
-        return _ray_step_make(new_origin, hvec3_scale(horizontal, f64_div(F64_ONE, h_len)));
+        return _v3_scale(out_dir, &horizontal, f64_div(F64_ONE, h_len));
     }
 
     var new_cos = f64_sqrt(f64_sub(F64_ONE, f64_mul(new_sin, new_sin)));
     # Rust takes +1 on `y >= 0`, so a NaN y gets -1.
     var vert_sign = F64_ONE;
     if (f64_ge(HVec3_y(direction), 0) == 0) { vert_sign = f64_neg(F64_ONE); }
-    var nd = hvec3_new(
+    var nd: i64[3];
+    _v3_set(&nd,
       f64_mul(f64_div(HVec3_x(direction), h_len), new_sin),
       f64_mul(vert_sign, new_cos),
       f64_mul(f64_div(HVec3_z(direction), h_len), new_sin));
 
-    var len = hvec3_length(nd);
-    var new_dir = direction;
-    if (f64_gt(len, GOONJ_EPSILON) == 1) { new_dir = hvec3_scale(nd, f64_div(F64_ONE, len)); }
+    var len = hvec3_length(&nd);
+    if (f64_gt(len, GOONJ_EPSILON) == 1) { _v3_scale(out_dir, &nd, f64_div(F64_ONE, len)); }
+    return 0;
+}
+
+# Advance a ray one step through a stratified medium, bending its
+# direction per Snell's law from the local speed gradient.
+#   speed_fn : fn(ctx, height) -> f64   (ctx may be 0 if unused)
+# Returns a RayStep.
+#must_use
+fn refract_ray_step(origin, direction, speed_fn, ctx, step_size) {
+    var new_origin = hvec3_zero();
+    var new_dir = hvec3_zero();
+    _refract_into(origin, direction, speed_fn, ctx, step_size, new_origin, new_dir);
     return _ray_step_make(new_origin, new_dir);
 }
 
@@ -329,7 +338,11 @@ fn trace_ray_atmospheric(source, direction, wind, temp, max_distance, step_size)
         vec_push(path, source);
         return path;
     }
-    var dir = hvec3_scale(direction, f64_div(F64_ONE, len));
+    var dir: i64[3];
+    var next_dir: i64[3];
+    var new_pos: i64[3];
+    var along: i64[3];
+    _v3_scale(&dir, direction, f64_div(F64_ONE, len));
     var pos = source;
 
     # max_iterations = min((max_distance / max(step_size, 0.001)) as u32, 1_000_000)
@@ -359,20 +372,19 @@ fn trace_ray_atmospheric(source, direction, wind, temp, max_distance, step_size)
         if (go == 1) {
             iteration = iteration + 1;
             var step = f64_min(step_size, f64_sub(max_distance, total_distance));
-            TraceCtx_set_current_dir(ctx, dir);
-            var rs = refract_ray_step(pos, dir, &_trace_speed_fn, ctx, step);
-            var new_pos = RayStep_origin(rs);
-            if (f64_lt(HVec3_y(new_pos), 0) == 1) {
+            TraceCtx_set_current_dir(ctx, &dir);
+            _refract_into(pos, &dir, &_trace_speed_fn, ctx, step, &new_pos, &next_dir);
+            if (f64_lt(HVec3_y(&new_pos), 0) == 1) {
                 # Ray crosses the ground: interpolate to y = 0 and stop.
-                if (f64_gt(f64_abs(HVec3_y(dir)), GOONJ_EPSILON) == 1) {
-                    var t = f64_div(f64_neg(HVec3_y(pos)), HVec3_y(dir));
-                    var ground = hvec3_add(pos, hvec3_scale(dir, f64_max(t, 0)));
-                    vec_push(path, ground);
+                if (f64_gt(f64_abs(HVec3_y(&dir)), GOONJ_EPSILON) == 1) {
+                    var t = f64_div(f64_neg(HVec3_y(pos)), HVec3_y(&dir));
+                    _v3_scale(&along, &dir, f64_max(t, 0));
+                    vec_push(path, hvec3_add(pos, &along));
                 }
                 go = 0;
             } else {
-                pos = new_pos;
-                dir = RayStep_direction(rs);
+                pos = _v3_keep(&new_pos);
+                _v3_copy(&dir, &next_dir);
                 total_distance = f64_add(total_distance, step);
                 vec_push(path, pos);
             }

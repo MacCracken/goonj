@@ -204,6 +204,16 @@ fn generate_diffuse_rain(source, listener, room, config) {
     var contributions = vec_new();
     var total_bounces = 0;
 
+    # Nothing here outlives its ray but a contribution, so the walk's bounces are reused.
+    var pool = vec_new();
+    var jitter: i64[3];
+    var dir_raw: i64[3];
+    var dir: i64[3];
+    var unit: i64[3];
+    var diff: i64[3];
+    var ray: i64[11];
+    var state: i64[11];
+
     var num_dirs = vec_len(directions);
     var di = 0;
     while (di < num_dirs) {
@@ -213,39 +223,42 @@ fn generate_diffuse_rain(source, listener, room, config) {
         var jx = f64_mul(f64_sub(_diffuse_xorshift_next_f64(rng), F64_HALF), jitter_scale);
         var jy = f64_mul(f64_sub(_diffuse_xorshift_next_f64(rng), F64_HALF), jitter_scale);
         var jz = f64_mul(f64_sub(_diffuse_xorshift_next_f64(rng), F64_HALF), jitter_scale);
-        var dir_raw = hvec3_add(base_dir, hvec3_new(jx, jy, jz));
-        var len = hvec3_length(dir_raw);
-        var dir = base_dir;
+        _v3_set(&jitter, jx, jy, jz);
+        _v3_add(&dir_raw, base_dir, &jitter);
+        var len = hvec3_length(&dir_raw);
         if (f64_gt(len, GOONJ_EPSILON) == 1) {
-            dir = hvec3_scale(dir_raw, f64_div(F64_ONE, len));
+            _v3_scale(&dir, &dir_raw, f64_div(F64_ONE, len));
+        } else {
+            _v3_copy(&dir, base_dir);
         }
 
-        var ray = multiband_ray_new(source, dir);
-        var path = trace_ray(ray, walls, DiffuseRainConfig_max_bounces(config));
-        var bounces = ray_path_bounces(path);
-        total_bounces = total_bounces + vec_len(bounces);
+        _ray_norm_into(&unit, &dir);
+        _multiband_ray_init(&ray, source, &unit);
+        var nb = _trace_walk(&ray, walls, 0, 0, DiffuseRainConfig_max_bounces(config), pool, 1, &state);
+        total_bounces = total_bounces + nb;
 
         # Walk bounce points, accumulating distance for time; stop once the
         # arrival time exceeds max_time (distance is monotonic).
         var cumulative_distance = 0;
-        var nb = vec_len(bounces);
         var bi = 0;
         var stop = 0;
         while (bi < nb) {
             if (stop == 0) {
-                var bounce = vec_get(bounces, bi);
+                var bounce = vec_get(pool, bi);
                 cumulative_distance = f64_add(cumulative_distance, ray_bounce_distance(bounce));
                 var time = f64_div(cumulative_distance, DiffuseRainConfig_speed_of_sound(config));
                 if (f64_gt(time, max_time) == 1) {
                     stop = 1;
                 } else {
-                    var diff = hvec3_sub(ray_bounce_point(bounce), listener);
-                    var dist2 = hvec3_dot(diff, diff);
+                    _v3_sub(&diff, ray_bounce_point(bounce), listener);
+                    var dist2 = hvec3_dot(&diff, &diff);
                     if (f64_le(dist2, collection_r2) == 1) {
                         var dist = f64_sqrt(dist2);
-                        var direction = dir;
+                        var direction = 0;
                         if (f64_gt(dist, GOONJ_EPSILON) == 1) {
-                            direction = hvec3_scale(diff, f64_div(F64_ONE, dist));
+                            direction = hvec3_scale(&diff, f64_div(F64_ONE, dist));
+                        } else {
+                            direction = _v3_keep(&dir);
                         }
                         vec_push(contributions, _make_contribution(time, direction, bounce));
                     }

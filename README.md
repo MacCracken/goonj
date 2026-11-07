@@ -4,7 +4,7 @@
 [AGNOS](https://github.com/MacCracken/agnosticos) ecosystem.
 
 Goonj is a **[Cyrius](https://github.com/MacCracken/cyrius) library** — the
-completed Rust → Cyrius port (**v2.2.0**) of the original ~14,630-line Rust engine
+completed Rust → Cyrius port (**v2.2.1**) of the original ~14,630-line Rust engine
 (readable at git tag `2.1.3`). It is compiled by `cycc` (toolchain
 pinned `cyrius = "6.7.18"` in `cyrius.cyml`), built on
 [hisab](https://github.com/MacCracken/hisab) for math/geometry, and ships as a
@@ -13,7 +13,7 @@ single distlib bundle, `dist/goonj.cyr`, for downstream Cyrius consumers.
 37 modules covering sound propagation, room simulation, ray/beam/image-source
 tracing, wave-based methods (DWM, FDTD, GFPE), impulse-response generation,
 diffraction, resonance, and spatialization — **3,624 parity assertions across 37
-test suites, all green** (42 suites / 3,755 assertions counting the hardening,
+test suites, all green** (42 suites / 3,784 assertions counting the hardening,
 integration, modal and smoke suites).
 
 ## Features

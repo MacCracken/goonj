@@ -5,6 +5,11 @@
 
 ## Version
 
+**2.2.1** — the allocation strategy: hot paths work in stack buffers, so a 1 s impulse
+response leaves 1.1 MB behind where it left 3.6 MB, and ray paths run about 35% faster.
+No result moves, across 172,180 compared cases
+([ADR-0007](../adr/0007-stack-buffers-over-an-arena.md)).
+
 **2.2.0** — retires `rust-old/`. No library code changed. A last comparison on valid
 input agreed with Rust, six integration tests that were never ported joined the suites,
 and every gate was proven in a tree without the oracle before it was deleted.
@@ -164,10 +169,11 @@ round-trips (no serde in Cyrius). **37 suites, 3624 assertions, all green.** Run
 one with `cyrius test tests/<module>.tcyr`.
 
 Four suites sit outside that per-module set, bringing the totals to
-**42 suites / 3755 assertions**:
+**42 suites / 3784 assertions**:
 
-- **`hardening.tcyr`** (105) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
-  sample-count contract, the 2.0.6 `f64_to` and NaN-vertex cases, and the 2.1.3 sweep.
+- **`hardening.tcyr`** (134) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
+  sample-count contract, the 2.0.6 `f64_to` and NaN-vertex cases, the 2.1.3 sweep, and the
+  2.2.1 stack-escape checks and allocation budgets.
   Runs against the shipped `dist/goonj.cyr`, so it also proves each repair reached the
   bundle. A real regression suite: it SIGSEGVs or aborts against 2.0.1 and 2.1.2.
 - **`integration.tcyr`** (9) — the six cross-module tests from `rust-old/tests/integration.rs`,
@@ -235,7 +241,7 @@ shruti and kiran/joshua have no `cyrius.cyml` alongside these repos.
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). Allocation strategy is next.
+See [`roadmap.md`](roadmap.md). 2.3.x, number types and SIMD, is next.
 
 **Every language pattern is now proven** (f32→f64, hex literals, integer errors,
 HVec3, manual layout, `Vec`, closures→fnptr+ctx, tuple→struct, bit-ops/xorshift,
