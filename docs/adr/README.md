@@ -29,3 +29,5 @@ Decisions about goonj — what we chose, the context, and the consequences we ac
 | [0006](0006-retire-rust-old-keep-its-bar.md) | Retire `rust-old/`, and keep its bar | Accepted |
 | [0007](0007-stack-buffers-over-an-arena.md) | Hot paths use stack buffers, not an arena | Accepted |
 | [0008](0008-row-kernels-for-grid-solvers.md) | Grid solvers run as row kernels over `f64v_*` | Accepted |
+| [0009](0009-bvh-query-scratch-through-hisabs-scope.md) | The BVH query allocates into a stack scratch, through hisab's scope | Accepted |
+| [0010](0010-f32-grids-match-rust.md) | The grid solvers run in f32, as Rust's did | Accepted |

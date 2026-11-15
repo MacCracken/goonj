@@ -6,20 +6,21 @@
 # Schroeder frequency, where ray methods break down and interference
 # dominates. Reference: Botteldooren, JASA 98(6), 1995.
 #
-# Ports rust-old/src/fdtd.rs. f32 -> f64. Rust's `serde` derive on the
-# config/source/receiver/result structs is dropped (no serde in Cyrius);
-# the two serde round-trip tests are therefore omitted. The `[f32; 8]`
-# band-energy return becomes an alloc'd 8xf64 buffer (read with
-# load64(buf + band*8)), mirroring hybrid.cyr. The grid pressure fields
-# are raw alloc'd 8-byte-per-cell buffers (load64/store64) for the hot
-# loop; `Vec<f32>` receiver traces + `final_pressure` use stdlib vec.
+# Ports rust-old/src/fdtd.rs. The solver runs in f32, as Rust's did (ADR-0010): the
+# config's dx, speed and duration and each source sample are rounded to f32 on the way
+# in, the grid holds f32, and results come back as f64 vecs of f32 values, so on the
+# same input they are Rust's bits. band_energies stays f64. Rust's `serde` derive on the
+# config/source/receiver/result structs is dropped (no serde in Cyrius); the two serde
+# round-trip tests are therefore omitted. The `[f32; 8]` band-energy return becomes an
+# alloc'd 8xf64 buffer (read with load64(buf + band*8)), mirroring hybrid.cyr.
 #
 # Requires (from the build/test unit): material.cyr (NUM_BANDS,
 # frequency_band), stdlib math/ganita (F64_*, f64_*), vec, and alloc;
 # alloc_init() must have run.
 
-# Courant-Friedrichs-Lewy upper bound for 2D FDTD: c*dt/dx <= 1/sqrt(2).
-var CFL_2D_LIMIT = 0x3FE6A09E667F3BCD;   # 1/sqrt(2) ~ 0.70710678
+# Courant-Friedrichs-Lewy upper bound for 2D FDTD: c*dt/dx <= 1/sqrt(2), as Rust's
+# f32 FRAC_1_SQRT_2 (0.70710677) widened.
+var CFL_2D_LIMIT = 0x3FE6A09E60000000;
 # Maximum allowed grid cells nx*ny to bound memory.
 var MAX_GRID_CELLS = 4000000;
 # Maximum allowed time-step count to bound runtime.
@@ -80,36 +81,11 @@ fn fdtd_source_new(ix, iy, signal) {
     return s;
 }
 
-# Gaussian pulse centred at peak_step with width sigma_steps samples;
-# energy spread covers ~6 sigma steps. A broad-spectrum impulse.
+# Gaussian pulse centred at peak_step with width sigma_steps; energy spread covers ~6 sigma
+# steps. A broad-spectrum impulse. Computed in f32, as Rust's was (_g32_gaussian_pulse).
 #must_use
 fn fdtd_source_gaussian_pulse(ix, iy, peak_step, sigma_steps, amplitude) {
-    if (peak_step < 0) { peak_step = 0; }   # u32 in Rust
-    # Rust: `(peak + 6 * sigma).ceil() as usize` then `.max(1)`
-    # (rust-old/src/fdtd.rs:96), with no ceiling. Bound it in f64 (ADR-0003):
-    # solve_fdtd_2d runs at most MAX_TIME_STEPS steps and reads `signal` only at
-    # step < that, so no solver can see past the cap. NaN and anything below 1
-    # give n = 1, as Rust's `.max(1)` does.
-    var span = f64_ceil(f64_add(f64_from(peak_step), f64_mul(f64_from(6), sigma_steps)));
-    var n = 1;
-    if (f64_ge(span, f64_from(MAX_TIME_STEPS)) == 1) {
-        n = MAX_TIME_STEPS;
-    }
-    if (f64_gt(span, F64_ONE) == 1) {
-        if (f64_lt(span, f64_from(MAX_TIME_STEPS)) == 1) {
-            n = f64_to(span);
-        }
-    }
-    var inv_sigma = f64_div(F64_ONE, f64_max(sigma_steps, F64_ONE));
-    var signal = vec_new();
-    var i = 0;
-    while (i < n) {
-        var arg = f64_mul(f64_sub(f64_from(i), f64_from(peak_step)), inv_sigma);
-        var e = f64_exp(f64_mul(f64_mul(f64_neg(F64_HALF), arg), arg));
-        vec_push(signal, f64_mul(amplitude, e));
-        i = i + 1;
-    }
-    return fdtd_source_new(ix, iy, signal);
+    return fdtd_source_new(ix, iy, _g32_gaussian_pulse(peak_step, sigma_steps, amplitude, MAX_TIME_STEPS));
 }
 
 # ================================================================
@@ -155,33 +131,29 @@ fn fdtd_empty_result() {
     return r;
 }
 
-# Allocate an n-cell f64 grid buffer, zero-initialised.
-#must_use
-fn _fdtd_alloc_zeros(n) {
-    return goonj_alloc(n * 8);   # alloc's bytes are zero, and 0.0's bit pattern is 0
-}
-
 # ================================================================
 # solve_fdtd_2d -- solve the 2D acoustic wave equation on a rigid box.
 # `receivers` is a vec of FdtdReceiver pointers. Returns an empty result
 # on degenerate input (zero grid, sub-CFL dt, out-of-range source, etc.).
+# Runs in f32, as Rust's did (ADR-0010).
 # ================================================================
 #must_use
 fn solve_fdtd_2d(config, source, receivers) {
     var sample_rate = FdtdConfig_sample_rate(config);
-    var dx = FdtdConfig_dx(config);
-    var speed_of_sound = FdtdConfig_speed_of_sound(config);
+    # Rust's FdtdConfig holds these as f32, so every test and step below sees them so.
+    var dx = _g32_of(FdtdConfig_dx(config));
+    var speed_of_sound = _g32_of(FdtdConfig_speed_of_sound(config));
     var nx = FdtdConfig_nx(config);
     var ny = FdtdConfig_ny(config);
-    var duration = FdtdConfig_duration_seconds(config);
+    var duration = _g32_of(FdtdConfig_duration_seconds(config));
 
     if (sample_rate <= 0) {
         return fdtd_empty_result();
     }
-    if (f64_le(dx, 0) == 1) {
+    if (f64_le(_g32_wide(dx), 0) == 1) {
         return fdtd_empty_result();
     }
-    if (f64_le(speed_of_sound, 0) == 1) {
+    if (f64_le(_g32_wide(speed_of_sound), 0) == 1) {
         return fdtd_empty_result();
     }
     if (nx < 3) {
@@ -190,7 +162,7 @@ fn solve_fdtd_2d(config, source, receivers) {
     if (ny < 3) {
         return fdtd_empty_result();
     }
-    if (f64_le(duration, 0) == 1) {
+    if (f64_le(_g32_wide(duration), 0) == 1) {
         return fdtd_empty_result();
     }
     # Rust used saturating_mul here (rust-old/src/fdtd.rs:157). A plain i64
@@ -211,7 +183,7 @@ fn solve_fdtd_2d(config, source, receivers) {
     var source_iy = FdtdSource_iy(source);
     # FdtdSource.ix/iy were `usize` in Rust (rust-old/src/fdtd.rs:77-79), so
     # `>= nx` was a complete bound. As signed i64 the lower half is gone and a
-    # negative index reaches the store64 below, writing before the grid buffer.
+    # negative index reaches the store below, writing before the grid buffer.
     if (source_ix < 0) {
         return fdtd_empty_result();
     }
@@ -225,18 +197,19 @@ fn solve_fdtd_2d(config, source, receivers) {
         return fdtd_empty_result();
     }
 
-    var dt = f64_div(F64_ONE, f64_from(sample_rate));
-    var cfl = f64_div(f64_mul(speed_of_sound, dt), dx);
-    if (f64_gt(cfl, CFL_2D_LIMIT) == 1) {
+    # dt = 1 / sample_rate and cfl = c * dt / dx, in f32 (rust-old/src/fdtd.rs:166-167).
+    var dt = _g32_div(G32_ONE, _g32_int(sample_rate));
+    var cfl = _g32_div(_g32_mul(speed_of_sound, dt), dx);
+    if (f64_gt(_g32_wide(cfl), CFL_2D_LIMIT) == 1) {
         return fdtd_empty_result();
     }
 
-    # Rust: `(duration / dt) as u32` then `.min(MAX)`. The `as` cast SATURATES —
-    # NaN and negatives to 0, overflow to u32::MAX — so a huge duration runs the
+    # Rust: `(duration / dt) as u32` then `.min(MAX)`, the division in f32. The `as` cast
+    # SATURATES — NaN and negatives to 0, overflow to u32::MAX — so a huge duration runs the
     # CAP. Before cyrius 6.6.8 f64_to gave INT64_MIN there, which is neither
     # > MAX nor == 0, so the step loop silently ran ZERO times. Clamp in f64
     # first: f64_to saturates now, but it still keeps the sign (ADR-0003).
-    var steps_f = f64_div(duration, dt);
+    var steps_f = _g32_wide(_g32_div(duration, dt));
     var num_steps = 0;
     if (f64_ge(steps_f, f64_from(MAX_TIME_STEPS)) == 1) {
         num_steps = MAX_TIME_STEPS;
@@ -251,13 +224,14 @@ fn solve_fdtd_2d(config, source, receivers) {
     }
 
     var n = nx * ny;
-    var p_prev = _fdtd_alloc_zeros(n);
-    var p_curr = _fdtd_alloc_zeros(n);
-    var p_next = _fdtd_alloc_zeros(n);
-    var cfl_sq = f64_mul(cfl, cfl);
+    var p_prev = _g32_zeros(n);
+    var p_curr = _g32_zeros(n);
+    var p_next = _g32_zeros(n);
+    var cfl_sq = _g32_mul(cfl, cfl);
 
     var source_signal = FdtdSource_signal(source);
     var siglen = vec_len(source_signal);
+    var sidx = source_iy * nx + source_ix;
 
     # One inner trace vec per receiver (empty for out-of-range receivers).
     var receiver_signals = vec_new();
@@ -271,62 +245,76 @@ fn solve_fdtd_2d(config, source, receivers) {
     var top_row = (ny - 1) * nx;
     var below_top = (ny - 2) * nx;
 
-    # One row's scratch for the array kernel below (ADR-0008).
-    var inner = nx - 2;
-    var t_lap = _fdtd_alloc_zeros(inner);
-    var t_lead = _fdtd_alloc_zeros(inner);
-    var four = f64_from(4);
+    # The interior runs in chunks of whole rows, each one span from (1, y0) to (nx - 2, y1) in
+    # row-major order. A span takes in the x = 0 and x = nx - 1 cells between its rows too,
+    # which read the wrong neighbours, but the walls below overwrite every one of them, as
+    # Rust's do (ADR-0010). Scratch for the f32 kernels, and the scalars they multiply by.
+    var rows = _row32_rows_per_chunk(nx);
+    var cap = rows * nx;
+    var t_lap = _g32_zeros(cap);
+    var t_lead = _g32_zeros(cap);
+    var k_four = _g32_zeros(cap);
+    var k_two = _g32_zeros(cap);
+    var k_cfl_sq = _g32_zeros(cap);
+    _row32_fill(k_four, G32_FOUR, cap);
+    _row32_fill(k_two, G32_TWO, cap);
+    _row32_fill(k_cfl_sq, cfl_sq, cap);
 
     var step = 0;
     while (step < num_steps) {
-        # Interior 5-point Laplacian + leapfrog update, a row at a time:
-        #   lap = ((left + right) + below + above) - 4 * c
+        # Interior 5-point Laplacian + leapfrog update, in Rust's order
+        # (rust-old/src/fdtd.rs:192-197):
+        #   lap = (((left + right) + below) + above) - 4 * c
         #   next = (2 * c - prev) + cfl_sq * lap
-        var y = 1;
-        while (y < ny - 1) {
-            var first = (y * nx + 1) * 8;
+        var y0 = 1;
+        while (y0 < ny - 1) {
+            var y1 = y0 + rows - 1;
+            if (y1 > ny - 2) { y1 = ny - 2; }
+            var first = (y0 * nx + 1) * 4;
+            var len = (y1 - y0 + 1) * nx - 2;
             var c = p_curr + first;
-            _row_add(t_lap, c - 8, c + 8, inner);
-            _row_add(t_lap, t_lap, c - nx * 8, inner);
-            _row_add(t_lap, t_lap, c + nx * 8, inner);
-            _row_scale(t_lead, c, four, inner);
-            _row_sub(t_lap, t_lap, t_lead, inner);
-            _row_scale(t_lap, t_lap, cfl_sq, inner);
-            _row_scale(t_lead, c, F64_TWO, inner);
-            _row_sub(t_lead, t_lead, p_prev + first, inner);
-            _row_add(p_next + first, t_lead, t_lap, inner);
-            y = y + 1;
+            _row32_add(t_lap, c - 4, c + 4, len);
+            _row32_add(t_lap, t_lap, c - nx * 4, len);
+            _row32_add(t_lap, t_lap, c + nx * 4, len);
+            _row32_mul(t_lead, k_four, c, len);
+            _row32_sub(t_lap, t_lap, t_lead, len);
+            _row32_mul(t_lap, k_cfl_sq, t_lap, len);
+            _row32_mul(t_lead, k_two, c, len);
+            _row32_sub(t_lead, t_lead, p_prev + first, len);
+            _row32_add(p_next + first, t_lead, t_lap, len);
+            y0 = y1 + 1;
         }
 
         # Rigid walls: copy the adjacent interior cell (dp/dn = 0).
         var ex = 1;
         while (ex < nx - 1) {
-            store64(p_next + ex * 8, load64(p_next + (ex + nx) * 8));
-            store64(p_next + (top_row + ex) * 8, load64(p_next + (below_top + ex) * 8));
+            store32(p_next + ex * 4, load32(p_next + (ex + nx) * 4));
+            store32(p_next + (top_row + ex) * 4, load32(p_next + (below_top + ex) * 4));
             ex = ex + 1;
         }
         var ey = 1;
         while (ey < ny - 1) {
             var lrow = ey * nx;
-            store64(p_next + lrow * 8, load64(p_next + (lrow + 1) * 8));
-            store64(p_next + (lrow + nx - 1) * 8, load64(p_next + (lrow + nx - 2) * 8));
+            store32(p_next + lrow * 4, load32(p_next + (lrow + 1) * 4));
+            store32(p_next + (lrow + nx - 1) * 4, load32(p_next + (lrow + nx - 2) * 4));
             ey = ey + 1;
         }
 
-        # Corners: average of adjacent edges.
-        store64(p_next, f64_mul(F64_HALF, f64_add(load64(p_next + 8), load64(p_next + nx * 8))));
-        var br = f64_add(load64(p_next + (nx - 2) * 8), load64(p_next + (2 * nx - 1) * 8));
-        store64(p_next + (nx - 1) * 8, f64_mul(F64_HALF, br));
-        var tl = f64_add(load64(p_next + (top_row + 1) * 8), load64(p_next + (top_row - nx) * 8));
-        store64(p_next + top_row * 8, f64_mul(F64_HALF, tl));
-        var trc = f64_add(load64(p_next + (top_row + nx - 2) * 8),
-          load64(p_next + (top_row + nx - 1 - nx) * 8));
-        store64(p_next + (top_row + nx - 1) * 8, f64_mul(F64_HALF, trc));
+        # Corners: average of adjacent edges, 0.5 * (a + b).
+        var bl = _g32_add(load32(p_next + 4), load32(p_next + nx * 4));
+        store32(p_next, _g32_mul(G32_HALF, bl));
+        var br = _g32_add(load32(p_next + (nx - 2) * 4), load32(p_next + (2 * nx - 1) * 4));
+        store32(p_next + (nx - 1) * 4, _g32_mul(G32_HALF, br));
+        var tl = _g32_add(load32(p_next + (top_row + 1) * 4), load32(p_next + (top_row - nx) * 4));
+        store32(p_next + top_row * 4, _g32_mul(G32_HALF, tl));
+        var trc = _g32_add(load32(p_next + (top_row + nx - 2) * 4),
+          load32(p_next + (top_row + nx - 1 - nx) * 4));
+        store32(p_next + (top_row + nx - 1) * 4, _g32_mul(G32_HALF, trc));
 
-        # Source injection (additive).
+        # Source injection (additive). Rust's signal is f32, so each sample is rounded first.
         if (step < siglen) {
-            var sidx = source_iy * nx + source_ix;
-            store64(p_next + sidx * 8, f64_add(load64(p_next + sidx * 8), vec_get(source_signal, step)));
+            var s = _g32_of(vec_get(source_signal, step));
+            store32(p_next + sidx * 4, _g32_add(load32(p_next + sidx * 4), s));
         }
 
         # Sample receivers.
@@ -344,7 +332,7 @@ fn solve_fdtd_2d(config, source, receivers) {
             if (rxiy >= ny) { inrange = 0; }
             if (inrange == 1) {
                 var trace = vec_get(receiver_signals, rj);
-                vec_push(trace, load64(p_next + (rxiy * nx + rxix) * 8));
+                vec_push(trace, _g32_wide(load32(p_next + (rxiy * nx + rxix) * 4)));
             }
             rj = rj + 1;
         }
@@ -352,27 +340,18 @@ fn solve_fdtd_2d(config, source, receivers) {
         # Rotate buffers: prev<-curr, curr<-next, next<-old prev.
         var tmp = p_prev;
         p_prev = p_curr;
-        p_curr = tmp;
-        tmp = p_curr;
         p_curr = p_next;
         p_next = tmp;
 
         step = step + 1;
     }
 
-    # final_pressure snapshot = current field after the last rotation.
-    var final_pressure = vec_new();
-    var fi = 0;
-    while (fi < n) {
-        vec_push(final_pressure, load64(p_curr + fi * 8));
-        fi = fi + 1;
-    }
-
     var result = alloc(sizeof(FdtdResult));
     FdtdResult_set_receiver_signals(result, receiver_signals);
-    FdtdResult_set_final_pressure(result, final_pressure);
+    # final_pressure snapshot = current field after the last rotation.
+    FdtdResult_set_final_pressure(result, _g32_to_vec(p_curr, n));
     FdtdResult_set_time_steps(result, num_steps);
-    FdtdResult_set_dt(result, dt);
+    FdtdResult_set_dt(result, _g32_wide(dt));
     return result;
 }
 

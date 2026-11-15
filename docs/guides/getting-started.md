@@ -3,7 +3,7 @@
 ## Build
 
 ```sh
-cyrius deps                              # resolve hisab (+ transitive sakshi) into lib/
+cyrius deps                              # resolve hisab and the stdlib (sakshi included) into lib/
 cyrius build src/main.cyr build/goonj    # compile the smoke binary
 cyrius test                              # run every suite (auto-discovers tests/*.tcyr)
 cyrius test tests/propagation.tcyr       # or one parity suite by path
@@ -11,7 +11,7 @@ cyrius bench tests/dwm.bcyr              # run a benchmark
 cyrius distlib                           # regenerate dist/goonj.cyr (the bundle)
 ```
 
-Bare `cyrius test` auto-discovers and runs every suite (42 suites / 3,801
+Bare `cyrius test` auto-discovers and runs every suite (43 suites / 3,828
 assertions; the per-module parity subset is 37 suites / 3,624). Pass an explicit
 `tests/<module>.tcyr` path to run just one — that is the faster loop while
 working on a single module.

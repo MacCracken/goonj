@@ -11,27 +11,30 @@
 # bodies in (SAKSHI_LEVEL defaults to 5), so the runtime threshold is the
 # only control needed.
 #
-# Names are `logging_`/`goonj_log_`-prefixed (flat namespace). Requires
+# Names are `logging_`/`goonj_log_`/`GOONJ_LOG_`-prefixed (flat namespace).
+# Through 2.3.1 the levels were LOG_*, which stdlib `log` defines in the
+# opposite order (LOG_TRACE = 0), so a unit that included `log` after goonj
+# made logging_init_verbose() set fatal-only (tests/namespace.tcyr). Requires
 # lib/sakshi.cyr + stdlib string (strlen) in the build unit.
 
-enum LogLevel {
-    LOG_FATAL = 0,
-    LOG_ERROR = 1,
-    LOG_WARN  = 2,
-    LOG_INFO  = 3,
-    LOG_DEBUG = 4,
-    LOG_TRACE = 5,
+enum GoonjLogLevel {
+    GOONJ_LOG_FATAL = 0,
+    GOONJ_LOG_ERROR = 1,
+    GOONJ_LOG_WARN  = 2,
+    GOONJ_LOG_INFO  = 3,
+    GOONJ_LOG_DEBUG = 4,
+    GOONJ_LOG_TRACE = 5,
 }
 
 # Map a GOONJ_LOG value to a threshold, or -1 if unrecognised.
 # Ports the level vocabulary tracing_subscriber's EnvFilter accepted.
 fn _logging_level_from_name(s) {
-    if (streq(s, "trace") == 1) { return LOG_TRACE; }
-    if (streq(s, "debug") == 1) { return LOG_DEBUG; }
-    if (streq(s, "info") == 1)  { return LOG_INFO; }
-    if (streq(s, "warn") == 1)  { return LOG_WARN; }
-    if (streq(s, "error") == 1) { return LOG_ERROR; }
-    if (streq(s, "fatal") == 1) { return LOG_FATAL; }
+    if (streq(s, "trace") == 1) { return GOONJ_LOG_TRACE; }
+    if (streq(s, "debug") == 1) { return GOONJ_LOG_DEBUG; }
+    if (streq(s, "info") == 1)  { return GOONJ_LOG_INFO; }
+    if (streq(s, "warn") == 1)  { return GOONJ_LOG_WARN; }
+    if (streq(s, "error") == 1) { return GOONJ_LOG_ERROR; }
+    if (streq(s, "fatal") == 1) { return GOONJ_LOG_FATAL; }
     return 0 - 1;
 }
 
@@ -45,7 +48,7 @@ fn _logging_level_from_name(s) {
 # unrecognised value falls back to WARN, matching the Rust unwrap_or_else.
 fn logging_init() {
     sakshi_set_output(SK_OUT_STDERR);
-    var level = LOG_WARN;
+    var level = GOONJ_LOG_WARN;
     var env = getenv("GOONJ_LOG");
     if (env != 0) {
         var parsed = _logging_level_from_name(env);
@@ -58,7 +61,7 @@ fn logging_init() {
 # Verbose init: TRACE threshold to stderr — emit everything, for diagnosis.
 fn logging_init_verbose() {
     sakshi_set_output(SK_OUT_STDERR);
-    sakshi_set_level(LOG_TRACE);
+    sakshi_set_level(GOONJ_LOG_TRACE);
     return 0;
 }
 
@@ -67,12 +70,12 @@ fn logging_try_init() {
     return logging_init();
 }
 
-# Set / get the runtime log threshold (LOG_FATAL … LOG_TRACE).
+# Set / get the runtime log threshold (GOONJ_LOG_FATAL … GOONJ_LOG_TRACE).
 fn logging_set_level(level) {
     sakshi_set_level(level);
     return 0;
 }
-# Get the runtime log threshold (LOG_FATAL to LOG_TRACE).
+# Get the runtime log threshold (GOONJ_LOG_FATAL to GOONJ_LOG_TRACE).
 fn logging_get_level() {
     return sakshi_get_level();
 }

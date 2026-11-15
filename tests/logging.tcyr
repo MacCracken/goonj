@@ -18,13 +18,13 @@ test_group("logging: init / level control");
 assert_eq(logging_try_init(), 0, "try_init does not panic (Ok)");
 assert_eq(logging_init(), 0, "init does not panic");
 # init sets the WARN threshold (matches the Rust default).
-assert_eq(logging_get_level(), LOG_WARN, "init -> WARN threshold");
+assert_eq(logging_get_level(), GOONJ_LOG_WARN, "init -> WARN threshold");
 # Verbose mode raises the threshold to TRACE.
 logging_init_verbose();
-assert_eq(logging_get_level(), LOG_TRACE, "verbose -> TRACE threshold");
+assert_eq(logging_get_level(), GOONJ_LOG_TRACE, "verbose -> TRACE threshold");
 # Explicit level control.
-logging_set_level(LOG_DEBUG);
-assert_eq(logging_get_level(), LOG_DEBUG, "set_level -> DEBUG");
+logging_set_level(GOONJ_LOG_DEBUG);
+assert_eq(logging_get_level(), GOONJ_LOG_DEBUG, "set_level -> DEBUG");
 
 test_group("logging: wrappers emit without error");
 logging_init_verbose();
@@ -37,31 +37,31 @@ test_group("logging: level gating via ring buffer");
 # Route emits to the in-memory ring so we can observe gating.
 sakshi_output_buffer();
 # At TRACE, a WARN message is emitted.
-logging_set_level(LOG_TRACE);
+logging_set_level(GOONJ_LOG_TRACE);
 sakshi_ring_clear();
 var before = sakshi_ring_event_count();
 goonj_log_warn("emitted at trace");
 assert(gt(sakshi_ring_event_count(), before), "warn emitted when threshold >= warn");
 # At ERROR threshold, a DEBUG message is suppressed (no new events).
-logging_set_level(LOG_ERROR);
+logging_set_level(GOONJ_LOG_ERROR);
 var mid = sakshi_ring_event_count();
 goonj_log_debug("suppressed below threshold");
 assert_eq(sakshi_ring_event_count(), mid, "debug suppressed below threshold");
 
 test_group("GOONJ_LOG level names (ports rust-old/src/logging.rs:8-12)");
-assert_eq(_logging_level_from_name("trace"), LOG_TRACE, "trace");
-assert_eq(_logging_level_from_name("debug"), LOG_DEBUG, "debug");
-assert_eq(_logging_level_from_name("info"), LOG_INFO, "info");
-assert_eq(_logging_level_from_name("warn"), LOG_WARN, "warn");
-assert_eq(_logging_level_from_name("error"), LOG_ERROR, "error");
-assert_eq(_logging_level_from_name("fatal"), LOG_FATAL, "fatal");
+assert_eq(_logging_level_from_name("trace"), GOONJ_LOG_TRACE, "trace");
+assert_eq(_logging_level_from_name("debug"), GOONJ_LOG_DEBUG, "debug");
+assert_eq(_logging_level_from_name("info"), GOONJ_LOG_INFO, "info");
+assert_eq(_logging_level_from_name("warn"), GOONJ_LOG_WARN, "warn");
+assert_eq(_logging_level_from_name("error"), GOONJ_LOG_ERROR, "error");
+assert_eq(_logging_level_from_name("fatal"), GOONJ_LOG_FATAL, "fatal");
 # Unrecognised values fall back to WARN in logging_init, matching Rust's
 # unwrap_or_else(|_| EnvFilter::new("warn")).
 assert_eq(_logging_level_from_name("nonsense"), 0 - 1, "unknown -> -1");
 assert_eq(_logging_level_from_name(""), 0 - 1, "empty -> -1");
 # With GOONJ_LOG unset in the test environment, init lands on WARN.
 logging_init();
-assert_eq(logging_get_level(), LOG_WARN, "unset GOONJ_LOG -> WARN");
+assert_eq(logging_get_level(), GOONJ_LOG_WARN, "unset GOONJ_LOG -> WARN");
 
 var rc = assert_summary();
 syscall(60, rc);

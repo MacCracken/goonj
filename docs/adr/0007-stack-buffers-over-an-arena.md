@@ -67,6 +67,8 @@ keeps goes on the heap.**
 - **Neutral** — What is left needs another project:
   - `bvh_query_ray` and `geo_ray_new` allocate inside hisab, about 4 of the 6
     allocations per bounce in `trace_ray_bvh`. Reusing a result vec needs a hisab API.
+    (Closed in 2.3.2 by [ADR-0009](0009-bvh-query-scratch-through-hisabs-scope.md),
+    through hisab 3.4.2's allocation scope.)
   - Output vectors are filled by `vec_push` from empty, which is doubling garbage. A
     presized vec needs a stdlib API.
 

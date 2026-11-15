@@ -5,6 +5,14 @@
 
 ## Version
 
+**2.3.2** — the grid solvers run in f32 and give Rust 2.1.3's bits, 1.5–3× faster
+([ADR-0010](../adr/0010-f32-grids-match-rust.md)). Two name collisions fixed: `DH_SIZE`
+against yukti's, which overran every `DhvaniIr` in dhvani's unit, and `LOG_*` against stdlib
+`log`'s. hisab moves to **3.5.0**, sakshi becomes a stdlib leaf, and the BVH query keeps
+nothing ([ADR-0009](../adr/0009-bvh-query-scratch-through-hisabs-scope.md)). Every FDTD,
+DWM and diffusion result moves, to Rust's; nothing else does. Consumers now need
+hisab ≥ 3.4.2.
+
 **2.3.1** — first look at the consumers. `Fdn_delay_lines` is a vec of vecs again, after
 naad's suite showed that 2.1.3 had changed what it returns, and `fdn_process_sample` gets
 14% faster. No result moves.
@@ -89,8 +97,8 @@ Its other artifacts moved first:
 
 - **Cyrius pin**: `6.7.18` (in `cyrius.cyml [package].cyrius`) — moved
   deliberately at 2.1.1 (was `6.7.9`). The pin is still set on purpose: bump it
-  as a decision, don't auto-chase `cycc` wrapper drift. As of 2026-11-06 this pin,
-  hisab 3.4.1 and sakshi 2.5.10 are each their project's newest tag.
+  as a decision, don't auto-chase `cycc` wrapper drift. As of 2026-11-15 this pin
+  and hisab 3.5.0 are each their project's newest tag, and the pin folds sakshi 2.5.10.
 - **A toolchain bump can change results with the suite still green.** 2.0.6 is the
   worked case: run a value-level probe of the primitives on both pins, not only
   the tests. `tests/hardening.tcyr` now trips if `f64_to` moves again.
@@ -131,7 +139,8 @@ Its other artifacts moved first:
 | fmt   | ✅ clean (was FAIL / 23 files before the 2.0.1 re-canonicalisation) |
 | lint  | ✅ clean (was 29 line-length warnings in `tests/` before 2.1.2) |
 | docs  | ✅ complete (was 217 undocumented before 2.1.2) |
-| tests | ✅ 42 suites green (37 parity + hardening + integration + dwm_modal + 2 smoke) |
+| tests | ✅ 43 suites green (37 parity + hardening + integration + dwm_modal + namespace + 2 smoke) |
+| namespace | ✅ no top-level goonj name is defined in the pinned stdlib (`scripts/check-namespace.sh`, 2.3.2) |
 | bench | ✅ 16 suites green |
 
 `cyrius audit` **exits 0** as of 2.1.2, for the first time. It fails on any lint
@@ -176,19 +185,24 @@ suite is ported one-for-one from its module's Rust `#[test]` blocks, minus serde
 round-trips (no serde in Cyrius). **37 suites, 3624 assertions, all green.** Run
 one with `cyrius test tests/<module>.tcyr`.
 
-Four suites sit outside that per-module set, bringing the totals to
-**42 suites / 3806 assertions**:
+Six suites sit outside that per-module set, bringing the totals to
+**43 suites / 3831 assertions**:
 
-- **`hardening.tcyr`** (156) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
+- **`hardening.tcyr`** (170) — every P-1 defect from the 2.0.2 sweep, the 2.0.3 IR
   sample-count contract, the 2.0.6 `f64_to` and NaN-vertex cases, the 2.1.3 sweep, the
-  2.2.1 stack-escape checks and allocation budgets, the 2.3.0 golden hashes, and the
-  2.3.1 FDN line shape.
+  2.2.1 stack-escape checks and allocation budgets, the golden hashes (Rust 2.1.3's for the
+  grids from 2.3.2), the 2.3.1 FDN line shape, the 2.3.2 BVH query scratch, and the f32
+  row kernels.
   Runs against the shipped `dist/goonj.cyr`, so it also proves each repair reached the
   bundle. A real regression suite: it SIGSEGVs or aborts against 2.0.1 and 2.1.2.
 - **`integration.tcyr`** (9) — the six cross-module tests from `rust-old/tests/integration.rs`,
   run against the shipped bundle.
 - **`dwm_modal.tcyr`** (4) — the DWM solver's only physics-correctness check
   (first axial mode dominates). Split out because it runs ~15 s.
+- **`namespace.tcyr`** (11) — the bundle in a unit that also defines yukti's
+  `DeviceHealthField` and stdlib `log`'s `LogLevel`, after it, as a consumer's does. The
+  `DhvaniIr` keeps its 88 bytes and logging keeps sakshi's levels. 5 of its 11 fail
+  against 2.3.1.
 - **`bundle.tcyr`**, **`goonj.tcyr`** — cross-layer and smoke.
 
 - **`tests/goonj.fcyr`** — 2,000 hostile cases across 13 target groups, with a fixed seed.
@@ -197,6 +211,10 @@ Four suites sit outside that per-module set, bringing the totals to
 
 The differential and fault-injection harnesses from 2.1.3 needed the Rust oracle and a
 patched `alloc`, so they were not kept. ADR-0004 and ADR-0005 record what they found.
+
+**`scripts/rust-parity/`** (2.3.2) compares the three grid solvers with `rust-old` at tag
+2.1.3, value by value. It extracts the oracle from the tag into `build/` and needs cargo,
+so it is not in CI; the golden hashes it produced are.
 
 Six parallel workflows landed 30 of the 37 modules; the rest were ported solo.
 Each batch was independently re-verified in main (tests + canonical-fmt diff +
@@ -214,18 +232,24 @@ Direct (declared in `cyrius.cyml`, locked in `cyrius.lock`):
   **ganita** (transcendentals: pow/exp/ln/sin/cos/sqrt/acos/…), **fnptr**
   (`fncallN` indirect calls for the closure→callback pattern), **bench**
   (`bench_new`/`bench_run`/`bench_report` for `.bcyr` benchmarks), **simd**
-  (`simd_has_avx2`, for the row kernels' 256-bit path).
-- **hisab** 3.4.1 — math/geometry; consumed as the single `dist/hisab.cyr`
-  bundle (HVec3 and friends). Pulls transitive **sakshi** 2.5.10. goonj calls 19
-  hisab functions, none of them `Result`-returning.
+  (`simd_has_avx2`, for the row kernels' 256-bit path), **sakshi** (2.5.10, for
+  `logging`). sakshi came through hisab's `[deps.sakshi]` until hisab 3.4.2 dropped
+  it, so from 2.3.2 goonj names the leaf itself. The bytes are the same.
+- **hisab** 3.5.0 — math/geometry; consumed as the single `dist/hisab.cyr`
+  bundle (HVec3 and friends). goonj calls 19 hisab functions, none of them
+  `Result`-returning, and from 2.3.2 `hisab_alloc_scope` (ADR-0009), which needs
+  hisab ≥ 3.4.2. On goonj's paths 3.5.0 differs from 3.4.1 only in where hisab
+  allocates and in what a 0 handle answers, so the bump moved no result.
 
-`cyrius.lock` pins 31 entries (2 commit-pinned deps + the vendored `lib/`
-hashes), down from 32 at 2.0.5: `boxed`, `callback` and `tagged` left with hisab's
-old 16-leaf sidecar, and `alloc_cx` and `poison` arrived with 6.6.20.
+`cyrius.lock` holds hisab's commit row and the 32 vendored `lib/` hashes. sakshi's
+commit row left at 2.3.2 when it became a leaf. `boxed`, `callback` and `tagged`
+left at 2.0.6 with hisab's old 16-leaf sidecar, and `alloc_cx` and `poison` arrived
+with 6.6.20.
 
-`dist/goonj.deps` names one leaf, `io`. That is correct, not a loss: from cyrius
-6.6.18 the sidecar holds only what the compile-verify proves, and everything else
-reaches a consumer through hisab's and sakshi's own `# Requires` blocks.
+`dist/goonj.deps` names four leaves: `syscalls`, `sakshi`, `simd` and `io`. From
+cyrius 6.6.18 the sidecar holds only what the compile-verify proves, and everything
+else reaches a consumer through hisab's own `# Requires` block. `sakshi` joined at
+2.3.2, because hisab no longer brings it.
 
 ## Consumers
 
@@ -234,34 +258,45 @@ numbers `const` from 2.5.8, and goonj's `logging` pulls sakshi in. Measured on 1
 pins from 6.6.3 to 6.7.18 at 2.1.1: below 6.7.2 the build fails with `undefined
 variable '_SK_SYS_OPEN'`, and every pin from 6.7.2 builds and runs.
 
-Six repos declare `[deps.goonj]`, all pinned behind 2.1.1 and below that floor. Each was
-tried in a scratch copy at 2.3.1, on cyrius 6.7.18 and hisab 3.4.1 (as of 2026-11-06):
+**A consumer of goonj 2.3.2 needs hisab ≥ 3.4.2.** The BVH query calls
+`hisab_alloc_scope` ([ADR-0009](../adr/0009-bvh-query-scratch-through-hisabs-scope.md)).
+Against 3.4.1 the build stops with an undefined function, so the floor is loud. A unit
+resolves one hisab and the root's wins: dhvani's 2.3.2 run below resolved 3.5.0 over the
+3.4.1 that garjan, ghurni, naad, nidhi, prani and svara ask for.
 
-| Repo | goonj functions called | goonj / hisab / cyrius today | Suites at 2.3.1 | What is left |
-|------|------|------|------|------|
-| dhvani | 20 | 2.0.5 / 2.11.2 / 6.6.10 | 65 of 65 | Move its pins |
-| garjan | 0 | 2.0.4 / 2.11.2 / 6.6.3 | 33 of 33 | Move its pins |
-| ghurni | 0 | 2.0.4 / 2.11.2 / 6.6.3 | 10 of 10 | Move its pins |
-| naad | 33 | 2.0.4 / 2.22.1 / 6.6.3 | 39 of 40 | Bind the `Result` at 3 `num_fft`/`num_ifft` sites in `src/acoustics_convolution.cyr`. One sine golden moved 1 ULP, on a path that calls no goonj |
-| svara | 0 | 2.0.4 / 2.22.1 / 6.6.3 | 18 of 22 | hisab retired `calc_monotone_cubic`, which `src/prosody.cyr` calls |
-| prani | 0 | 2.0.4 / 2.11.2 / 6.6.3 | 12 of 18 | Its suites and guards assume `f64_to` from before cyrius 6.6.8. A 1e300 s duration now ends in `vec: capacity overflow` |
+Six repos declare `[deps.goonj]`. As of 2026-11-15 each one's newest tag pins goonj 2.3.1,
+hisab 3.4.1 and cyrius 6.7.18:
 
-**Every result but naad's ran against a naad patched at those 3 sites.** Released naad
-doesn't compile against hisab 3, and the other five all link it. None of these failures
-comes from goonj.
+| Repo | Tag | goonj functions called |
+|------|-----|------|
+| dhvani | 2.3.1 | 20 |
+| naad | 2.3.3 | 33 |
+| garjan | 2.6.3 | 0 |
+| ghurni | 2.7.2 | 0 |
+| svara | 3.6.3 | 0 |
+| prani | 2.1.1 | 0 |
+
+**dhvani passes on its own released pins.** In a scratch clone of tag 2.3.1, 65 of 65
+suites pass (2026-11-15), with yukti's `DH_SIZE` warning in all 65 units. With goonj
+2.3.2 and hisab 3.5.0 in their place, 65 of 65 pass and the warning is gone. The other
+five were not run at their new tags.
 
 **Derived accessors count as public here,** even where Rust's fields are private, and
 consumers read them: naad's suite is how 2.1.3's `Fdn_delay_lines` change was found.
-Before changing what one returns, search these repos as well as this one.
+Before changing what one returns, search these repos as well as this one. naad's
+`tests/bundle.tcyr` also reads goonj's `ERR_*` codes by name.
 
-⚠ **dhvani builds 2.0.5 on cyrius ≥ 6.6.8**, so the memory exhaustion fixed in 2.0.6
-is live there until it bumps. aethersafha does not declare goonj, shruti is still Rust,
-and kiran and joshua have no repo alongside these. See
-[`roadmap.md`](roadmap.md#consumer-green).
+**Names are shared with every consumer's unit.** `scripts/check-namespace.sh <lib-dir>`
+checks a consumer's bundles. Against dhvani's `lib/` it reports one name, `ERR_NONE`,
+which shravan also defines as 0.
+
+aethersafha does not declare goonj, shruti is still Rust, and kiran and joshua have no
+repo alongside these.
 
 ## Next
 
-See [`roadmap.md`](roadmap.md). What remains in 2.3.x is f32.
+See [`roadmap.md`](roadmap.md). What remains in 2.3.x is f32 on the ray paths, which waits
+on hisab.
 
 **Every language pattern is now proven** (f32→f64, hex literals, integer errors,
 HVec3, manual layout, `Vec`, closures→fnptr+ctx, tuple→struct, bit-ops/xorshift,

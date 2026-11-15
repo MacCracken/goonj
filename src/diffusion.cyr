@@ -3,11 +3,12 @@
 # analogy) for high-frequency diffuse fields: long rooms, coupled rooms,
 # and industrial spaces where ray tracing struggles.
 #
-# Ports rust-old/src/diffusion.rs. f32 -> f64. Rust's `serde` derive is
-# dropped (no serde in Cyrius); the serde round-trip test is omitted.
-# Rust's `Vec<f32>` energy field -> stdlib `vec` (f64 in 8-byte slots);
-# the `&[f32]` absorption/source slices -> a raw f64 buffer pointer plus
-# an element count; the `[usize; 2]` dimensions -> two scalar fields.
+# Ports rust-old/src/diffusion.rs. The solver runs in f32, as Rust's did (ADR-0010), so
+# on the same input it gives Rust's bits. Rust's `serde` derive is dropped (no serde in
+# Cyrius); the serde round-trip test is omitted. Rust's `Vec<f32>` energy field -> stdlib
+# `vec` of f64s holding f32 values; the `&[f32]` absorption/source slices -> a raw f64
+# buffer pointer plus an element count, each value rounded to f32; the `[usize; 2]`
+# dimensions -> two scalar fields.
 #
 # Requires (from the build/test unit): stdlib math (f64_* + F64_*),
 # vec (vec_new/push/len/get/set), alloc (alloc_init must have run).
@@ -83,33 +84,39 @@ fn _diff_zeros(n) {
 #   D = c*lambda/3 (diffusion coefficient), lambda = mean free path.
 # absorption_field / source_field are raw f64 buffers of `*_len` elems
 # (pass 0/0 for an empty slice). Returns a DiffusionResult pointer.
+# Runs in f32, as Rust's did (ADR-0010): the config and each field value are rounded to
+# f32 on the way in, and the energy comes back as f64s of f32 values.
 #must_use
 fn solve_diffusion_2d(config, absorption_field, absorption_len, source_field, source_len) {
-    var dx = DiffusionConfig_dx(config);
+    # Rust's DiffusionConfig holds these as f32, so every test and step below sees them so.
+    var dx = _g32_of(DiffusionConfig_dx(config));
     var nx = _diff_clamp_grid(DiffusionConfig_nx(config));
     var ny = _diff_clamp_grid(DiffusionConfig_ny(config));
     var n = nx * ny;
 
-    var c = DiffusionConfig_speed_of_sound(config);
-    var mfp = DiffusionConfig_mean_free_path(config);
-    var dt_cfg = DiffusionConfig_dt(config);
+    var c = _g32_of(DiffusionConfig_speed_of_sound(config));
+    var mfp = _g32_of(DiffusionConfig_mean_free_path(config));
+    var dt_cfg = _g32_of(DiffusionConfig_dt(config));
 
     # Invalid config: any non-positive dx/dt/mfp/speed -> empty result.
     var bad = 0;
-    if (f64_le(dx, 0) == 1) { bad = 1; }
-    if (f64_le(dt_cfg, 0) == 1) { bad = 1; }
-    if (f64_le(mfp, 0) == 1) { bad = 1; }
-    if (f64_le(c, 0) == 1) { bad = 1; }
+    if (f64_le(_g32_wide(dx), 0) == 1) { bad = 1; }
+    if (f64_le(_g32_wide(dt_cfg), 0) == 1) { bad = 1; }
+    if (f64_le(_g32_wide(mfp), 0) == 1) { bad = 1; }
+    if (f64_le(_g32_wide(c), 0) == 1) { bad = 1; }
     if (bad == 1) {
-        return _diff_result_new(_diff_zeros(n), nx, ny, 0, dx);
+        return _diff_result_new(_diff_zeros(n), nx, ny, 0, _g32_wide(dx));
     }
 
-    var d_coeff = f64_div(f64_mul(c, mfp), f64_from(3));   # diffusion coefficient
-    var dx2 = f64_mul(dx, dx);
+    # In f32 and in Rust's order (rust-old/src/diffusion.rs:83-90).
+    var d_coeff = _g32_div(_g32_mul(c, mfp), _g32_of(f64_from(3)));   # diffusion coefficient
+    var dx2 = _g32_mul(dx, dx);
 
-    # Stability: dt < dx^2 / (4 D) for the 2D explicit scheme; use 0.9 of it.
-    var dt_max = f64_div(dx2, f64_mul(f64_from(4), d_coeff));
-    var dt = goonj_fmin(dt_cfg, f64_mul(dt_max, f64_div(f64_from(9), f64_from(10))));
+    # Stability: dt < dx^2 / (4 D) for the 2D explicit scheme; use 0.9 of it. f32::min
+    # ignores a NaN.
+    var dt_max = _g32_div(dx2, _g32_mul(G32_FOUR, d_coeff));
+    var dt_cap = _g32_mul(dt_max, _g32_of(f64_div(f64_from(9), f64_from(10))));
+    var dt = _g32_of(goonj_fmin(_g32_wide(dt_cfg), _g32_wide(dt_cap)));
     # Rust: `(max_time / dt) as u32` then `.min(1_000_000)` — a saturating cast,
     # so a negative or NaN max_time yields 0 steps (and time_steps: 0 in the
     # result) while a huge one runs the cap. f64_to keeps the sign, so a negative
@@ -117,73 +124,93 @@ fn solve_diffusion_2d(config, absorption_field, absorption_len, source_field, so
     # to INT64_MIN before cyrius 6.6.8 (ADR-0003). Unlike fdtd/dwm this must NOT
     # early-return: Rust falls through
     # and returns a normal result with time_steps = 0.
-    var steps_f = f64_div(DiffusionConfig_max_time(config), dt);
+    var steps_f = _g32_wide(_g32_div(_g32_of(DiffusionConfig_max_time(config)), dt));
     var num_steps = 0;
     if (f64_ge(steps_f, f64_from(1000000)) == 1) { num_steps = 1000000; }
     if (f64_gt(steps_f, 0) == 1) {
         if (f64_lt(steps_f, f64_from(1000000)) == 1) { num_steps = f64_to(steps_f); }
     }
 
-    var w = _diff_zeros(n);       # energy density
-    var w_new = _diff_zeros(n);
+    var w = _g32_zeros(n);       # energy density
+    var w_new = _g32_zeros(n);
 
     # Initialize source (take at most n elements).
     var lim = source_len;
     if (lim > n) { lim = n; }
     var si = 0;
     while (si < lim) {
-        vec_set(w, si, load64(source_field + si * 8));
+        store32(w + si * 4, _g32_of(load64(source_field + si * 8)));
         si = si + 1;
     }
 
-    var ratio = f64_div(f64_mul(d_coeff, dt), dx2);
-    var c_over_mfp = f64_div(c, mfp);
+    var ratio = _g32_div(_g32_mul(d_coeff, dt), dx2);
+    var c_over_mfp = _g32_div(c, mfp);
 
-    # The absorption rate per cell (alpha is 0 beyond the supplied field).
-    var loss = goonj_alloc(n * 8);
+    # The absorption rate per cell, (c / mfp) * alpha (alpha is 0 beyond the supplied field).
+    var loss = _g32_zeros(n);
     var li = 0;
     while (li < n) {
         var alpha = 0;
-        if (li < absorption_len) { alpha = load64(absorption_field + li * 8); }
-        store64(loss + li * 8, f64_mul(c_over_mfp, alpha));
+        if (li < absorption_len) { alpha = _g32_of(load64(absorption_field + li * 8)); }
+        store32(loss + li * 4, _g32_mul(c_over_mfp, alpha));
         li = li + 1;
     }
 
-    # One row's scratch for the array kernel below (ADR-0008).
+    # The interior runs in chunks of whole rows, each one span from (1, y0) to (nx - 2, y1) in
+    # row-major order, into scratch. The x = 0 and x = nx - 1 cells between those rows come
+    # out wrong, and only each row's interior is copied back, so the boundary keeps what
+    # Rust's keeps (ADR-0010). Scratch for the f32 kernels, and the scalars they multiply by.
     var inner = nx - 2;
-    var t_new = goonj_alloc(inner * 8);
-    var t_loss = goonj_alloc(inner * 8);
-    var four = f64_from(4);
+    var rows = _row32_rows_per_chunk(nx);
+    var cap = rows * nx;
+    var t_new = _g32_zeros(cap);
+    var t_loss = _g32_zeros(cap);
+    var k_four = _g32_zeros(cap);
+    var k_ratio = _g32_zeros(cap);
+    var k_dt = _g32_zeros(cap);
+    _row32_fill(k_four, G32_FOUR, cap);
+    _row32_fill(k_ratio, ratio, cap);
+    _row32_fill(k_dt, dt, cap);
 
     var step = 0;
     while (step < num_steps) {
-        var w_data = _vec_data(w);
-        var w_new_data = _vec_data(w_new);
-        var y = 1;
-        while (y < ny - 1) {
-            # wn = (wc + ratio * lap) - dt * (loss * wc), a row at a time, where
-            # lap = ((left + right) + (below + above)) - 4 * wc
-            var first = (y * nx + 1) * 8;
-            var wc = w_data + first;
-            _row_add(t_new, wc - 8, wc + 8, inner);
-            _row_add(t_loss, wc - nx * 8, wc + nx * 8, inner);
-            _row_add(t_new, t_new, t_loss, inner);
-            _row_scale(t_loss, wc, four, inner);
-            _row_sub(t_new, t_new, t_loss, inner);
-            _row_scale(t_new, t_new, ratio, inner);
-            _row_add(t_new, wc, t_new, inner);
-            _row_mul(t_loss, loss + first, wc, inner);
-            _row_scale(t_loss, t_loss, dt, inner);
-            _row_sub(t_new, t_new, t_loss, inner);
+        var y0 = 1;
+        while (y0 < ny - 1) {
+            var y1 = y0 + rows - 1;
+            if (y1 > ny - 2) { y1 = ny - 2; }
+            var first = (y0 * nx + 1) * 4;
+            var len = (y1 - y0 + 1) * nx - 2;
+            # wn = (wc + ratio * lap) - dt * (loss * wc), where
+            # lap = (((left + right) + below) + above) - 4 * wc, as Rust ordered them
+            # (rust-old/src/diffusion.rs:103-113).
+            var wc = w + first;
+            _row32_add(t_new, wc - 4, wc + 4, len);
+            _row32_add(t_new, t_new, wc - nx * 4, len);
+            _row32_add(t_new, t_new, wc + nx * 4, len);
+            _row32_mul(t_loss, k_four, wc, len);
+            _row32_sub(t_new, t_new, t_loss, len);
+            _row32_mul(t_new, k_ratio, t_new, len);
+            _row32_add(t_new, wc, t_new, len);
+            _row32_mul(t_loss, loss + first, wc, len);
+            _row32_mul(t_loss, k_dt, t_loss, len);
+            _row32_sub(t_new, t_new, t_loss, len);
 
-            # Energy can't go negative.
-            var out = w_new_data + first;
-            var x = 0;
-            while (x < inner) {
-                store64(out + x * 8, f64_max(load64(t_new + x * 8), 0));
-                x = x + 1;
+            # Each row's interior, through Rust's `.max(0.0)`, which also takes NaN to 0. An
+            # f32 stays only if it is positive and not NaN: 0 < bits <= +inf's.
+            var y = y0;
+            while (y <= y1) {
+                var src = t_new + (y - y0) * nx * 4;
+                var out = w_new + (y * nx + 1) * 4;
+                var x = 0;
+                while (x < inner) {
+                    var b = load32(src + x * 4) & 0xFFFFFFFF;
+                    if (b > 0x7F800000) { b = 0; }
+                    store32(out + x * 4, b);
+                    x = x + 1;
+                }
+                y = y + 1;
             }
-            y = y + 1;
+            y0 = y1 + 1;
         }
         # std::mem::swap(&mut w, &mut w_new)
         var tmp = w;
@@ -192,5 +219,5 @@ fn solve_diffusion_2d(config, absorption_field, absorption_len, source_field, so
         step = step + 1;
     }
 
-    return _diff_result_new(w, nx, ny, num_steps, dx);
+    return _diff_result_new(_g32_to_vec(w, n), nx, ny, num_steps, _g32_wide(dx));
 }

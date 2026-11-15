@@ -11,36 +11,23 @@
 ## 2.3.x — Number types
 
 2.3.0 took SIMD as far as it goes without moving a result
-([ADR-0008](../adr/0008-row-kernels-for-grid-solvers.md)). What is left is f32.
+([ADR-0008](../adr/0008-row-kernels-for-grid-solvers.md)), and 2.3.2 put the grid solvers
+in f32, where they give Rust's bits ([ADR-0010](../adr/0010-f32-grids-match-rust.md)).
+What is left is the ray paths.
 
-- **f32 on the ray paths.** **Gate: hisab's `HVec3` is f64-only**, so this needs hisab to
-  move first.
-- **f32 grids.** Not taken in 2.3.0, and still open. No gate: the row kernels don't use
-  `HVec3`, and `f32v_*` exists. It would double the lanes and halve the memory. It changes
-  every solver result, in the direction of the Rust original, so it needs an ADR.
+- **f32 on the ray paths.** **Gate: hisab's `HVec3` is f64-only** (still so at 3.5.0), so
+  this needs hisab to move first. `scripts/rust-parity/` checks the grids against `rust-old`
+  at tag 2.1.3, and would need ray cases added.
 
 ## 2.x.x — Unscheduled
-
-### Consumer-green
-
-At least one downstream consumer compiles and passes against `dist/goonj.cyr` on its own
-released pins. This is not goonj's to close alone. Six repos declare `[deps.goonj]` at
-2.0.4 or 2.0.5, and reaching 2.1.x needs each of them on cyrius ≥ 6.7.2 first.
-
-In scratch copies at 2.3.1, dhvani, garjan and ghurni pass every suite, naad passes all
-but one, and svara and prani each have work of their own (see
-[`state.md`](state.md#consumers)). Those runs needed a naad patched for hisab 3, and the
-other five all link naad. **Gate: naad moving to hisab 3**, then each repo moving its pins.
-shruti is still Rust, and kiran and joshua have no repo here.
 
 ### Remaining allocation
 
 2.2.1 removed goonj's own temporaries
-([ADR-0007](../adr/0007-stack-buffers-over-an-arena.md)). What is left belongs to other
-projects:
+([ADR-0007](../adr/0007-stack-buffers-over-an-arena.md)), and 2.3.2 the BVH query's
+([ADR-0009](../adr/0009-bvh-query-scratch-through-hisabs-scope.md)). What is left
+belongs to another project:
 
-- **BVH queries:** `geo_ray_new` and `bvh_query_ray` make about 4 of the 6 allocations per
-  bounce in `trace_ray_bvh`. **Gate: a hisab query that fills a caller's vec.**
 - **Output vectors:** an IR band is filled by `vec_push` from empty, which leaves doubling
   garbage. **Gate: a stdlib presized vec.**
 

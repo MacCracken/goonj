@@ -81,13 +81,18 @@ stdlib = [
     "fnptr",
     "bench",
     "simd",
+    "sakshi",
 ]
 
 # hisab — math/geometry (HVec3 and friends). goonj consumes the single
 # distlib bundle, same pattern hisab uses for its own deps. Tag is the
-# hisab release pinned to this toolchain: 3.4.1 pins exactly 6.7.18. It carries
-# sakshi 2.5.10 transitively, the copy 6.7.18 folds.
+# hisab release pinned to this toolchain: 3.5.0 pins exactly 6.7.18.
+#
+# sakshi (for `logging`) is a stdlib leaf above. Through hisab 3.4.1 it came
+# transitively from hisab's `[deps.sakshi]`; hisab 3.4.2 dropped that package
+# because nothing in hisab calls it, so goonj names the leaf itself. 6.7.18
+# folds sakshi 2.5.10, the same bytes as before.
 [deps.hisab]
 git = "https://github.com/MacCracken/hisab.git"
-tag = "3.4.1"
+tag = "3.5.0"
 modules = ["dist/hisab.cyr"]

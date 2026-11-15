@@ -2,7 +2,10 @@
 # wave-based room acoustics on a regular lattice with per-face IIR
 # boundary reflection filters, plus dispersion characterization/correction.
 #
-# Ports rust-old/src/dwm.rs. f32 -> f64. serde dropped. Flat-namespace
+# Ports rust-old/src/dwm.rs. The mesh runs in f32, as Rust's did (ADR-0010): the
+# config, the wall filters and each source sample are rounded to f32 on the way in,
+# the mesh holds f32, and results come back as f64 vecs of f32 values, so on the same
+# input they are Rust's bits. The dispersion helpers stay f64. serde dropped. Flat-namespace
 # care: the co-compiled `fdtd` already defines MAX_GRID_CELLS,
 # MAX_TIME_STEPS and band_energies, so this module uses DWM_-prefixed grid
 # constants, `dwm_band_energies` (delegates to fdtd's `band_energies`), and
@@ -10,22 +13,24 @@
 #
 # Requires (build/test unit): error.cyr, material.cyr (NUM_BANDS, am_*,
 # _am_make), hybrid.cyr, fdtd.cyr (band_energies), stdlib math/ganita/vec.
-# alloc_init() first. The solve_dwm_3d grid solver uses raw load64/store64
-# buffers for the hot triple-loop (pressure is copied to a vec only for the
-# result); receiver signals accumulate as vecs.
+# alloc_init() first. The solve_dwm_3d grid solver uses raw f32 buffers for the
+# hot triple-loop (pressure is copied to a vec only for the result); receiver
+# signals accumulate as vecs.
 
-var DWM_SQRT_3         = 0x3FFBB67AE6502B91;   # 1.7320508  (√3)
+var DWM_SQRT_3         = 0x3FFBB67AE6502B91;   # 1.7320508  (√3), for the f64 helpers
+# The mesh's constants are Rust's f32 values, widened (rust-old/src/dwm.rs:46-62).
+var DWM_SQRT_3_F32     = 0x3FFBB67AE0000000;   # 1.7320508f32
 var DWM_K              = 6;                     # waveguide ports per node
-var DWM_SCATTER        = 0x3FD5555555555555;   # 2/K = 0.33333…
+var DWM_SCATTER        = 0x3FD5555560000000;   # 2/K = 0.33333334f32
 var DWM_MAX_GRID_CELLS = 4000000;
 var DWM_MAX_TIME_STEPS = 1000000;
-var DWM_DX_WARN_TOL    = 0x3F847AE147AE147B;   # 0.01
-var DWM_DX_FAIL_TOL    = 0x3FB999999999999A;   # 0.10
+var DWM_DX_WARN_TOL    = 0x3F847AE140000000;   # 0.01f32
+var DWM_DX_FAIL_TOL    = 0x3FB99999A0000000;   # 0.10f32
 var DWM_DEFAULT_BOOST  = 0x3FF0CCCCCCCCCCCD;   # 1.05
 var DWM_DX_DEFAULT     = 0x3F9B9628CBD1244A;   # 0.02694
 var DWM_DUR_DEFAULT    = 0x3FA999999999999A;   # 0.05
-var DWM_POS_099        = 0x3FEFAE147AE147AE;   # 0.99
-var DWM_NEG_099        = 0xBFEFAE147AE147AE;   # -0.99
+var DWM_POS_099        = 0x3FEFAE1480000000;   # 0.99f32, the wall filter's pole bound
+var DWM_NEG_099        = 0xBFEFAE1480000000;   # -0.99f32
 
 # ================================================================
 # WallMaterials — per-face materials (each an AcousticMaterial ptr).
@@ -106,29 +111,31 @@ fn dwm_config_with_wall_materials(config, walls) {
 #derive(accessors)
 struct BoundaryFilter { b0; a1; }
 
-# Fit a BoundaryFilter to the material's lowest and highest band absorption.
+# Fit a BoundaryFilter to the material's lowest and highest band absorption. In f32, as
+# Rust's was (rust-old/src/dwm.rs:200-215); b0 and a1 are f32 values, widened.
 #must_use
 fn boundary_filter_from_material(material) {
-    var alpha_low = f64_clamp(am_absorption_band(material, 0), 0, F64_ONE);
-    var alpha_high = f64_clamp(am_absorption_band(material, NUM_BANDS - 1), 0, F64_ONE);
-    var r_low = f64_sqrt(f64_max(f64_sub(F64_ONE, alpha_low), 0));
-    var r_high = f64_sqrt(f64_max(f64_sub(F64_ONE, alpha_high), 0));
-    var denom = f64_add(r_low, r_high);
+    var alpha_low = _g32_of(f64_clamp(am_absorption_band(material, 0), 0, F64_ONE));
+    var alpha_high = _g32_of(f64_clamp(am_absorption_band(material, NUM_BANDS - 1), 0, F64_ONE));
+    var r_low = _g32_of(f64_sqrt(_g32_wide(_g32_max(_g32_sub(G32_ONE, alpha_low), 0))));
+    var r_high = _g32_of(f64_sqrt(_g32_wide(_g32_max(_g32_sub(G32_ONE, alpha_high), 0))));
+    var denom = _g32_add(r_low, r_high);
     var a1 = 0;
-    if (f64_gt(denom, GOONJ_EPSILON) == 1) {
-        a1 = f64_clamp(f64_div(f64_sub(r_low, r_high), denom), DWM_NEG_099, DWM_POS_099);
+    if (f64_gt(_g32_wide(denom), _g32_wide(G32_EPSILON)) == 1) {
+        var q = _g32_div(_g32_sub(r_low, r_high), denom);
+        a1 = _g32_of(f64_clamp(_g32_wide(q), DWM_NEG_099, DWM_POS_099));
     }
-    var b0 = f64_mul(r_low, f64_sub(F64_ONE, a1));
+    var b0 = _g32_mul(r_low, _g32_sub(G32_ONE, a1));
     var f = alloc(sizeof(BoundaryFilter));
-    BoundaryFilter_set_b0(f, b0);
-    BoundaryFilter_set_a1(f, a1);
+    BoundaryFilter_set_b0(f, _g32_wide(b0));
+    BoundaryFilter_set_a1(f, _g32_wide(a1));
     return f;
 }
 
-# y[n] = b0·x + a1·prev_y
+# y[n] = b0·x + a1·prev_y, in f32 with x and prev_y rounded to it, widened back.
 #must_use
 fn boundary_filter_process(filter, x, prev_y) {
-    return f64_add(f64_mul(BoundaryFilter_b0(filter), x), f64_mul(BoundaryFilter_a1(filter), prev_y));
+    return _g32_wide(_dwm_process32(filter, _g32_of(x), _g32_of(prev_y)));
 }
 
 # ================================================================
@@ -137,35 +144,15 @@ fn boundary_filter_process(filter, x, prev_y) {
 #derive(accessors)
 struct DwmSource { ix; iy; iz; signal; }
 
-# Gaussian pulse centred at peak_step, width sigma_steps; ~6σ long.
+# Gaussian pulse centred at peak_step, width sigma_steps; ~6σ long. Computed in f32, as
+# Rust's was (_g32_gaussian_pulse).
 #must_use
 fn dwm_source_gaussian_pulse(ix, iy, iz, peak_step, sigma_steps, amplitude) {
-    if (peak_step < 0) { peak_step = 0; }   # u32 in Rust
-    # Rust: `(peak + 6 * sigma).ceil() as usize` then `.max(1)`
-    # (rust-old/src/dwm.rs:273), with no ceiling. Bound it in f64 (ADR-0003):
-    # solve_dwm_3d runs at most DWM_MAX_TIME_STEPS steps and reads `signal` only
-    # at step < that, so no solver can see past the cap. NaN and anything below
-    # 1 give n = 1, as Rust's `.max(1)` does.
-    var span = f64_ceil(f64_add(f64_from(peak_step), f64_mul(f64_from(6), sigma_steps)));
-    var n = 1;
-    if (f64_ge(span, f64_from(DWM_MAX_TIME_STEPS)) == 1) { n = DWM_MAX_TIME_STEPS; }
-    if (f64_gt(span, F64_ONE) == 1) {
-        if (f64_lt(span, f64_from(DWM_MAX_TIME_STEPS)) == 1) { n = f64_to(span); }
-    }
-    var inv_sigma = f64_div(F64_ONE, f64_max(sigma_steps, F64_ONE));
-    var signal = vec_new();
-    var i = 0;
-    while (i < n) {
-        var arg = f64_mul(f64_sub(f64_from(i), f64_from(peak_step)), inv_sigma);
-        var val = f64_mul(amplitude, f64_exp(f64_mul(f64_neg(F64_HALF), f64_mul(arg, arg))));
-        vec_push(signal, val);
-        i = i + 1;
-    }
     var s = alloc(sizeof(DwmSource));
     DwmSource_set_ix(s, ix);
     DwmSource_set_iy(s, iy);
     DwmSource_set_iz(s, iz);
-    DwmSource_set_signal(s, signal);
+    DwmSource_set_signal(s, _g32_gaussian_pulse(peak_step, sigma_steps, amplitude, DWM_MAX_TIME_STEPS));
     return s;
 }
 
@@ -319,36 +306,87 @@ fn dispersion_correction_apply(dc, signal) {
 # ================================================================
 # solve_dwm_3d — 3D acoustic wave equation on a box via the DWM.
 # ================================================================
-# Alloc a zeroed f64 buffer of `count` elements.
+# Alloc a zeroed f32 buffer of `count` elements.
 #must_use
 fn _dwm_zeros(count) {
-    return goonj_alloc(count * 8);   # alloc's bytes are zero, and 0.0's bit pattern is 0
+    return _g32_zeros(count);
 }
 
-# One row of a wall's filter state, y[n] = b0·x + a1·prev_y, updated in place from `own`,
-# that row's outgoing wave into the wall. Rows are `len` long; `ta` and `tb` are scratch.
-fn _dwm_face_row(state, own, b0, a1, ta, tb, len) {
-    _row_scale(ta, own, b0, len);
-    _row_scale(tb, state, a1, len);
-    _row_add(state, ta, tb, len);
+# A run of a wall's filter state, y[n] = b0·x + a1·prev_y, updated in place from `own`, the
+# outgoing waves into the wall. `len` f32 long, taken `cap` at a time: `kb0` and `ka1` are
+# `cap` long and filled with b0 and a1, and `ta` and `tb` are `cap` of scratch.
+fn _dwm_face_row(state, own, kb0, ka1, ta, tb, len, cap) {
+    var off = 0;
+    while (off < len) {
+        var m = len - off;
+        if (m > cap) { m = cap; }
+        _row32_mul(ta, kb0, own + off * 4, m);
+        _row32_mul(tb, ka1, state + off * 4, m);
+        _row32_add(state + off * 4, ta, tb, m);
+        off = off + m;
+    }
+    return 0;
+}
+
+# A BoundaryFilter's b0 and a1 as f32, each in a row of `len` for _dwm_face_row.
+fn _dwm_filter_rows(filter, kb0, ka1, len) {
+    _row32_fill(kb0, _g32_of(BoundaryFilter_b0(filter)), len);
+    _row32_fill(ka1, _g32_of(BoundaryFilter_a1(filter)), len);
+    return 0;
+}
+
+# A wall filter's output in f32, b0·x + a1·prev_y, for the x walls' scalar pass.
+#must_use
+fn _dwm_process32(filter, x, prev_y) {
+    var b0 = _g32_of(BoundaryFilter_b0(filter));
+    var a1 = _g32_of(BoundaryFilter_a1(filter));
+    return _g32_add(_g32_mul(b0, x), _g32_mul(a1, prev_y));
+}
+
+# The junction update over `len` consecutive nodes from node `first`, in Rust's order
+# (rust-old/src/dwm.rs:493): p = (2/K)·(((((xp + xn) + yp) + yn) + zp) + zn), then
+# out_i = p − in_i. `o` and `q` are this step's and the next step's ports, each `n` long;
+# in_yp to in_zn point at node `first`'s incoming wave along that axis.
+fn _dwm_stencil(o, q, n, first, len, in_yp, in_yn, in_zp, in_zn, pressure, k_scatter, t_sum) {
+    var off = first * 4;
+    var in_xp = o + n * 4 + off + 4;   # port 1 (-x) of the node after
+    var in_xn = o + off - 4;           # port 0 (+x) of the node before
+    var p_row = pressure + off;
+    _row32_add(t_sum, in_xp, in_xn, len);
+    _row32_add(t_sum, t_sum, in_yp, len);
+    _row32_add(t_sum, t_sum, in_yn, len);
+    _row32_add(t_sum, t_sum, in_zp, len);
+    _row32_add(t_sum, t_sum, in_zn, len);
+    _row32_mul(p_row, k_scatter, t_sum, len);
+    _row32_sub(q + off, p_row, in_xp, len);
+    _row32_sub(q + n * 4 + off, p_row, in_xn, len);
+    _row32_sub(q + 2 * n * 4 + off, p_row, in_yp, len);
+    _row32_sub(q + 3 * n * 4 + off, p_row, in_yn, len);
+    _row32_sub(q + 4 * n * 4 + off, p_row, in_zp, len);
+    _row32_sub(q + 5 * n * 4 + off, p_row, in_zn, len);
     return 0;
 }
 
 # Returns a DwmResult. Empty result on degenerate input (tiny grid, source
 # out of range, dx deviating from c·Δt·√3 by >10%, etc.). `receivers` is a
-# vec of DwmReceiver; each in-range receiver gets a pressure trace.
+# vec of DwmReceiver; each in-range receiver gets a pressure trace. Runs in f32,
+# as Rust's did (ADR-0010).
 #must_use
 fn solve_dwm_3d(config, source, receivers) {
+    # Rust's DwmConfig holds these as f32, so every test and step below sees them so.
+    var dx = _g32_of(DwmConfig_dx(config));
+    var speed = _g32_of(DwmConfig_speed_of_sound(config));
+    var duration = _g32_of(DwmConfig_duration_seconds(config));
     if (DwmConfig_sample_rate(config) == 0) { return _dwm_empty_result(); }
-    if (f64_le(DwmConfig_dx(config), 0) == 1) { return _dwm_empty_result(); }
-    if (f64_le(DwmConfig_speed_of_sound(config), 0) == 1) { return _dwm_empty_result(); }
+    if (f64_le(_g32_wide(dx), 0) == 1) { return _dwm_empty_result(); }
+    if (f64_le(_g32_wide(speed), 0) == 1) { return _dwm_empty_result(); }
     var nx = DwmConfig_nx(config);
     var ny = DwmConfig_ny(config);
     var nz = DwmConfig_nz(config);
     if (nx < 3) { return _dwm_empty_result(); }
     if (ny < 3) { return _dwm_empty_result(); }
     if (nz < 3) { return _dwm_empty_result(); }
-    if (f64_le(DwmConfig_duration_seconds(config), 0) == 1) { return _dwm_empty_result(); }
+    if (f64_le(_g32_wide(duration), 0) == 1) { return _dwm_empty_result(); }
 
     # Rust chained saturating_mul (rust-old/src/dwm.rs:343-347). Stage the
     # product and bound each intermediate so no multiply can wrap past the cap
@@ -371,10 +409,11 @@ fn solve_dwm_3d(config, source, receivers) {
     if (DwmSource_iy(source) >= ny) { return _dwm_empty_result(); }
     if (DwmSource_iz(source) >= nz) { return _dwm_empty_result(); }
 
-    var dt = f64_div(F64_ONE, f64_from(DwmConfig_sample_rate(config)));
-    var dx_expected = f64_mul(f64_mul(DwmConfig_speed_of_sound(config), dt), DWM_SQRT_3);
-    var dx_dev = f64_div(f64_abs(f64_sub(DwmConfig_dx(config), dx_expected)),
-      f64_max(dx_expected, GOONJ_EPSILON));
+    # dt, the expected dx and the deviation, in f32 (rust-old/src/dwm.rs:356-358).
+    var dt = _g32_div(G32_ONE, _g32_int(DwmConfig_sample_rate(config)));
+    var dx_expected = _g32_mul(_g32_mul(speed, dt), _g32_of(DWM_SQRT_3_F32));
+    var dx_off = _g32_sub(dx, dx_expected) & 0x7FFFFFFF;   # f32::abs
+    var dx_dev = _g32_wide(_g32_div(dx_off, _g32_max(dx_expected, G32_EPSILON)));
     if (f64_gt(dx_dev, DWM_DX_FAIL_TOL) == 1) {
         # Ports the Rust tracing::warn! — surfaced via goonj_log (verbose diag).
         goonj_log_warn("dwm: dx deviates from c*dt*sqrt(3) by >10%; refusing to run");
@@ -384,12 +423,12 @@ fn solve_dwm_3d(config, source, receivers) {
         goonj_log_warn("dwm: dx deviates from c*dt*sqrt(3) by >1%; sound speed will be off");
     }
 
-    # Rust: `(duration / dt) as u32` then `.min(MAX)`. The `as` cast SATURATES —
-    # NaN and negatives to 0, overflow to u32::MAX — so a huge duration runs the
+    # Rust: `(duration / dt) as u32` then `.min(MAX)`, the division in f32. The `as` cast
+    # SATURATES — NaN and negatives to 0, overflow to u32::MAX — so a huge duration runs the
     # CAP. Before cyrius 6.6.8 f64_to gave INT64_MIN there, which is neither
     # > MAX nor == 0, so the step loop silently ran ZERO times. Clamp in f64
     # first: f64_to saturates now, but it still keeps the sign (ADR-0003).
-    var steps_f = f64_div(DwmConfig_duration_seconds(config), dt);
+    var steps_f = _g32_wide(_g32_div(duration, dt));
     var num_steps = 0;
     if (f64_ge(steps_f, f64_from(DWM_MAX_TIME_STEPS)) == 1) { num_steps = DWM_MAX_TIME_STEPS; }
     if (f64_gt(steps_f, 0) == 1) {
@@ -405,7 +444,7 @@ fn solve_dwm_3d(config, source, receivers) {
     var f_zneg = boundary_filter_from_material(WallMaterials_z_neg(walls));
     var f_zpos = boundary_filter_from_material(WallMaterials_z_pos(walls));
 
-    # Per-face IIR filter state (one f64 per boundary cell).
+    # Per-face IIR filter state (one f32 per boundary cell).
     var s_xneg = _dwm_zeros(ny * nz);
     var s_xpos = _dwm_zeros(ny * nz);
     var s_yneg = _dwm_zeros(nx * nz);
@@ -430,91 +469,125 @@ fn solve_dwm_3d(config, source, receivers) {
     var source_len = vec_len(source_signal);
     var source_node = _dwm_idx(DwmSource_ix(source), DwmSource_iy(source), DwmSource_iz(source), nx, ny);
     var source_row = source_node - DwmSource_ix(source);
+    var scatter: f32 = _g32_of(DWM_SCATTER);
+    var xneg_b0: f32 = _g32_of(BoundaryFilter_b0(f_xneg));
+    var xneg_a1: f32 = _g32_of(BoundaryFilter_a1(f_xneg));
+    var xpos_b0: f32 = _g32_of(BoundaryFilter_b0(f_xpos));
+    var xpos_a1: f32 = _g32_of(BoundaryFilter_a1(f_xpos));
+    var source_f32: f32 = 0;
 
     # Each port is its own array of `n`, so a row of nodes is a run of memory and the
     # stencil can be array ops (ADR-0008). Ports 0 to 5 point +x, -x, +y, -y, +z, -z.
     # A node's incoming wave along each axis is its neighbour's opposite port, or at a
     # wall its own outgoing wave through that face's filter.
+    # Interior rows run in chunks of whole rows, `cap` elements of scratch (ADR-0010).
     var inner = nx - 2;
-    var t_sum = _dwm_zeros(nx);
-    var t_other = _dwm_zeros(nx);
-    var b0_ypos = BoundaryFilter_b0(f_ypos);
-    var a1_ypos = BoundaryFilter_a1(f_ypos);
-    var b0_yneg = BoundaryFilter_b0(f_yneg);
-    var a1_yneg = BoundaryFilter_a1(f_yneg);
-    var b0_zpos = BoundaryFilter_b0(f_zpos);
-    var a1_zpos = BoundaryFilter_a1(f_zpos);
-    var b0_zneg = BoundaryFilter_b0(f_zneg);
-    var a1_zneg = BoundaryFilter_a1(f_zneg);
+    var rows = _row32_rows_per_chunk(nx);
+    var cap = rows * nx;
+    var t_sum = _dwm_zeros(cap);
+    var t_other = _dwm_zeros(cap);
+    var k_scatter = _dwm_zeros(cap);
+    _row32_fill(k_scatter, _g32_of(DWM_SCATTER), cap);
+    var kb0_ypos = _dwm_zeros(cap);
+    var ka1_ypos = _dwm_zeros(cap);
+    var kb0_yneg = _dwm_zeros(cap);
+    var ka1_yneg = _dwm_zeros(cap);
+    var kb0_zpos = _dwm_zeros(cap);
+    var ka1_zpos = _dwm_zeros(cap);
+    var kb0_zneg = _dwm_zeros(cap);
+    var ka1_zneg = _dwm_zeros(cap);
+    _dwm_filter_rows(f_ypos, kb0_ypos, ka1_ypos, cap);
+    _dwm_filter_rows(f_yneg, kb0_yneg, ka1_yneg, cap);
+    _dwm_filter_rows(f_zpos, kb0_zpos, ka1_zpos, cap);
+    _dwm_filter_rows(f_zneg, kb0_zneg, ka1_zneg, cap);
 
     for (var step = 0; step < num_steps; step = step + 1) {
         var o0 = out_curr;
-        var o1 = o0 + n * 8;
-        var o2 = o1 + n * 8;
-        var o3 = o2 + n * 8;
-        var o4 = o3 + n * 8;
-        var o5 = o4 + n * 8;
+        var o1 = o0 + n * 4;
+        var o2 = o1 + n * 4;
+        var o3 = o2 + n * 4;
+        var o4 = o3 + n * 4;
+        var o5 = o4 + n * 4;
         var q0 = out_next;
-        var q1 = q0 + n * 8;
-        var q2 = q1 + n * 8;
-        var q3 = q2 + n * 8;
-        var q4 = q3 + n * 8;
-        var q5 = q4 + n * 8;
+        var q1 = q0 + n * 4;
+        var q2 = q1 + n * 4;
+        var q3 = q2 + n * 4;
+        var q4 = q3 + n * 4;
+        var q5 = q4 + n * 4;
         var source_on = 0;
-        var source_value = 0;
         if (step < source_len) {
             source_on = 1;
-            source_value = vec_get(source_signal, step);
+            source_f32 = _g32_of(vec_get(source_signal, step));   # Rust's signal is f32
         }
 
         for (var z = 0; z < nz; z = z + 1) {
-            for (var y = 0; y < ny; y = y + 1) {
-                var row = (z * ny + y) * nx;
+            var plane = z * nxy;
 
-                # Incoming along y and z, as pointers to x = 0 of this row. A wall's
-                # filter state already sits row by row, so its result is read in place.
-                var in_yp = o3 + (row + nx) * 8;
+            # A z wall's filter state is one plane, so a wall plane updates all of it first.
+            if (z == nz - 1) {
+                _dwm_face_row(s_zpos, o4 + plane * 4, kb0_zpos, ka1_zpos, t_sum, t_other, nxy, cap);
+            }
+            if (z == 0) {
+                _dwm_face_row(s_zneg, o5 + plane * 4, kb0_zneg, ka1_zneg, t_sum, t_other, nxy, cap);
+            }
+
+            # Rows 0 and ny - 1 meet a y wall: that row of the face's state, then the row's
+            # nodes x = 1 to nx - 2.
+            for (var yw = 0; yw < 2; yw = yw + 1) {
+                var y = 0;
+                if (yw == 1) { y = ny - 1; }
+                var row = plane + y * nx;
+                var f = row + 1;
+                var in_yp = o3 + (f + nx) * 4;
+                var in_yn = o2 + (f - nx) * 4;
                 if (y == ny - 1) {
-                    in_yp = s_ypos + (z * nx) * 8;
-                    _dwm_face_row(in_yp, o2 + row * 8, b0_ypos, a1_ypos, t_sum, t_other, nx);
+                    _dwm_face_row(s_ypos + z * nx * 4, o2 + row * 4, kb0_ypos, ka1_ypos, t_sum, t_other, nx, cap);
+                    in_yp = s_ypos + (z * nx + 1) * 4;
                 }
-                var in_yn = o2 + (row - nx) * 8;
                 if (y == 0) {
-                    in_yn = s_yneg + (z * nx) * 8;
-                    _dwm_face_row(in_yn, o3 + row * 8, b0_yneg, a1_yneg, t_sum, t_other, nx);
+                    _dwm_face_row(s_yneg + z * nx * 4, o3 + row * 4, kb0_yneg, ka1_yneg, t_sum, t_other, nx, cap);
+                    in_yn = s_yneg + (z * nx + 1) * 4;
                 }
-                var in_zp = o5 + (row + nxy) * 8;
-                if (z == nz - 1) {
-                    in_zp = s_zpos + (y * nx) * 8;
-                    _dwm_face_row(in_zp, o4 + row * 8, b0_zpos, a1_zpos, t_sum, t_other, nx);
-                }
-                var in_zn = o4 + (row - nxy) * 8;
-                if (z == 0) {
-                    in_zn = s_zneg + (y * nx) * 8;
-                    _dwm_face_row(in_zn, o5 + row * 8, b0_zneg, a1_zneg, t_sum, t_other, nx);
-                }
+                var in_zp = o5 + (f + nxy) * 4;
+                if (z == nz - 1) { in_zp = s_zpos + (y * nx + 1) * 4; }
+                var in_zn = o4 + (f - nxy) * 4;
+                if (z == 0) { in_zn = s_zneg + (y * nx + 1) * 4; }
+                _dwm_stencil(o0, q0, n, f, inner, in_yp, in_yn, in_zp, in_zn, pressure, k_scatter, t_sum);
+            }
 
-                # x = 1 to nx - 2. Junction pressure p = (2/K)·Σ incoming, then
-                # outgoing out_i = p − in_i.
-                var first = (row + 1) * 8;
-                var p_row = pressure + first;
-                var in_xp = o1 + first + 8;
-                var in_xn = o0 + first - 8;
-                _row_add(t_sum, in_xp, in_xn, inner);
-                _row_add(t_other, in_yp + 8, in_yn + 8, inner);
-                _row_add(t_sum, t_sum, t_other, inner);
-                _row_add(t_other, in_zp + 8, in_zn + 8, inner);
-                _row_add(t_sum, t_sum, t_other, inner);
-                _row_scale(p_row, t_sum, DWM_SCATTER, inner);
-                _row_sub(q0 + first, p_row, in_xp, inner);
-                _row_sub(q1 + first, p_row, in_xn, inner);
-                _row_sub(q2 + first, p_row, in_yp + 8, inner);
-                _row_sub(q3 + first, p_row, in_yn + 8, inner);
-                _row_sub(q4 + first, p_row, in_zp + 8, inner);
-                _row_sub(q5 + first, p_row, in_zn + 8, inner);
+            # Rows 1 to ny - 2 in chunks of whole rows, each one span from (1, y0) to
+            # (nx - 2, y1). A span takes in the x = 0 and x = nx - 1 nodes between its rows
+            # too, with the wrong x neighbours, and the pass below computes every one of them
+            # again (ADR-0010).
+            var y0 = 1;
+            while (y0 < ny - 1) {
+                var y1 = y0 + rows - 1;
+                if (y1 > ny - 2) { y1 = ny - 2; }
+                var sf = plane + y0 * nx + 1;
+                var len = (y1 - y0 + 1) * nx - 2;
+                var sp_zp = o5 + (sf + nxy) * 4;
+                if (z == nz - 1) { sp_zp = s_zpos + (y0 * nx + 1) * 4; }
+                var sp_zn = o4 + (sf - nxy) * 4;
+                if (z == 0) { sp_zn = s_zneg + (y0 * nx + 1) * 4; }
+                _dwm_stencil(o0, q0, n, sf, len, o3 + (sf + nx) * 4, o2 + (sf - nx) * 4, sp_zp, sp_zn,
+                  pressure, k_scatter, t_sum);
+                y0 = y1 + 1;
+            }
 
-                # The two end nodes have an x wall, so one scalar pass each, and the
-                # source joins its node here if it sits inside the row.
+            # Each row's two end nodes have an x wall, so one scalar pass each, and the
+            # source joins its node here if it sits inside the row.
+            for (var y = 0; y < ny; y = y + 1) {
+                var row = plane + y * nx;
+                # Incoming along y and z, as pointers to x = 0 of this row.
+                var in_yp = o3 + (row + nx) * 4;
+                if (y == ny - 1) { in_yp = s_ypos + (z * nx) * 4; }
+                var in_yn = o2 + (row - nx) * 4;
+                if (y == 0) { in_yn = s_yneg + (z * nx) * 4; }
+                var in_zp = o5 + (row + nxy) * 4;
+                if (z == nz - 1) { in_zp = s_zpos + (y * nx) * 4; }
+                var in_zn = o4 + (row - nxy) * 4;
+                if (z == 0) { in_zn = s_zneg + (y * nx) * 4; }
+
                 var si = z * ny + y;
                 var e = 0;
                 while (e < 3) {
@@ -533,41 +606,50 @@ fn solve_dwm_3d(config, source, receivers) {
                         }
                     }
                     if (do_node == 1) {
+                        # Typed f32 locals, so each + - * below is one f32 operation, inline.
                         var node = row + x;
-                        var xp_val = 0;
-                        var xn_val = 0;
+                        var xp: f32 = 0;
+                        var xn: f32 = 0;
                         if (e == 0) {
-                            xn_val = boundary_filter_process(f_xneg, load64(o1 + node * 8), load64(s_xneg + si * 8));
-                            store64(s_xneg + si * 8, xn_val);
+                            var own_xn: f32 = load32(o1 + node * 4);
+                            var prev_xn: f32 = load32(s_xneg + si * 4);
+                            xn = xneg_b0 * own_xn + xneg_a1 * prev_xn;
+                            store32(s_xneg + si * 4, xn);
                         } else {
-                            xn_val = load64(o0 + (node - 1) * 8);
+                            xn = load32(o0 + (node - 1) * 4);
                         }
                         if (e == 1) {
-                            xp_val = boundary_filter_process(f_xpos, load64(o0 + node * 8), load64(s_xpos + si * 8));
-                            store64(s_xpos + si * 8, xp_val);
+                            var own_xp: f32 = load32(o0 + node * 4);
+                            var prev_xp: f32 = load32(s_xpos + si * 4);
+                            xp = xpos_b0 * own_xp + xpos_a1 * prev_xp;
+                            store32(s_xpos + si * 4, xp);
                         } else {
-                            xp_val = load64(o1 + (node + 1) * 8);
+                            xp = load32(o1 + (node + 1) * 4);
                         }
-                        var yp_val = load64(in_yp + x * 8);
-                        var yn_val = load64(in_yn + x * 8);
-                        var zp_val = load64(in_zp + x * 8);
-                        var zn_val = load64(in_zn + x * 8);
+                        var yp: f32 = load32(in_yp + x * 4);
+                        var yn: f32 = load32(in_yn + x * 4);
+                        var zp: f32 = load32(in_zp + x * 4);
+                        var zn: f32 = load32(in_zn + x * 4);
 
-                        var sum = f64_add(f64_add(f64_add(xp_val, xn_val), f64_add(yp_val, yn_val)),
-                          f64_add(zp_val, zn_val));
-                        var p = f64_mul(DWM_SCATTER, sum);
+                        # Rust's order: ((((xp + xn) + yp) + yn) + zp) + zn.
+                        var sum: f32 = xp + xn;
+                        sum = sum + yp;
+                        sum = sum + yn;
+                        sum = sum + zp;
+                        sum = sum + zn;
+                        var p: f32 = scatter * sum;
 
                         # Transparent (additive) source injection.
                         if (node == source_node) {
-                            if (source_on == 1) { p = f64_add(p, source_value); }
+                            if (source_on == 1) { p = p + source_f32; }
                         }
-                        store64(pressure + node * 8, p);
-                        store64(q0 + node * 8, f64_sub(p, xp_val));
-                        store64(q1 + node * 8, f64_sub(p, xn_val));
-                        store64(q2 + node * 8, f64_sub(p, yp_val));
-                        store64(q3 + node * 8, f64_sub(p, yn_val));
-                        store64(q4 + node * 8, f64_sub(p, zp_val));
-                        store64(q5 + node * 8, f64_sub(p, zn_val));
+                        store32(pressure + node * 4, p);
+                        store32(q0 + node * 4, p - xp);
+                        store32(q1 + node * 4, p - xn);
+                        store32(q2 + node * 4, p - yp);
+                        store32(q3 + node * 4, p - yn);
+                        store32(q4 + node * 4, p - zp);
+                        store32(q5 + node * 4, p - zn);
                     }
                     e = e + 1;
                 }
@@ -591,7 +673,7 @@ fn solve_dwm_3d(config, source, receivers) {
             if (riz >= nz) { in_range = 0; }
             if (in_range == 1) {
                 var pidx = _dwm_idx(rix, riy, riz, nx, ny);
-                vec_push(vec_get(receiver_signals, rj), load64(pressure + pidx * 8));
+                vec_push(vec_get(receiver_signals, rj), _g32_wide(load32(pressure + pidx * 4)));
             }
         }
 
@@ -601,18 +683,10 @@ fn solve_dwm_3d(config, source, receivers) {
         out_next = tmp;
     }
 
-    # Copy final pressure field into a vec.
-    var final_pressure = vec_new();
-    var fi = 0;
-    while (fi < n) {
-        vec_push(final_pressure, load64(pressure + fi * 8));
-        fi = fi + 1;
-    }
-
     var result = alloc(sizeof(DwmResult));
     DwmResult_set_receiver_signals(result, receiver_signals);
-    DwmResult_set_final_pressure(result, final_pressure);
+    DwmResult_set_final_pressure(result, _g32_to_vec(pressure, n));
     DwmResult_set_time_steps(result, num_steps);
-    DwmResult_set_dt(result, dt);
+    DwmResult_set_dt(result, _g32_wide(dt));
     return result;
 }

@@ -57,8 +57,8 @@ Source + Listener + Room
 ```
 goonj (Cyrius acoustics)
   ├── hisab (math/geometry — HVec3, geo, BVH; consumed as dist/hisab.cyr)
-  ├── sakshi (structured logging; transitive via hisab; used by logging.cyr)
-  └── Cyrius stdlib (math, ganita, vec, fnptr, bench, string, …)
+  └── Cyrius stdlib (math, ganita, vec, fnptr, bench, string, simd, and sakshi,
+      which logging.cyr uses; a stdlib leaf from 2.3.2, through hisab before)
 ```
 
 No Rust dependencies (serde/thiserror/tracing/criterion dropped in the port).

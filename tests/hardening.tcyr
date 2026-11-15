@@ -1083,6 +1083,51 @@ fn _h_row_sweep(max) {
     return bad;
 }
 
+# The f32 kernels (ADR-0010), the same way: the scalar f32 bits for the first n, and the
+# 32-bit word after them untouched. f32v_* steps 4 lanes and f32v8_* 8, so this needs every
+# length, not every other one.
+fn _h_row32_sweep(max) {
+    var guard = 0x7FC0BEEF;
+    var a = alloc((max + 1) * 4);
+    var b = alloc((max + 1) * 4);
+    var i = 0;
+    while (i <= max) {
+        store32(a + i * 4, _g32_of(f64_div(f64_from(i + 1), f64_from(3))));
+        store32(b + i * 4, _g32_of(f64_div(f64_from(i + 2), f64_from(7))));
+        i = i + 1;
+    }
+    var out = alloc((max + 1) * 4);
+    var bad = 0;
+    var n = 0;
+    while (n <= max) {
+        var op = 0;
+        while (op < 3) {
+            i = 0;
+            while (i <= max) {
+                store32(out + i * 4, guard);
+                i = i + 1;
+            }
+            if (op == 0) { _row32_add(out, a, b, n); }
+            if (op == 1) { _row32_sub(out, a, b, n); }
+            if (op == 2) { _row32_mul(out, a, b, n); }
+            i = 0;
+            while (i < n) {
+                var x = load32(a + i * 4);
+                var y = load32(b + i * 4);
+                var want = _g32_add(x, y);
+                if (op == 1) { want = _g32_sub(x, y); }
+                if (op == 2) { want = _g32_mul(x, y); }
+                if ((load32(out + i * 4) & 0xFFFFFFFF) != want) { bad = bad + 1; }
+                i = i + 1;
+            }
+            if ((load32(out + n * 4) & 0xFFFFFFFF) != guard) { bad = bad + 1; }
+            op = op + 1;
+        }
+        n = n + 1;
+    }
+    return bad;
+}
+
 fn _h_row_ops() {
     test_group("2.3.0: row ops touch exactly n elements");
     var saved_min = ROW_WIDE_MIN;
@@ -1096,6 +1141,14 @@ fn _h_row_ops() {
     _row_wide = avx2;
     ROW_WIDE_MIN = 1;
     assert_eq(_h_row_sweep(80), 0, "256-bit path, where the CPU has it");
+    ROW_WIDE_MIN = saved_min;
+    _row_wide = saved_wide;
+    assert_eq(_h_row32_sweep(80), 0, "f32, default routing: scalar bits, nothing past n");
+    _row_wide = 0;
+    assert_eq(_h_row32_sweep(80), 0, "f32, 128-bit path");
+    _row_wide = avx2;
+    ROW_WIDE_MIN = 1;
+    assert_eq(_h_row32_sweep(80), 0, "f32, 256-bit path, where the CPU has it");
     ROW_WIDE_MIN = saved_min;
     _row_wide = saved_wide;
 
@@ -1121,10 +1174,14 @@ fn _h_row_ops() {
     return 0;
 }
 
+# From 2.3.2 the grid solvers run in f32 (ADR-0010), and the DWM, FDTD and diffusion hashes are
+# Rust 2.1.3's: the same three sweeps, run through rust-old at tag 2.1.3 and hashed the same
+# way, give these values. (2.3.0 to 2.3.1 pinned the f64 solvers' 0x389B6C33178DDA61,
+# 0xF165376846C6C0F0 and 0x04C1EA59BE0B7F1C.) Dispersion correction is still f64's.
 fn _h_golden_sweeps() {
-    assert_eq(_h_g_dwm_sweep(), 0x389B6C33178DDA61, "DWM: odd and even rows, every source class, three wall sets");
-    assert_eq(_h_g_fdtd_sweep(), 0xF165376846C6C0F0, "FDTD: odd and even rows, every source position");
-    assert_eq(_h_g_diffusion_sweep(), 0x04C1EA59BE0B7F1C, "diffusion: odd and even rows");
+    assert_eq(_h_g_dwm_sweep(), 0xA15E6524AF82700A, "DWM: odd and even rows, every source class, three wall sets");
+    assert_eq(_h_g_fdtd_sweep(), 0xDAE67638A29BC1E2, "FDTD: odd and even rows, every source position");
+    assert_eq(_h_g_diffusion_sweep(), 0x22A078267019BBBB, "diffusion: odd and even rows");
     assert_eq(_h_g_dispersion_sweep(), 0xEF668F69A5BCC2BB, "dispersion: every length through two chunks");
     return 0;
 }
@@ -1144,6 +1201,73 @@ fn _h_row_kernels() {
     ROW_WIDE_MIN = saved_min;
     _row_wide = saved_wide;
     return 0;
+}
+
+# ================================================================
+# 2.3.2 -- the BVH query's allocations (ADR-0009). hisab allocates them into a buffer in
+# _nearest_wall_bvh's frame through its allocation scope, so a BVH trace keeps what a
+# linear trace keeps. In 2.3.1 this shoebox trace kept 12,424 bytes against 5,320.
+# ================================================================
+fn _h_bvh_scratch() {
+    test_group("2.3.2: a BVH query keeps nothing, and leaves the caller's scope alone");
+    var src = hvec3_new(f64_from(5), f64_div(f64_from(3), F64_TWO), f64_from(4));
+    var room = acoustic_room_shoebox(f64_from(10), f64_from(8), f64_from(3), acoustic_material_concrete());
+    var walls = RoomGeometry_walls(AcousticRoom_geometry(room));
+    var accel = accelerated_room_new(room);
+    var mray = multiband_ray_new(src, hvec3_normalize(hvec3_new(F64_ONE, F64_TWO, f64_from(3))));
+
+    var before = alloc_used();
+    var bpath = trace_ray_bvh(mray, accel, 50);
+    var bvh_bytes = alloc_used() - before;
+    before = alloc_used();
+    var lpath = trace_ray(mray, walls, 50);
+    assert_eq(bvh_bytes, alloc_used() - before, "a BVH trace keeps what a linear trace keeps");
+    assert_eq(vec_len(ray_path_bounces(bpath)), 36, "and bounces 36 times, as the linear one does");
+    assert_eq(ray_path_total_distance(bpath), ray_path_total_distance(lpath), "to the same distance");
+
+    # A caller with its own scope gets it back, and its arena takes none of the query. It
+    # does take the 36 bounce points, 24 bytes each: goonj keeps a point with hvec3_new, so
+    # a caller's scope holds them, as it did through 2.3.1 (ADR-0009).
+    var mine = arena_allocator_growable(4096);
+    var prev = hisab_alloc_scope(mine);
+    var spath = trace_ray_bvh(mray, accel, 50);
+    assert_eq(hisab_alloc_scope_current(), mine, "the caller's scope is restored");
+    hisab_alloc_scope(prev);
+    assert_eq(hisab_alloc_scope_current(), prev, "and so is the one before it");
+    assert_eq(ray_path_total_distance(spath), ray_path_total_distance(lpath), "the path is the same");
+    assert_eq(arena_used(allocator_state(mine)), 36 * 24, "the caller's arena holds the points, not the query");
+
+    # Past about 128 candidates the scratch is full and the rest comes from the heap. 300
+    # partitions across one ray: every one is a candidate, and the nearest still wins.
+    var hall = acoustic_room_shoebox(f64_from(400), f64_from(3), f64_from(20), acoustic_material_concrete());
+    var hw = RoomGeometry_walls(AcousticRoom_geometry(hall));
+    var mat = acoustic_material_drywall();
+    var i = 0;
+    while (i < 300) {
+        var x = f64_from(i + 50);
+        vec_push(hw, wall_new(_h_quad_x(x), mat, hvec3_unit_x()));
+        i = i + 1;
+    }
+    var hall_bvh = AcceleratedRoom_bvh(accelerated_room_new(hall));
+    var o = hvec3_new(f64_from(10), F64_ONE, f64_from(10));
+    var lin = find_nearest_wall(o, hvec3_unit_x(), hw, 0 - 1);
+    before = alloc_used();
+    var acc = find_nearest_wall_bvh(o, hvec3_unit_x(), hw, hall_bvh, 0 - 1);
+    assert_gt(alloc_used() - before, 4096, "the 512-slot candidate buffer came from the heap");
+    assert(acc != 0, "a 300-candidate query hits");
+    assert_eq(NearestWall_index(acc), NearestWall_index(lin), "the same wall as the linear search");
+    assert_eq(NearestWall_distance(acc), f64_from(40), "40 m away");
+    return 0;
+}
+
+# A 3 m x 2 m partition across the x axis at x.
+fn _h_quad_x(x) {
+    var v = vec_new();
+    vec_push(v, hvec3_new(x, 0, f64_from(9)));
+    vec_push(v, hvec3_new(x, f64_from(3), f64_from(9)));
+    vec_push(v, hvec3_new(x, f64_from(3), f64_from(11)));
+    vec_push(v, hvec3_new(x, 0, f64_from(11)));
+    return v;
 }
 
 alloc_init();
@@ -1167,6 +1291,7 @@ _h_fdn_lazy();
 _h_allocation_refusal();
 _h_stack_escape();
 _h_allocation_budget();
+_h_bvh_scratch();
 _h_row_ops();
 _h_row_kernels();
 

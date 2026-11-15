@@ -325,3 +325,211 @@ fn _row_scale(out, a, s, n) {
     }
     return 0;
 }
+
+# ================================================================
+# f32 grids (ADR-0010)
+# ================================================================
+# fdtd, dwm and diffusion hold their fields in f32 and compute in f32, as the Rust original
+# did, so on the same input they give its bits. An f32 lives as its 32-bit pattern: store32
+# and load32 move one, a `var x: f32` local does f32 arithmetic on it, _g32_of rounds an f64
+# to it and _g32_wide widens it back exactly. Comparisons widen first, which gives the f32
+# comparison's answer.
+
+# f32 constants, as bit patterns.
+enum GoonjF32 {
+    G32_HALF    = 0x3F000000,
+    G32_ONE     = 0x3F800000,
+    G32_TWO     = 0x40000000,
+    G32_FOUR    = 0x40800000,
+    G32_EPSILON = 0x34000000,   # f32::EPSILON = 1.1920929e-7
+}
+
+# The f32 nearest x, an f64, ties to even: what Rust's `as f32` or an f32 field holds.
+#must_use
+fn _g32_of(x) {
+    return f32_from(x) & 0xFFFFFFFF;
+}
+
+# The f32 bit pattern b as its exact f64.
+#must_use
+fn _g32_wide(b) {
+    return f32_to(b);
+}
+
+# The f32 nearest a non-negative integer n, as Rust's `n as f32`.
+#must_use
+fn _g32_int(n) {
+    return _g32_of(f64_from(n));
+}
+
+# f32 a + b, for the scalar paths. Each reads its operands as f32 bit patterns. They are
+# untyped parameters because an integer constant passed to an f32 one warns.
+#must_use
+fn _g32_add(a, b) {
+    var x: f32 = a;
+    var y: f32 = b;
+    var r: f32 = x + y;
+    return r & 0xFFFFFFFF;
+}
+
+# f32 a - b. See _g32_add.
+#must_use
+fn _g32_sub(a, b) {
+    var x: f32 = a;
+    var y: f32 = b;
+    var r: f32 = x - y;
+    return r & 0xFFFFFFFF;
+}
+
+# f32 a * b. See _g32_add.
+#must_use
+fn _g32_mul(a, b) {
+    var x: f32 = a;
+    var y: f32 = b;
+    var r: f32 = x * y;
+    return r & 0xFFFFFFFF;
+}
+
+# f32 a / b. See _g32_add.
+#must_use
+fn _g32_div(a, b) {
+    var x: f32 = a;
+    var y: f32 = b;
+    var r: f32 = x / y;
+    return r & 0xFFFFFFFF;
+}
+
+# Rust's f32::max: a NaN on either side is ignored. Without one, the larger, as f64_max.
+#must_use
+fn _g32_max(a, b) {
+    return _g32_of(goonj_fmax(_g32_wide(a), _g32_wide(b)));
+}
+
+# The grid solvers run their interiors in chunks of whole rows, at most this many elements
+# where a row allows it: a chunk's operands and scratch stay in L1, and the scratch stays a
+# few KB whatever the grid (ADR-0010). Chunking can't move a result: every kernel is
+# elementwise.
+var ROW32_CHUNK = 1024;
+
+# Rows per chunk for a grid whose rows are `nx` long, at least one.
+#must_use
+fn _row32_rows_per_chunk(nx) {
+    var r = ROW32_CHUNK / nx;
+    if (r < 1) { r = 1; }
+    return r;
+}
+
+# Elements of an `n`-long f32 row for the 256-bit kernels: a multiple of 8, or 0.
+#must_use
+fn _row32_wide_len(n) {
+    if (_row_wide == 2) { _row_wide = simd_has_avx2(); }
+    if (_row_wide == 0) { return 0; }
+    return n & (0 - 8);
+}
+
+# The f32 row kernels. f32v_* steps four lanes and f32v8_* eight, with no scalar tail, so
+# f32v_add(out, a, b, 5) writes eight elements. These touch exactly `n`, and give the scalar
+# f32 expression's bits on every path. `out` may be `a` or `b`, but must not overlap them at
+# an offset. There is no packed scale: a scalar operand is a row filled by _row32_fill.
+fn _row32_add(out, a, b, n) {
+    var wide = 0;
+    if (n >= ROW_WIDE_MIN) { wide = _row32_wide_len(n); }
+    if (wide > 0) { f32v8_add(out, a, b, wide); }
+    var quad = n & (0 - 4);
+    if (quad > wide) {
+        f32v_add(out + wide * 4, a + wide * 4, b + wide * 4, quad - wide);
+    }
+    for (var i = quad; i < n; i = i + 1) {
+        var x: f32 = load32(a + i * 4);
+        var y: f32 = load32(b + i * 4);
+        var r: f32 = x + y;
+        store32(out + i * 4, r);
+    }
+    return 0;
+}
+
+# out = a - b over an f32 row. See _row32_add.
+fn _row32_sub(out, a, b, n) {
+    var wide = 0;
+    if (n >= ROW_WIDE_MIN) { wide = _row32_wide_len(n); }
+    if (wide > 0) { f32v8_sub(out, a, b, wide); }
+    var quad = n & (0 - 4);
+    if (quad > wide) {
+        f32v_sub(out + wide * 4, a + wide * 4, b + wide * 4, quad - wide);
+    }
+    for (var i = quad; i < n; i = i + 1) {
+        var x: f32 = load32(a + i * 4);
+        var y: f32 = load32(b + i * 4);
+        var r: f32 = x - y;
+        store32(out + i * 4, r);
+    }
+    return 0;
+}
+
+# out = a * b over an f32 row. See _row32_add.
+fn _row32_mul(out, a, b, n) {
+    var wide = 0;
+    if (n >= ROW_WIDE_MIN) { wide = _row32_wide_len(n); }
+    if (wide > 0) { f32v8_mul(out, a, b, wide); }
+    var quad = n & (0 - 4);
+    if (quad > wide) {
+        f32v_mul(out + wide * 4, a + wide * 4, b + wide * 4, quad - wide);
+    }
+    for (var i = quad; i < n; i = i + 1) {
+        var x: f32 = load32(a + i * 4);
+        var y: f32 = load32(b + i * 4);
+        var r: f32 = x * y;
+        store32(out + i * 4, r);
+    }
+    return 0;
+}
+
+# Fill an f32 row with the bit pattern k, for a scalar operand of the kernels above.
+fn _row32_fill(out, k, n) {
+    for (var i = 0; i < n; i = i + 1) { store32(out + i * 4, k); }
+    return 0;
+}
+
+# A zeroed f32 buffer of n elements. alloc's bytes are zero, and 0.0's bit pattern is 0.
+#must_use
+fn _g32_zeros(n) {
+    return goonj_alloc(n * 4);
+}
+
+# A vec of the n f32 elements at p, each widened to its exact f64.
+#must_use
+fn _g32_to_vec(p, n) {
+    var v = vec_new();
+    for (var i = 0; i < n; i = i + 1) { vec_push(v, _g32_wide(load32(p + i * 4))); }
+    return v;
+}
+
+# The f32 samples of a Gaussian pulse centred on step `peak_step`, `sigma_steps` wide, about
+# 6 sigma long, each widened to f64. fdtd's and dwm's gaussian_pulse share this, as Rust's
+# two were the same code (rust-old/src/fdtd.rs:96-104, dwm.rs:273-281). It runs in f32 as
+# Rust did. exp is f64's, rounded to f32: Rust's expf can differ from that in the last bit.
+# Rust's length had no ceiling. `cap` bounds it in f64 (ADR-0003): a solver reads the
+# signal only below its step cap. NaN and anything below 1 give one sample, as `.max(1)`.
+#must_use
+fn _g32_gaussian_pulse(peak_step, sigma_steps, amplitude, cap) {
+    if (peak_step < 0) { peak_step = 0; }   # u32 in Rust
+    var peak = _g32_int(peak_step);
+    var sigma = _g32_of(sigma_steps);
+    var amp = _g32_of(amplitude);
+    var span = f64_ceil(_g32_wide(_g32_add(peak, _g32_mul(_g32_of(f64_from(6)), sigma))));
+    var n = 1;
+    if (f64_ge(span, f64_from(cap)) == 1) { n = cap; }
+    if (f64_gt(span, F64_ONE) == 1) {
+        if (f64_lt(span, f64_from(cap)) == 1) { n = f64_to(span); }
+    }
+    var inv_sigma = _g32_div(G32_ONE, _g32_max(sigma, G32_ONE));
+    var neg_half = _g32_of(f64_neg(F64_HALF));
+    var signal = vec_new();
+    for (var i = 0; i < n; i = i + 1) {
+        var arg = _g32_mul(_g32_sub(_g32_int(i), peak), inv_sigma);
+        var e = _g32_mul(_g32_mul(neg_half, arg), arg);
+        var g = _g32_of(f64_exp(_g32_wide(e)));
+        vec_push(signal, _g32_wide(_g32_mul(amp, g)));
+    }
+    return signal;
+}

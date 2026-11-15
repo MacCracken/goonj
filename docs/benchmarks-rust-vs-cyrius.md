@@ -8,14 +8,17 @@ inputs* as the Rust `benches/benchmarks.rs`: 34 benchmarks across 15 modules.
   the final pre-port run (ns/iter, **f32**). Frozen. See *Provenance* below.
 - **Cyrius v2.0.1** — the unoptimized port, toolchain 6.5.35, f64.
 - **Cyrius v2.3.0** — toolchain 6.7.18, f64.
+- **Cyrius v2.3.2** — the grid solvers only, now f32 ([ADR-0010](adr/0010-f32-grids-match-rust.md)).
+  Every other row is unchanged from v2.3.0.
 
 Both on the same x86_64 Linux host. Ratios compare v2.3.0 with Rust. The speedups didn't
 come from computing something else: 172,180 compared outputs are identical between 2.2.1
 and 2.3.0, and 2.2.0 and 2.2.1 agree the same way.
 
-> **The Cyrius side is f64 and Rust's is f32.** hisab's `HVec3` is f64-only, so that is
-> twice the memory traffic on every operation. It's a precision upgrade, not pure overhead,
-> and it sits inside every ratio below.
+> **The Cyrius side is f64 and Rust's is f32, except the grid solvers from v2.3.2.** hisab's
+> `HVec3` is f64-only, so that is twice the memory traffic on every operation. It's a
+> precision upgrade, not pure overhead, and it sits inside every ratio below but the two
+> grid solvers', which from v2.3.2 compute Rust's f32 bits.
 
 ## Provenance of the Rust column
 
@@ -36,7 +39,7 @@ The kind of work, not the module, sets the ratio:
 
 | Kind of work | Cyrius / Rust | What decides it |
 |--------------|--------------:|-----------------|
-| **Array arithmetic** | **~1.0–6.0×** | Runs in the `f64v_*` builtins, close to what the hardware can do with f64. |
+| **Array arithmetic** | **~1.0–2.1×** | Runs in the `f64v_*` / `f32v_*` builtins, close to what the hardware can do. The grids are f32 from v2.3.2. |
 | **Ray and geometry** | **~7–14×** | One vector at a time, through function calls, with temporaries already removed. |
 | **Scalar loops** | **~5–42×** | The compiler's scalar code, about 2.5 ns per element, and vec bounds checks. |
 
@@ -46,18 +49,20 @@ result: sums, recursive filters and calls to `sin` and `cos`.
 
 ## Array arithmetic
 
-| Benchmark | Rust | v2.0.1 | v2.3.0 | ratio |
-|-----------|-----:|-------:|-------:|------:|
-| `dwm/dispersion_correct_22kHz_1s` | 11.4 µs | 311.1 µs | 10.98 µs | ~1.0× |
-| `dwm/solve_30x25x20_50ms` | 74.2 ms | 1.052 s | 154.8 ms | ~2.1× |
-| `fdtd/solve_40x40_50ms` | 1.17 ms | 18.67 ms | 6.99 ms | ~6.0× |
+| Benchmark | Rust | v2.0.1 | v2.3.0 | v2.3.2 | ratio |
+|-----------|-----:|-------:|-------:|-------:|------:|
+| `dwm/dispersion_correct_22kHz_1s` | 11.4 µs | 311.1 µs | 10.98 µs | — | ~1.0× |
+| `dwm/solve_30x25x20_50ms` | 74.2 ms | 1.052 s | 154.8 ms | 85.5 ms | ~1.15× |
+| `fdtd/solve_40x40_50ms` | 1.17 ms | 18.67 ms | 6.99 ms | 2.48 ms | ~2.1× |
 
-Each row of a grid is now a run of array ops
-([ADR-0008](adr/0008-row-kernels-for-grid-solvers.md)). `dwm/solve_30x25x20_50ms` is the
-exemplar: same grid in all three columns, 15,000 cells and 1,102 steps, and about 2× behind
-Rust while doing f64 where Rust did f32. `dispersion_correct` runs on the 256-bit kernels
-and now edges past Rust's recorded figure. These grids have short rows, which stay on
-128-bit lanes: larger grids run 15–34% faster again on AVX2.
+The grid ratios compare v2.3.2 with Rust. Each grid interior is a run of array ops
+([ADR-0008](adr/0008-row-kernels-for-grid-solvers.md)), and from v2.3.2 they are f32 spans of
+whole rows, about 1,024 elements a chunk, so they reach the 256-bit kernels
+([ADR-0010](adr/0010-f32-grids-match-rust.md)). `dwm/solve_30x25x20_50ms` is the exemplar:
+same grid in every column, 15,000 cells and 1,102 steps, and 1.15× behind Rust while
+computing Rust's bits. `dispersion_correct` is still f64 and runs on the 256-bit kernels; it
+edges past Rust's recorded figure. The v2.3.2 figures are medians of three rounds pinned to
+one core, interleaved with v2.3.1, which read 162.3 ms and 7.52 ms on the same host that day.
 
 ## Ray and geometry
 

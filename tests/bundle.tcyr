@@ -50,7 +50,7 @@ var wb = write_wav_mono(samples, 44100);
 assert(f64_gt(f64_from(WavBytes_len(wb)), f64_from(44)), "wav.write_wav_mono header+data");
 # L0 logging (sakshi-backed) — verbose mode
 assert_eq(logging_init_verbose(), 0, "logging.init_verbose");
-assert_eq(logging_get_level(), LOG_TRACE, "logging verbose -> TRACE");
+assert_eq(logging_get_level(), GOONJ_LOG_TRACE, "logging verbose -> TRACE");
 
 var rc = assert_summary();
 syscall(60, rc);

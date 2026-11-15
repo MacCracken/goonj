@@ -74,6 +74,13 @@ jobs:
             exit 1
           }
 
+      - name: Namespace
+        # The bundle shares one flat namespace with its consumer's unit, where a
+        # redefined enum member silently takes the last definition. Through 2.3.1
+        # goonj's DH_SIZE met yukti's and its LOG_* met stdlib log's. This fails if
+        # any top-level name in dist/goonj.cyr is also defined in the pinned stdlib.
+        run: scripts/check-namespace.sh
+
       - name: Audit
         # fmt, lint, docs, tests and benches. It fails on any lint warning or
         # undocumented public fn, so a non-zero exit is a real signal. It re-runs

@@ -89,5 +89,6 @@ is nothing to narrow.
   4 elements at a time.
 - **256-bit kernels on every row** — rejected on measurement, as above.
 - **Vectorize `f64v_dot`-style sums** — rejected, because it moves results.
-- **f32 grids** — not taken in 2.3.0, and still open. It would change every solver result,
-  so it needs its own ADR. See the roadmap.
+- **f32 grids** — not taken in 2.3.0. Taken in 2.3.2 by
+  [ADR-0010](0010-f32-grids-match-rust.md), with f32 kernels on this ADR's pattern; the
+  interiors now run as spans of rows, not a row at a time.

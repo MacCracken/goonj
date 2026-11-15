@@ -13,8 +13,8 @@ single distlib bundle, `dist/goonj.cyr`, for downstream Cyrius consumers.
 37 modules covering sound propagation, room simulation, ray/beam/image-source
 tracing, wave-based methods (DWM, FDTD, GFPE), impulse-response generation,
 diffraction, resonance, and spatialization — **3,624 parity assertions across 37
-test suites, all green** (42 suites / 3,806 assertions counting the hardening,
-integration, modal and smoke suites).
+test suites, all green** (43 suites / 3,828 assertions counting the hardening,
+integration, modal, namespace and smoke suites).
 
 ## Features
 
@@ -39,10 +39,10 @@ integration, modal and smoke suites).
 ## Quick start
 
 ```sh
-cyrius deps                                  # resolve hisab (+ transitive sakshi) into lib/
+cyrius deps                                  # resolve hisab and the stdlib (sakshi included) into lib/
 cyrius build examples/basic.cyr build/basic  # build the demo, then ./build/basic
 cyrius build src/main.cyr build/goonj        # build the smoke binary
-cyrius test                                  # run every suite (auto-discovers all 42)
+cyrius test                                  # run every suite (auto-discovers all 43)
 cyrius test tests/propagation.tcyr           # or just one, by path
 cyrius bench tests/dwm.bcyr                  # run a benchmark
 cyrius distlib                               # regenerate dist/goonj.cyr (the shippable bundle)
@@ -72,9 +72,8 @@ var c    = speed_of_sound(f64_from(20));   # ≈ 343.4 m/s at 20 °C
 
 ```
 goonj (Cyrius acoustics)
-  ├── hisab (math/geometry — HVec3, geo, BVH; consumed as dist/hisab.cyr, tag 2.11.2)
-  ├── sakshi (structured logging; pulled transitively via hisab, 2.4.11)
-  └── Cyrius stdlib (math, ganita, vec, fnptr, bench, …)
+  ├── hisab (math/geometry — HVec3, geo, BVH; consumed as dist/hisab.cyr, tag 3.5.0)
+  └── Cyrius stdlib (math, ganita, vec, fnptr, bench, simd, sakshi for logging, …)
 ```
 
 No Rust dependencies — serde, thiserror, tracing, and criterion were all dropped

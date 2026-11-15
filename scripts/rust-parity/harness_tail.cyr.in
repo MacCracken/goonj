@@ -1,0 +1,29 @@
+
+fn meta(cid, steps, b) {
+    println("#"); println_int(cid); println("meta"); println_int(0); println_int(2);
+    println_int(steps); println_int(b);
+    return 0;
+}
+
+fn dump64(cid, label, v) {
+    println("#"); println_int(cid); println(label); println_int(0); println_int(vec_len(v));
+    var i = 0;
+    while (i < vec_len(v)) { println_int(f32_from(vec_get(v, i)) & 0xFFFFFFFF); i = i + 1; }
+    return 0;
+}
+
+fn dump_traces(cid, traces) {
+    var k = 0;
+    while (k < vec_len(traces)) {
+        var v = vec_get(traces, k);
+        println("#"); println_int(cid); println("r"); println_int(k); println_int(vec_len(v));
+        var i = 0;
+        while (i < vec_len(v)) { println_int(f32_from(vec_get(v, i)) & 0xFFFFFFFF); i = i + 1; }
+        k = k + 1;
+    }
+    return 0;
+}
+
+alloc_init();
+run_cases();
+syscall(60, 0);

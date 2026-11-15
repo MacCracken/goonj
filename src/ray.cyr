@@ -376,16 +376,71 @@ fn find_nearest_wall(origin, direction, walls, skip_wall) {
     return _nearest_wall_keep(&nw);
 }
 
+# The BVH query's scratch: a bump allocator over a buffer in _nearest_wall_bvh's frame,
+# handed to hisab's allocation scope (hisab 3.4.2). geo_ray_new and bvh_query_ray allocate
+# the ray, its unit direction and the candidate vec, 192 bytes a bounce while a query has
+# at most 16 candidates. Through 2.3.1 that was 4 of trace_ray_bvh's 6 allocations per
+# bounce, kept for the life of the process. Now it is gone when the query returns
+# (ADR-0009). `st` is { next, end }. A request that does not fit, past about 128
+# candidates, comes from the global heap, as every request did before.
+fn _ray_scratch_alloc(st, size) {
+    if (size <= 0) { return 0; }
+    var n = (size + 7) & (0 - 8);
+    var p = load64(st);
+    if (n <= load64(st + 8) - p) {
+        store64(st, p + n);
+        return p;
+    }
+    return alloc(size);
+}
+
+# The scratch's realloc: a new block and a copy, as the stdlib's bump and arena do.
+fn _ray_scratch_realloc(st, old_ptr, old_size, new_size) {
+    var p = _ray_scratch_alloc(st, new_size);
+    if (p == 0) { return 0; }
+    if (old_ptr == 0) { return p; }
+    var n = old_size;
+    if (new_size < n) { n = new_size; }
+    var i = 0;
+    while (i < n) {
+        store8(p + i, load8(old_ptr + i));
+        i = i + 1;
+    }
+    return p;
+}
+
+# The scratch frees nothing and is never reset: returning from the frame is the reset.
+fn _ray_scratch_free(st, ptr) { return 0; }
+# See _ray_scratch_free.
+fn _ray_scratch_reset(st) { return 0; }
+
 # BVH broadphase _nearest_wall. A direction Rust's Ray::new rejects -> None. hisab's Rust
 # tests len_sq < 1e-7 (EPSILON_F32, geo/primitives.rs:30), a magnitude of 3.16e-4.
 # Both refusals below would otherwise read as "no wall hit", so they end the process
 # like any other (ADR-0004). hisab's BVH reports no leaf for a NaN slab, so a non-finite
 # ray hits nothing here, where the linear search returns Rust's NaN hits (ADR-0005).
+#
+# hisab allocates the query into `buf`, in this frame, through its allocation scope. The
+# caller's scope, if it set one, is restored before anything else runs, and the candidates
+# are read only in this frame.
 fn _nearest_wall_bvh(origin, direction, walls, bvh, skip_wall, out) {
     if (f64_lt(hvec3_length_sq(direction), RAY_MIN_DIRECTION_SQ) == 1) { return 0; }
+    var buf: i64[512];   # 4096 bytes
+    var st: i64[2];
+    var al: i64[5];      # lib/alloc.cyr's Allocator: alloc, realloc, free, reset, state
+    store64(&st, &buf);
+    store64(&st + 8, &buf + 4096);
+    store64(&al, &_ray_scratch_alloc);
+    store64(&al + 8, &_ray_scratch_realloc);
+    store64(&al + 16, &_ray_scratch_free);
+    store64(&al + 24, &_ray_scratch_reset);
+    store64(&al + 32, &st);
+    var prev = hisab_alloc_scope(&al);
     var hray = geo_ray_new(origin, direction);
+    var candidates = 0;
+    if (hray != 0) { candidates = bvh_query_ray(bvh, hray); }
+    hisab_alloc_scope(prev);
     if (hray == 0) { goonj_alloc_refused(); }
-    var candidates = bvh_query_ray(bvh, hray);
     if (candidates == 0) { goonj_alloc_refused(); }
 
     var found = 0;

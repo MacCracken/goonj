@@ -27,7 +27,9 @@ Forcing constraints:
 Adopt these conventions for the whole port (recorded in
 `docs/development/port-audit.md` as the working reference):
 
-1. **f32 → f64 everywhere.** Forced by hisab; also improves precision.
+1. **f32 → f64 everywhere.** Forced by hisab; also improves precision. (From 2.3.2 the
+   three grid solvers, which never touch hisab, run in f32 as Rust's did:
+   [ADR-0010](0010-f32-grids-match-rust.md).)
 2. **`hisab::Vec3` → hisab `HVec3`**, consumed via the single `dist/hisab.cyr`
    bundle (`[deps.hisab]`, tag-pinned, `cyrius.lock`-locked) — the same way
    hisab consumes its own deps.

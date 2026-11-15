@@ -16,7 +16,9 @@ Every Cyrius module matches the Rust oracle function-for-function.
 
 - **f32 → f64** everywhere (hisab's `HVec3` is f64-only; widening is forced
   and improves precision). Test tolerances are loosened vs the f32 oracle
-  where bit-exactness is not meaningful.
+  where bit-exactness is not meaningful. **Except the grid solvers** (fdtd, dwm,
+  diffusion), which run in f32 from 2.3.2 and give Rust 2.1.3's bits
+  ([ADR-0010](../adr/0010-f32-grids-match-rust.md)).
 - **Float literals**: integers via `f64_from(n)`; non-integers as named
   module-top `var` constants holding the IEEE-754 hex bit pattern with the
   decimal in a comment (generate with
@@ -126,8 +128,9 @@ Release close-out status:
 - ✅ **Diagnostics** — the 2 Rust `tracing::warn!` sites (dwm dx-tolerance) wired
   to `goonj_log_warn` + sakshi verbose mode.
 - ✅ **2.0.0 released** — tagged 2026-06-30.
-- ⏳ **Consumer-green** — deferred; downstream consumers (dhvani/shruti/kiran)
-  aren't ported yet (working up the stack).
+- ✅ **Consumer-green** — met by 2.3.2's check: dhvani 2.3.1 passes 65 of 65 suites
+  on its own released pins (goonj 2.3.1, hisab 3.4.1, cyrius 6.7.18), and again on
+  goonj 2.3.2 with hisab 3.5.0. See [`state.md`](state.md#consumers).
 Toolchain: cyrius **6.3.14** (pinned deliberately — held here, not chased to
 newer wrappers). Six parallel workflows plus solo bites landed all 37 modules;
 `ray` and `dwm` (hot paths, with benchmarks) were ported solo. Remaining: none —

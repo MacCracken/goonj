@@ -2,6 +2,140 @@
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-11-15
+
+The grid solvers move to f32 and give Rust 2.1.3's bits, two name collisions with other
+libraries are fixed, hisab goes 3.4.1 → 3.5.0, and the BVH query stops leaving garbage.
+**Every FDTD, DWM and diffusion result moves, to Rust's. Nothing else moves.** **43 suites /
+3831 assertions**, all green, `cyrius audit` exits 0, and the fuzz passes under `--poison`.
+
+⚠ **Grid results change.** `solve_fdtd_2d`, `solve_dwm_3d` and `solve_diffusion_2d` now
+compute in f32, as Rust did, so their values change at f32 precision. Where `duration / dt`
+sits near a whole number the step count can differ from 2.3.1's by one, and a configuration
+at the CFL or dx limit can be accepted or refused differently. In each case it now does what
+Rust did. None of the six consumers calls these solvers (grep, 2026-11-15).
+
+⚠ **A consumer needs hisab ≥ 3.4.2.** The BVH query calls `hisab_alloc_scope`, which
+hisab 3.4.2 added, and a unit has one hisab. Against 3.4.1 the build stops with an
+undefined function. All six consumers pin 3.4.1 today. hisab 3.5.0 retires 16 names, and
+none of the six calls one (hisab's grep, 2026-11-14).
+
+### Fixed
+
+- **`generate_dhvani_ir` wrote 64 bytes past its allocation in dhvani's unit**
+  ([issue](docs/development/issues/2026-11-08-dh-size-collides-with-yukti-heap-overrun.md)).
+  goonj's `DH_SIZE = 88` and yukti's `DH_SIZE = 24` share one namespace, and the last
+  definition wins at every use. dhvani includes yukti after goonj, so each `DhvaniIr` got
+  24 bytes and its eight rt60 values landed in the next allocation. Measured with the real
+  yukti: the next block started 24 bytes on, and 88 now. `DhvaniLayout`'s members are
+  `DHVANI_IR_*`, with the same values.
+- **`logging_init_verbose()` set fatal-only in any unit that includes stdlib `log` after
+  goonj.** goonj's levels run `LOG_FATAL = 0` to `LOG_TRACE = 5`, as sakshi's do, and `log`
+  defines the same six names the other way round. Verbose init set sakshi to 0, and
+  `GOONJ_LOG` parsed backwards. Found by scanning every goonj name against the 6.7.18
+  stdlib while fixing the issue above.
+
+### Changed
+
+- **The grid solvers run in f32, as Rust's did**
+  ([ADR-0010](docs/adr/0010-f32-grids-match-rust.md)). The inputs Rust typed `f32` are
+  rounded to f32 on the way in: config fields, source samples, the diffusion fields and the
+  wall materials' absorption. The fields are f32, and every operation is one f32 operation
+  in Rust's order. Results keep their types, f64 vecs of f32 values. DWM's six-way sum and
+  diffusion's four-way sum go back to Rust's left-to-right order, which the f64 code had
+  regrouped. `BoundaryFilter`'s `b0` and `a1` are f32 values, and so are a result's `dt` and
+  `dx`. `band_energies` and the dispersion helpers stay f64.
+- **These solvers now give Rust 2.1.3's bits.** A harness ran 24 generated case sets
+  (1,248 cases, 951,482 values) through `rust-old` at tag 2.1.3 and through this release, on
+  the 128-bit and 256-bit paths as well as the default. Every value matches, except in 2
+  cases where Rust's `expf` (glibc) is not correctly rounded on a Gaussian source sample
+  and goonj's is. 2.3.1, rounded to f32, differed in 33,319 of 40,224 values on the first
+  set. The harness is `scripts/rust-parity/`.
+- **The logging levels are `GOONJ_LOG_FATAL` to `GOONJ_LOG_TRACE`, in `enum
+  GoonjLogLevel`.** This is a public rename, with the values unchanged. None of the six
+  consumers names a level (grep, 2026-11-15). sakshi and `log` each define their own
+  `LogLevel`, so the enum is renamed too.
+- **`ERR_NONE` keeps its name.** shravan, which dhvani links, also defines it, with the same
+  value 0. naad's suite reads goonj's `ERR_*` codes by name.
+
+### Dependencies
+
+- **hisab 3.4.1 → 3.5.0**, its newest tag, which also pins cyrius 6.7.18. goonj reaches 17
+  hisab functions by name. Their call tree is 40 functions in 3.4.1 and 43 in 3.5.0, where
+  the three new ones route allocations. The 16 that changed differ only in where they
+  allocate and in what a 0 handle answers. A probe hashed 2,400 ray traces (linear
+  and BVH), early reflections, an 8 kHz multiband IR, dhvani's rt60 and occlusion in three
+  rooms, and every hash matched 3.4.1's.
+- **sakshi is a stdlib leaf in goonj's manifest.** It came through hisab's `[deps.sakshi]`
+  until hisab 3.4.2 dropped that package. The bytes are the same (2.5.10, sha256
+  `8a819554…`). `dist/goonj.deps` now names `sakshi`, so a consumer gets it from goonj's
+  sidecar, and `cyrius.lock` drops sakshi's commit row.
+- A clean re-resolve changed only `lib/hisab.cyr`, and `cyrius deps --locked` agrees.
+
+### Performance
+
+- **The grid solvers are 1.5–3× faster**, and DWM is 1.15× behind Rust where it was 2.2×.
+  f32 doubles the lanes, and each interior runs as spans of whole rows, about 1,024 elements
+  a chunk, where it ran a row at a time. A span's stray wall cells are fixed up as Rust's
+  walls are (ADR-0010):
+
+  | Benchmark | 2.3.1 | 2.3.2 | Rust |
+  |---|---:|---:|---:|
+  | `solve_dwm_3d_30x25x20_50ms` | 162.3 ms | **85.5 ms** | 74.2 ms |
+  | `solve_dwm_3d_24cubed_0.01s` | 34.9 ms | **19.4 ms** | |
+  | `solve_dwm_3d_16cubed_0.01s` | 13.1 ms | **8.85 ms** | |
+  | `fdtd/solve_40x40_50ms` | 7.52 ms | **2.48 ms** | 1.17 ms |
+  | diffusion, 40×40, 0.05 s (scratch benchmark) | 7.60 ms | **2.96 ms** | |
+
+- **And they keep less.** DWM, 30×25×20: 1,852,552 → 1,102,152 bytes. FDTD and diffusion,
+  200×150: 1,247,864 → 904,696 and 1,291,576 → 904,224.
+- **A BVH trace keeps what a linear trace keeps**
+  ([ADR-0009](docs/adr/0009-bvh-query-scratch-through-hisabs-scope.md)). hisab
+  allocated the query's ray, its unit direction and the candidate vec on every bounce, 192
+  bytes and 4 of the 6 allocations, never reclaimed. They now go to a 4 KB buffer in the
+  query's own frame, through hisab 3.4.2's allocation scope:
+
+  | `trace_ray_bvh`, bytes kept | 2.3.1 | 2.3.2 | Linear trace |
+  |---|---:|---:|---:|
+  | Concrete shoebox, 36 bounces | 12,424 | **5,320** | 5,320 |
+  | 100-wall room, 50 bounces | 21,464 | **7,000** | 7,000 |
+
+  A caller's own scope is saved and restored around the query. A query with more than about
+  128 candidates spills the rest to the heap, as before.
+- **Cost:** `ray/trace_bvh_100_walls` goes from 583 to 595 µs, about 2%. hisab zeroes
+  memory issued under a scope, where fresh heap comes zeroed, and each allocation takes two
+  more indirect calls.
+
+### Tests
+
+- **New `tests/namespace.tcyr` (11).** It includes the bundle, then yukti's
+  `DeviceHealthField` and `log`'s `LogLevel` copied from the 6.7.18 snapshot. It checks
+  the `DhvaniIr`'s 88 bytes and sakshi's levels. Against 2.3.1's bundle, 5 of the 11 fail.
+- **`tests/hardening.tcyr`: 156 → 170.** A BVH trace keeps the linear trace's bytes, a
+  caller's scope comes back and holds none of the query, and a 300-candidate query spills
+  and still finds the nearest wall. The two budget assertions fail against 2.3.1. The f32
+  row kernels write exactly `n` elements with the scalar bits, at every length to 80, on
+  each path. A kernel that rounds its length up fails that test, where FDTD's and
+  diffusion's hashes don't notice.
+- **The DWM, FDTD and diffusion golden hashes are Rust's.** The same three sweeps, run
+  through `rust-old` at tag 2.1.3, give `0xA15E6524AF82700A`, `0xDAE67638A29BC1E2` and
+  `0x22A078267019BBBB`, and so does goonj on every path, and on aarch64 under qemu.
+- **New `scripts/check-namespace.sh`, run in CI.** It fails if a top-level name in
+  `dist/goonj.cyr` is also defined in the pinned stdlib. It reports 9 names on the 2.3.1
+  bundle and none now. Given a consumer's `lib/`, it checks those bundles too.
+
+### Documentation
+
+- New [ADR-0009](docs/adr/0009-bvh-query-scratch-through-hisabs-scope.md). ADR-0007 points
+  to it.
+- New [ADR-0010](docs/adr/0010-f32-grids-match-rust.md). ADR-0001 and ADR-0008 point to it.
+- **Consumer-green is met, and leaves the roadmap.** All six consumers' newest tags pin
+  goonj 2.3.1, hisab 3.4.1 and cyrius 6.7.18. dhvani 2.3.1 passes 65 of 65 suites on those
+  pins, in a scratch clone, with `DH_SIZE` warned in every unit. On goonj 2.3.2 and
+  hisab 3.5.0 it passes 65 of 65 and the warning is gone. The other five were not run.
+- Roadmap: the BVH query leaves *Remaining allocation*, and f32 grids leave *Number types*.
+  The f32 ray paths are what is left there, still waiting on hisab.
+
 ## [2.3.1] - 2026-11-06
 
 The first look at goonj's consumers, which found a regression of goonj's own. **No result

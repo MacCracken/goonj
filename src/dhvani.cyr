@@ -22,12 +22,16 @@
 var DHVANI_POS_INF = 0x7FF0000000000000;   # +inf
 
 # DhvaniIr inline layout: ir ptr | multiband ptr | room_volume | rt60[8].
+# Named DHVANI_IR_* because a bundle's names share the consumer's namespace and
+# the last definition wins at every use. Through 2.3.1 these were DH_*, and
+# yukti's DH_SIZE = 24 shrank this allocation to 24 bytes in any unit that
+# included yukti after goonj, as dhvani's does (tests/namespace.tcyr).
 enum DhvaniLayout {
-    DH_IR        = 0,
-    DH_MULTIBAND = 8,
-    DH_VOLUME    = 16,
-    DH_RT60      = 24,   # offsets 24..88 (8 f64)
-    DH_SIZE      = 88,
+    DHVANI_IR_IR        = 0,
+    DHVANI_IR_MULTIBAND = 8,
+    DHVANI_IR_VOLUME    = 16,
+    DHVANI_IR_RT60      = 24,   # offsets 24..88 (8 f64)
+    DHVANI_IR_SIZE      = 88,
 }
 
 # ================================================================
@@ -35,29 +39,29 @@ enum DhvaniLayout {
 # ================================================================
 # The broadband impulse response (ImpulseResponse pointer).
 #must_use
-fn dhvani_ir_ir(d) { return load64(d + DH_IR); }
+fn dhvani_ir_ir(d) { return load64(d + DHVANI_IR_IR); }
 
 # The per-band impulse responses (MultibandIr pointer; 0 => None).
 #must_use
-fn dhvani_ir_multiband(d) { return load64(d + DH_MULTIBAND); }
+fn dhvani_ir_multiband(d) { return load64(d + DHVANI_IR_MULTIBAND); }
 
 # 1 if the multiband IR is present (Option::is_some), else 0.
 #must_use
 fn dhvani_ir_has_multiband(d) {
-    if (load64(d + DH_MULTIBAND) == 0) { return 0; }
+    if (load64(d + DHVANI_IR_MULTIBAND) == 0) { return 0; }
     return 1;
 }
 
 # Room volume in m^3.
 #must_use
-fn dhvani_ir_room_volume(d) { return load64(d + DH_VOLUME); }
+fn dhvani_ir_room_volume(d) { return load64(d + DHVANI_IR_VOLUME); }
 
 # Per-band RT60 estimate (seconds) at band index 0..NUM_BANDS-1.
 #must_use
 fn dhvani_ir_rt60_band(d, band) {
     if (band < 0) { return 0; }
     if (band >= NUM_BANDS) { return 0; }
-    return load64(d + DH_RT60 + band * 8);
+    return load64(d + DHVANI_IR_RT60 + band * 8);
 }
 
 # ================================================================
@@ -74,10 +78,10 @@ fn generate_dhvani_ir(source, listener, room, config) {
     var geom = AcousticRoom_geometry(room);
     var volume = room_geometry_volume_shoebox(geom);
 
-    var d = alloc(DH_SIZE);
-    store64(d + DH_IR, broadband);
-    store64(d + DH_MULTIBAND, multiband);
-    store64(d + DH_VOLUME, volume);
+    var d = alloc(DHVANI_IR_SIZE);
+    store64(d + DHVANI_IR_IR, broadband);
+    store64(d + DHVANI_IR_MULTIBAND, multiband);
+    store64(d + DHVANI_IR_VOLUME, volume);
 
     # Per-band RT60 using Sabine with per-band absorption.
     var walls = RoomGeometry_walls(geom);
@@ -95,7 +99,7 @@ fn generate_dhvani_ir(source, listener, room, config) {
         if (f64_gt(total_abs, 0) == 1) {
             rt = sabine_rt60(volume, total_abs);
         }
-        store64(d + DH_RT60 + band * 8, rt);
+        store64(d + DHVANI_IR_RT60 + band * 8, rt);
         band = band + 1;
     }
     return d;
